@@ -1,4 +1,4 @@
-# SuperClipboard
+# SuperClipboard.rs
 
 A lightweight clipboard manager built with Rust + Tauri + React + TypeScript.
 
