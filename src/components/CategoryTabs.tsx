@@ -1,32 +1,43 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import type { FilterTab, Stats } from '../types';
 import { getTabLabel } from '../utils';
 import { useI18n } from '../i18n';
-
-const TABS: FilterTab[] = ['all', 'text', 'link', 'image', 'code', 'email', 'file_path'];
 
 interface Props {
   activeTab: FilterTab;
   onTabChange: (tab: FilterTab) => void;
   stats: Stats | null;
+  memoEnabled?: boolean;
+  memoCount?: number | null;
 }
 
-export default function CategoryTabs({ activeTab, onTabChange, stats }: Props) {
+export default function CategoryTabs({ activeTab, onTabChange, stats, memoEnabled, memoCount }: Props) {
   const { t } = useI18n();
+
+  const tabs: FilterTab[] = memoEnabled ? ['memo', 'all', 'text', 'link', 'image', 'code', 'email', 'file_path'] : ['all', 'text', 'link', 'image', 'code', 'email', 'file_path'];
 
   const getCount = useCallback(
     (tab: FilterTab): number | null => {
+      if (tab === 'memo') return memoCount ?? null;
       if (!stats) return null;
       if (tab === 'all') return stats.total;
       return (stats as unknown as Record<string, number>)[tab] ?? null;
     },
-    [stats]
+    [stats, memoCount]
   );
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft += e.deltaY || e.deltaX;
+    }
+  }, []);
 
   return (
     <div style={styles.container}>
-      <div style={styles.scrollArea}>
-        {TABS.map((tab) => {
+      <div ref={scrollRef} style={styles.scrollArea} onWheel={handleWheel}>
+        {tabs.map((tab) => {
           const isActive = tab === activeTab;
           const count = getCount(tab);
           return (
@@ -35,7 +46,7 @@ export default function CategoryTabs({ activeTab, onTabChange, stats }: Props) {
               onClick={() => onTabChange(tab)}
               style={{
                 ...styles.tab,
-                ...(isActive ? styles.tabActive : {}),
+                ...(isActive ? (tab === 'memo' ? { ...styles.tabActive, background: '#8b5cf6' } : styles.tabActive) : {}),
               }}
               onMouseEnter={(e) => {
                 if (!isActive) {
@@ -48,7 +59,7 @@ export default function CategoryTabs({ activeTab, onTabChange, stats }: Props) {
                 }
               }}
             >
-              <span style={styles.tabLabel}>{getTabLabel(tab, t)}</span>
+              <span style={styles.tabLabel}>{tab === 'memo' ? t.memoTab : getTabLabel(tab, t)}</span>
               {count !== null && count > 0 && (
                 <span
                   style={{

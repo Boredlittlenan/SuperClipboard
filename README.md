@@ -10,12 +10,16 @@ A lightweight clipboard manager built with Rust + Tauri + React + TypeScript.
 - Real-time clipboard monitoring with SHA-256 deduplication
 - SQLite storage with indexed queries for fast search
 - Pin important entries, one-click copy back to clipboard
-- Global shortcut to show/hide window (customizable in settings)
+- Memo / quick notes: independent tab for jotting down ideas, with title, body, tags, search, pin, and auto-save
+- Global shortcut to show/hide window (default: Shift+V, customizable in settings)
+- Always-on-top toggle (default: on) to keep the window above others
 - System tray with context menu (open settings, quit app)
 - Auto dark/light theme
 - Settings panel with language switching (Chinese / English)
 - Auto-start on system boot (Windows registry)
 - User preferences persisted in SQLite
+- Horizontally scrollable tab bar (mouse wheel supported)
+- Database size display in footer
 - One-click update check via GitHub Releases
 
 ## Tech Stack
@@ -44,14 +48,18 @@ src-tauri/
   src/
     clipboard.rs    # Clipboard monitoring service
     classifier.rs   # Content type classification
-    storage.rs      # SQLite storage layer (entries + settings)
+    storage.rs      # SQLite storage layer (entries + memos + settings)
     autostart.rs    # Auto-start on boot (Windows registry)
     lib.rs          # Tauri commands & app setup
     main.rs         # Entry point
 src/
   components/       # React UI components
-    SettingsButton.tsx  # Settings panel (language, shortcut, autostart)
+    SettingsButton.tsx  # Settings panel (language, shortcut, autostart, always-on-top, memo)
+    MemoList.tsx        # Inline memo list with CRUD, auto-save, pin
   api/              # Tauri command wrappers
+    clipboard.ts    # Clipboard API
+    settings.ts     # Settings API
+    memos.ts        # Memo CRUD API
   i18n/             # Internationalization (translations + context)
   types/            # TypeScript type definitions
 ```

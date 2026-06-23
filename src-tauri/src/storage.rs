@@ -37,6 +37,26 @@ pub struct QueryFilter {
     pub offset: Option<i64>,
 }
 
+/// A memo/sticky note entry (separate from clipboard)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Memo {
+    pub id: i64,
+    pub title: String,
+    pub body: String,
+    pub tags: String,
+    pub pinned: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Query filter for listing memos
+#[derive(Debug, Default, Deserialize)]
+pub struct MemoFilter {
+    pub search: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
 pub struct Storage {
     conn: Mutex<Connection>,
 }
@@ -75,6 +95,17 @@ impl Storage {
                 key     TEXT PRIMARY KEY,
                 value   TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS memos (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                title      TEXT    NOT NULL DEFAULT '',
+                body       TEXT    NOT NULL DEFAULT '',
+                tags       TEXT    NOT NULL DEFAULT '',
+                pinned     INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_memos_updated_at ON memos(updated_at DESC);
             ",
         )
     }
@@ -254,11 +285,135 @@ impl Storage {
         Ok(count)
     }
 
+    /// Get database size in bytes (page_count * page_size)
+    pub fn db_size(&self) -> Result<i64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let page_count: i64 = conn
+            .query_row("PRAGMA page_count", [], |row| row.get(0))?;
+        let page_size: i64 = conn
+            .query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        Ok(page_count * page_size)
+    }
+
     /// Clear all non-pinned entries
     pub fn clear_unpinned(&self) -> Result<u64, StorageError> {
         let conn = self.conn.lock().unwrap();
         let rows = conn.execute("DELETE FROM clipboard_entries WHERE pinned = 0", [])?;
         Ok(rows as u64)
+    }
+
+    // ─── Memo CRUD ──────────────────────────────────────────────────
+
+    /// Query memos with optional search filter
+    pub fn get_memos(&self, filter: &MemoFilter) -> Result<Vec<Memo>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut sql = String::from("SELECT id, title, body, tags, pinned, created_at, updated_at FROM memos WHERE 1=1");
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(ref search) = filter.search {
+            sql.push_str(" AND (title LIKE ? OR body LIKE ? OR tags LIKE ?)");
+            let pattern = format!("%{}%", search);
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern.clone()));
+            param_values.push(Box::new(pattern));
+        }
+
+        sql.push_str(" ORDER BY pinned DESC, updated_at DESC");
+
+        let limit = filter.limit.unwrap_or(100);
+        sql.push_str(&format!(" LIMIT {}", limit));
+
+        if let Some(offset) = filter.offset {
+            sql.push_str(&format!(" OFFSET {}", offset));
+        }
+
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = conn.prepare(&sql)?;
+        let memos = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                let pinned_int: i32 = row.get(4)?;
+                Ok(Memo {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    body: row.get(2)?,
+                    tags: row.get(3)?,
+                    pinned: pinned_int != 0,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?
+            .collect::<SqlResult<Vec<_>>>()?;
+
+        Ok(memos)
+    }
+
+    /// Create a new memo, returns the created memo
+    pub fn create_memo(&self, title: &str, body: &str, tags: &str) -> Result<Memo, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO memos (title, body, tags) VALUES (?1, ?2, ?3)",
+            params![title, body, tags],
+        )?;
+        let id = conn.last_insert_rowid();
+        let memo = conn.query_row(
+            "SELECT id, title, body, tags, pinned, created_at, updated_at FROM memos WHERE id = ?1",
+            params![id],
+            |row| {
+                let pinned_int: i32 = row.get(4)?;
+                Ok(Memo {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    body: row.get(2)?,
+                    tags: row.get(3)?,
+                    pinned: pinned_int != 0,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            },
+        )?;
+        Ok(memo)
+    }
+
+    /// Update an existing memo (also refreshes updated_at)
+    pub fn update_memo(&self, id: i64, title: &str, body: &str, tags: &str) -> Result<bool, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE memos SET title = ?1, body = ?2, tags = ?3, updated_at = datetime('now') WHERE id = ?4",
+            params![title, body, tags, id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// Delete a memo by ID
+    pub fn delete_memo(&self, id: i64) -> Result<bool, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM memos WHERE id = ?1", params![id])?;
+        Ok(rows > 0)
+    }
+
+    /// Toggle memo pinned status
+    pub fn toggle_memo_pin(&self, id: i64) -> Result<bool, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE memos SET pinned = NOT pinned WHERE id = ?1",
+            params![id],
+        )?;
+        let pinned: bool = conn
+            .query_row(
+                "SELECT pinned FROM memos WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, i32>(0).map(|v| v != 0),
+            )
+            .unwrap_or(false);
+        Ok(pinned)
+    }
+
+    /// Get total memo count
+    pub fn memo_count(&self) -> Result<i64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM memos", [], |row| row.get(0))?;
+        Ok(count)
     }
 
     /// Get a setting value by key; returns None if not set

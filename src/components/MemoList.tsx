@@ -1,0 +1,383 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { Memo } from '../types';
+import { getMemos, createMemo, updateMemo, deleteMemo, toggleMemoPin } from '../api/memos';
+import { useI18n } from '../i18n';
+
+interface Props {
+  searchQuery: string;
+  onCountChange?: (count: number) => void;
+}
+
+export default function MemoList({ searchQuery, onCountChange }: Props) {
+  const { t } = useI18n();
+  const [memos, setMemos] = useState<Memo[]>([]);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editBody, setEditBody] = useState('');
+  const [editTags, setEditTags] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const fetchMemos = useCallback(async () => {
+    try {
+      const filter = searchQuery.trim() ? { search: searchQuery.trim(), limit: 100 } : { limit: 100 };
+      const data = await getMemos(filter);
+      setMemos(data);
+      onCountChange?.(data.length);
+    } catch (err) {
+      console.error('Failed to fetch memos:', err);
+    }
+  }, [searchQuery, onCountChange]);
+
+  useEffect(() => {
+    fetchMemos();
+  }, [fetchMemos]);
+
+  // Auto-save while editing
+  useEffect(() => {
+    if (editingId === null) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await updateMemo(editingId, editTitle, editBody, editTags);
+      } catch (err) {
+        console.error('Failed to save memo:', err);
+      }
+    }, 500);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [editTitle, editBody, editTags, editingId]);
+
+  const handleCreate = async () => {
+    // Save current editing memo before creating new
+    if (editingId !== null) {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      try {
+        await updateMemo(editingId, editTitle, editBody, editTags);
+      } catch (err) {
+        console.error('Failed to save memo before create:', err);
+      }
+    }
+    setIsCreating(true);
+    setEditingId(null);
+    setEditTitle('');
+    setEditBody('');
+    setEditTags('');
+  };
+
+  const handleSaveNew = async () => {
+    if (!editTitle.trim() && !editBody.trim()) {
+      setIsCreating(false);
+      return;
+    }
+    try {
+      await createMemo(editTitle.trim(), editBody.trim(), editTags.trim());
+      setIsCreating(false);
+      setEditTitle('');
+      setEditBody('');
+      setEditTags('');
+      fetchMemos();
+    } catch (err) {
+      console.error('Failed to create memo:', err);
+    }
+  };
+
+  const handleEdit = async (memo: Memo) => {
+    // Save current editing memo before switching
+    if (editingId !== null) {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      try {
+        await updateMemo(editingId, editTitle, editBody, editTags);
+      } catch (err) {
+        console.error('Failed to save memo before switch:', err);
+      }
+    }
+    setIsCreating(false);
+    setEditingId(memo.id);
+    setEditTitle(memo.title);
+    setEditBody(memo.body);
+    setEditTags(memo.tags);
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await deleteMemo(id);
+      if (editingId === id) {
+        setEditingId(null);
+        setIsCreating(false);
+      }
+      fetchMemos();
+    } catch (err) {
+      console.error('Failed to delete memo:', err);
+    }
+  };
+
+  const handleTogglePin = async (id: number) => {
+    try {
+      await toggleMemoPin(id);
+      fetchMemos();
+    } catch (err) {
+      console.error('Failed to toggle memo pin:', err);
+    }
+  };
+
+  // Editor for creating or editing
+  const editor = (isCreating || editingId !== null) ? (
+    <div style={styles.editor}>
+      <input
+        style={styles.editorTitle}
+        placeholder={t.memoTitlePlaceholder}
+        value={editTitle}
+        onChange={(e) => setEditTitle(e.target.value)}
+        onBlur={() => { if (isCreating) handleSaveNew(); }}
+        autoFocus
+      />
+      <textarea
+        style={styles.editorBody}
+        placeholder={t.memoBodyPlaceholder}
+        value={editBody}
+        onChange={(e) => setEditBody(e.target.value)}
+        onBlur={() => { if (isCreating) handleSaveNew(); }}
+        rows={4}
+      />
+      <input
+        style={styles.editorTags}
+        placeholder={t.memoTagsPlaceholder}
+        value={editTags}
+        onChange={(e) => setEditTags(e.target.value)}
+        onBlur={() => { if (isCreating) handleSaveNew(); }}
+      />
+    </div>
+  ) : null;
+
+  // Empty state
+  if (memos.length === 0 && !isCreating) {
+    return (
+      <div style={styles.container}>
+        <div style={{ padding: '8px 12px' }}>
+          <button style={styles.newBtn} onClick={handleCreate}>+ {t.memoNew}</button>
+        </div>
+        {editor}
+        <div style={styles.empty}>
+          <span style={styles.emptyIcon}>{'\uD83D\uDCDD'}</span>
+          <span style={styles.emptyText}>{t.memoEmpty}</span>
+          <span style={styles.emptyHint}>{t.memoEmptyHint}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.container}>
+      <div style={{ padding: '8px 12px', flexShrink: 0 }}>
+        <button style={styles.newBtn} onClick={handleCreate}>+ {t.memoNew}</button>
+      </div>
+      {editor}
+      <div style={styles.list}>
+        {memos.map((memo) => (
+          <div
+            key={memo.id}
+            style={{
+              ...styles.memoItem,
+              ...(editingId === memo.id ? styles.memoItemActive : {}),
+              borderLeft: memo.pinned ? '3px solid #8b5cf6' : '3px solid transparent',
+            }}
+            onClick={() => handleEdit(memo)}
+          >
+            <div style={styles.memoContent}>
+              <div style={styles.memoHeader}>
+                <span style={styles.memoTitle}>{memo.title || '(untitled)'}</span>
+                <div style={styles.memoActions}>
+                  <button
+                    style={{
+                      ...styles.actionBtn,
+                      ...(memo.pinned ? styles.actionBtnActive : {}),
+                    }}
+                    onClick={(e) => { e.stopPropagation(); handleTogglePin(memo.id); }}
+                    title="Pin"
+                  >
+                    {'\uD83D\uDCCC'}
+                  </button>
+                  <button
+                    style={styles.actionBtn}
+                    onClick={(e) => { e.stopPropagation(); handleDelete(memo.id); }}
+                    title="Delete"
+                  >
+                    &times;
+                  </button>
+                </div>
+              </div>
+              <p style={styles.memoPreview}>
+                {memo.body.length > 100 ? memo.body.slice(0, 100) + '...' : memo.body || '\u00A0'}
+              </p>
+              {memo.tags && (
+                <div style={styles.tags}>
+                  {memo.tags.split(',').filter(Boolean).map((tag, i) => (
+                    <span key={i} style={styles.tag}>{tag.trim()}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  newBtn: {
+    width: '100%',
+    padding: '8px 0',
+    border: '1px dashed var(--border)',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: '#8b5cf6',
+    fontSize: '12px',
+    fontWeight: 500,
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+  },
+  editor: {
+    padding: '8px 12px',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--surface)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    flexShrink: 0,
+  },
+  editorTitle: {
+    border: 'none',
+    outline: 'none',
+    background: 'transparent',
+    fontSize: '13px',
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+    padding: '4px 0',
+  },
+  editorBody: {
+    border: 'none',
+    outline: 'none',
+    background: 'transparent',
+    fontSize: '12px',
+    color: 'var(--text-primary)',
+    resize: 'none' as const,
+    fontFamily: 'inherit',
+    padding: '4px 0',
+    lineHeight: 1.5,
+  },
+  editorTags: {
+    border: 'none',
+    outline: 'none',
+    background: 'transparent',
+    fontSize: '11px',
+    color: '#8b5cf6',
+    padding: '4px 0',
+  },
+  list: {
+    flex: 1,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+  },
+  empty: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    padding: '40px 20px',
+  },
+  emptyIcon: {
+    fontSize: '36px',
+    opacity: 0.5,
+  },
+  emptyText: {
+    fontSize: '13px',
+    color: 'var(--text-secondary)',
+    fontWeight: 500,
+  },
+  emptyHint: {
+    fontSize: '11px',
+    color: 'var(--text-muted)',
+  },
+  memoItem: {
+    padding: '10px 12px',
+    borderBottom: '1px solid var(--border)',
+    cursor: 'pointer',
+    transition: 'background 0.1s',
+  },
+  memoItemActive: {
+    background: 'var(--hover-bg)',
+  },
+  memoContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  memoHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  memoTitle: {
+    fontSize: '12px',
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+    flex: 1,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  memoActions: {
+    display: 'flex',
+    gap: '4px',
+    flexShrink: 0,
+  },
+  actionBtn: {
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    fontSize: '14px',
+    cursor: 'pointer',
+    padding: '0 4px',
+    lineHeight: 1,
+    opacity: 0.5,
+    transition: 'opacity 0.15s',
+  },
+  actionBtnActive: {
+    opacity: 1,
+    color: '#8b5cf6',
+  },
+  memoPreview: {
+    fontSize: '11px',
+    color: 'var(--text-secondary)',
+    margin: 0,
+    lineHeight: 1.4,
+    display: '-webkit-box',
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: 'vertical',
+    overflow: 'hidden',
+  },
+  tags: {
+    display: 'flex',
+    gap: '4px',
+    flexWrap: 'wrap',
+    marginTop: '2px',
+  },
+  tag: {
+    display: 'inline-block',
+    padding: '1px 6px',
+    borderRadius: '8px',
+    background: 'var(--hover-bg)',
+    color: '#8b5cf6',
+    fontSize: '10px',
+    fontWeight: 500,
+  },
+};

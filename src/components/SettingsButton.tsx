@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useI18n } from '../i18n';
 import type { Locale } from '../i18n/translations';
-import { getAutostartEnabled, setAutostartEnabled, getShortcut, setShortcut, checkUpdate, openUrl } from '../api/settings';
+import { getAutostartEnabled, setAutostartEnabled, getShortcut, setShortcut, checkUpdate, openUrl, getSetting, setSetting, setAlwaysOnTop } from '../api/settings';
 import type { UpdateInfo } from '../api/settings';
 import { listen } from '@tauri-apps/api/event';
 
@@ -26,13 +26,16 @@ function keyToTauri(key: string): string {
 
 interface SettingsButtonProps {
   onShortcutChange?: (shortcut: string) => void;
+  onMemoEnabledChange?: (enabled: boolean) => void;
 }
 
-export default function SettingsButton({ onShortcutChange }: SettingsButtonProps) {
+export default function SettingsButton({ onShortcutChange, onMemoEnabledChange }: SettingsButtonProps) {
   const { t, locale, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
   const [autostart, setAutostart] = useState(false);
-  const [shortcut, setShortcutState] = useState('Ctrl+Shift+V');
+  const [memoEnabled, setMemoEnabledState] = useState(false);
+  const [alwaysOnTop, setAlwaysOnTopState] = useState(true);
+  const [shortcut, setShortcutState] = useState('Shift+V');
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState('');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'upToDate' | 'hasUpdate' | 'failed'>('idle');
@@ -64,6 +67,13 @@ export default function SettingsButton({ onShortcutChange }: SettingsButtonProps
       getShortcut().then((s) => {
         setShortcutState(s);
         onShortcutChange?.(s);
+      }).catch(console.error);
+      getSetting('memo_enabled').then((v) => {
+        setMemoEnabledState(v === 'true');
+        onMemoEnabledChange?.(v === 'true');
+      }).catch(console.error);
+      getSetting('always_on_top').then((v) => {
+        setAlwaysOnTopState(v === null ? true : v === 'true');
       }).catch(console.error);
     }
   }, [open]);
@@ -157,6 +167,20 @@ export default function SettingsButton({ onShortcutChange }: SettingsButtonProps
       console.error('Failed to toggle autostart:', err);
     }
   }, [autostart]);
+
+  const handleMemoToggle = useCallback(async () => {
+    const newValue = !memoEnabled;
+    await setSetting('memo_enabled', newValue ? 'true' : 'false');
+    setMemoEnabledState(newValue);
+    onMemoEnabledChange?.(newValue);
+  }, [memoEnabled, onMemoEnabledChange]);
+
+  const handleAlwaysOnTopToggle = useCallback(async () => {
+    const newValue = !alwaysOnTop;
+    await setAlwaysOnTop(newValue);
+    await setSetting('always_on_top', newValue ? 'true' : 'false');
+    setAlwaysOnTopState(newValue);
+  }, [alwaysOnTop]);
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateStatus('checking');
@@ -259,6 +283,50 @@ export default function SettingsButton({ onShortcutChange }: SettingsButtonProps
                   style={{
                     ...styles.toggleKnob,
                     ...(autostart ? styles.toggleKnobOn : {}),
+                  }}
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Memo section */}
+          <div style={{ ...styles.section, marginTop: '12px' }}>
+            <label style={styles.label}>{t.memoSetting}</label>
+            <div style={styles.toggleRow}>
+              <span style={styles.toggleLabel}>{t.memoSettingDesc}</span>
+              <button
+                style={{
+                  ...styles.toggle,
+                  ...(memoEnabled ? styles.toggleOn : {}),
+                }}
+                onClick={handleMemoToggle}
+              >
+                <div
+                  style={{
+                    ...styles.toggleKnob,
+                    ...(memoEnabled ? styles.toggleKnobOn : {}),
+                  }}
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Always on top section */}
+          <div style={{ ...styles.section, marginTop: '12px' }}>
+            <label style={styles.label}>{t.alwaysOnTop}</label>
+            <div style={styles.toggleRow}>
+              <span style={styles.toggleLabel}>{t.alwaysOnTopDesc}</span>
+              <button
+                style={{
+                  ...styles.toggle,
+                  ...(alwaysOnTop ? styles.toggleOn : {}),
+                }}
+                onClick={handleAlwaysOnTopToggle}
+              >
+                <div
+                  style={{
+                    ...styles.toggleKnob,
+                    ...(alwaysOnTop ? styles.toggleKnobOn : {}),
                   }}
                 />
               </button>

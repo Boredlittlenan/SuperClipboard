@@ -9,12 +9,21 @@ import {
   copyToClipboard,
   onClipboardChanged,
 } from './api/clipboard';
-import { getShortcut } from './api/settings';
+import { getShortcut, getSetting } from './api/settings';
+import { memoCount } from './api/memos';
 import { I18nProvider, useI18n } from './i18n';
 import CategoryTabs from './components/CategoryTabs';
 import ClipboardList from './components/ClipboardList';
 import SettingsButton from './components/SettingsButton';
+import MemoList from './components/MemoList';
 import './App.css';
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
 
 function AppContent() {
   const { t } = useI18n();
@@ -25,11 +34,19 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<number | null>(null);
   const [currentShortcut, setCurrentShortcut] = useState('Ctrl+Shift+V');
+  const [memoEnabled, setMemoEnabled] = useState(false);
+  const [memoCountState, setMemoCountState] = useState<number | null>(null);
+  const [memoListCount, setMemoListCount] = useState<number>(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Fetch current shortcut on mount
   useEffect(() => {
     getShortcut().then(setCurrentShortcut).catch(console.error);
+  }, []);
+
+  // Load memo_enabled setting on mount
+  useEffect(() => {
+    getSetting('memo_enabled').then((v) => setMemoEnabled(v === 'true')).catch(console.error);
   }, []);
 
   // Fetch entries based on current filter
@@ -59,10 +76,21 @@ function AppContent() {
     }
   }, []);
 
+  // Fetch memo count
+  const fetchMemoCount = useCallback(async () => {
+    if (!memoEnabled) return;
+    try {
+      const count = await memoCount();
+      setMemoCountState(count);
+    } catch (err) {
+      console.error('Failed to fetch memo count:', err);
+    }
+  }, [memoEnabled]);
+
   // Initial load
   useEffect(() => {
-    Promise.all([fetchEntries(), fetchStats()]).finally(() => setLoading(false));
-  }, [fetchEntries, fetchStats]);
+    Promise.all([fetchEntries(), fetchStats(), fetchMemoCount()]).finally(() => setLoading(false));
+  }, [fetchEntries, fetchStats, fetchMemoCount]);
 
   // Listen for real-time clipboard events
   useEffect(() => {
@@ -72,6 +100,7 @@ function AppContent() {
       // Refresh from backend so order and dedup are correct
       fetchEntries();
       fetchStats();
+      fetchMemoCount();
     }).then((fn) => {
       unlisten = fn;
     });
@@ -79,7 +108,7 @@ function AppContent() {
     return () => {
       unlisten?.();
     };
-  }, [fetchEntries, fetchStats]);
+  }, [fetchEntries, fetchStats, fetchMemoCount]);
 
   // Keyboard shortcut: focus search with Ctrl+F
   useEffect(() => {
@@ -142,6 +171,15 @@ function AppContent() {
     }
   }, [fetchEntries, fetchStats, t]);
 
+  // Handle tab change
+  const handleTabChange = useCallback((tab: FilterTab) => {
+    setActiveTab(tab);
+  }, []);
+
+  const handleMemoCountChange = useCallback((count: number) => {
+    setMemoListCount(count);
+  }, []);
+
   // Debounced search
   const [searchInput, setSearchInput] = useState('');
   useEffect(() => {
@@ -161,7 +199,7 @@ function AppContent() {
           <span className="title-text">{t.appTitle}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span className="shortcut-hint">{currentShortcut}</span>
-            <SettingsButton onShortcutChange={setCurrentShortcut} />
+            <SettingsButton onShortcutChange={setCurrentShortcut} onMemoEnabledChange={setMemoEnabled} />
           </div>
         </div>
       </div>
@@ -189,29 +227,44 @@ function AppContent() {
       </div>
 
       {/* Category tabs */}
-      <CategoryTabs activeTab={activeTab} onTabChange={setActiveTab} stats={stats} />
-
-      {/* Clipboard entries list */}
-      <ClipboardList
-        entries={entries}
-        onCopy={handleCopy}
-        onDelete={handleDelete}
-        onTogglePin={handleTogglePin}
-        loading={loading}
+      <CategoryTabs
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        stats={stats}
+        memoEnabled={memoEnabled}
+        memoCount={memoCountState}
       />
+
+      {/* Main content: memo list or clipboard list */}
+      {activeTab === 'memo' ? (
+        <MemoList searchQuery={searchQuery} onCountChange={handleMemoCountChange} />
+      ) : (
+        <ClipboardList
+          entries={entries}
+          onCopy={handleCopy}
+          onDelete={handleDelete}
+          onTogglePin={handleTogglePin}
+          loading={loading}
+        />
+      )}
 
       {/* Footer bar */}
       <div className="footer-bar">
         <span className="footer-text">
-          {t.itemsCount(entries.length)}
+          {activeTab === 'memo'
+            ? t.memoCount(memoListCount)
+            : t.itemsCount(entries.length)}
+          {stats?.dbSize != null && t.storageSize(formatBytes(stats.dbSize))}
         </span>
-        <button
-          className="clear-btn"
-          onClick={handleClear}
-          title={t.clearHistory}
-        >
-          {t.clearHistory}
-        </button>
+        {activeTab !== 'memo' && (
+          <button
+            className="clear-btn"
+            onClick={handleClear}
+            title={t.clearHistory}
+          >
+            {t.clearHistory}
+          </button>
+        )}
       </div>
 
       {/* Copied toast */}

@@ -24,6 +24,23 @@ export interface Stats {
   link: number;
   image: number;
   code: number;
+  dbSize: number;
 }
 
-export type FilterTab = 'all' | Category;
+export interface Memo {
+  id: number;
+  title: string;
+  body: string;
+  tags: string;
+  pinned: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoFilter {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export type FilterTab = 'memo' | 'all' | Category;

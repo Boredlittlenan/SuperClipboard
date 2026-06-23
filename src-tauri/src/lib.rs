@@ -7,7 +7,7 @@ use clipboard::ClipboardMonitor;
 use log::info;
 use serde::Serialize;
 use std::sync::Arc;
-use storage::{ClipboardEntry, QueryFilter, Storage};
+use storage::{ClipboardEntry, QueryFilter, Storage, Memo, MemoFilter};
 use tauri::Manager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Emitter;
@@ -63,6 +63,7 @@ fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, Str
     let link = state.storage.count(Some("link")).map_err(|e| e.to_string())?;
     let image = state.storage.count(Some("image")).map_err(|e| e.to_string())?;
     let code = state.storage.count(Some("code")).map_err(|e| e.to_string())?;
+    let db_size = state.storage.db_size().map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
         "total": total,
@@ -70,6 +71,7 @@ fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, Str
         "link": link,
         "image": image,
         "code": code,
+        "dbSize": db_size,
     }))
 }
 
@@ -194,6 +196,70 @@ fn set_shortcut(
     Ok(new_shortcut)
 }
 
+/// Set window always-on-top at runtime
+#[tauri::command]
+fn set_always_on_top(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_always_on_top(enabled).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+// ─── Memo Commands ──────────────────────────────────────────────
+
+#[tauri::command]
+fn get_memos(
+    state: tauri::State<'_, AppState>,
+    filter: Option<MemoFilter>,
+) -> Result<Vec<Memo>, String> {
+    state
+        .storage
+        .get_memos(&filter.unwrap_or_default())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_memo(
+    state: tauri::State<'_, AppState>,
+    title: String,
+    body: String,
+    tags: String,
+) -> Result<Memo, String> {
+    state
+        .storage
+        .create_memo(&title, &body, &tags)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_memo(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    title: String,
+    body: String,
+    tags: String,
+) -> Result<bool, String> {
+    state
+        .storage
+        .update_memo(id, &title, &body, &tags)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+    state.storage.delete_memo(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn toggle_memo_pin(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+    state.storage.toggle_memo_pin(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn memo_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
+    state.storage.memo_count().map_err(|e| e.to_string())
+}
+
 /// Open a URL in the system default browser
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -299,10 +365,15 @@ pub fn run() {
             monitor.start(app.handle().clone(), storage.clone());
 
             // Read saved shortcut or use default
-            let default_shortcut = "Ctrl+Shift+V".to_string();
+            let default_shortcut = "Shift+V".to_string();
             let saved_shortcut = storage.get_setting("shortcut").ok().flatten();
             let shortcut = saved_shortcut.unwrap_or(default_shortcut.clone());
             info!("Global shortcut: {}", shortcut);
+
+            // Read always-on-top setting before moving storage
+            let always_on_top = storage.get_setting("always_on_top").ok().flatten()
+                .map(|v| v == "true")
+                .unwrap_or(true);
 
             app.manage(AppState {
                 storage,
@@ -324,6 +395,11 @@ pub fn run() {
                     }
                 }
             });
+
+            // Apply always-on-top setting (default: true, tauri.conf.json also sets true)
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_always_on_top(always_on_top);
+            }
 
             // Set up system tray menu and click handler
             let handle = app.handle().clone();
@@ -392,6 +468,13 @@ pub fn run() {
             set_autostart_enabled,
             get_shortcut,
             set_shortcut,
+            get_memos,
+            create_memo,
+            update_memo,
+            delete_memo,
+            toggle_memo_pin,
+            memo_count,
+            set_always_on_top,
             check_update,
             open_url,
         ])

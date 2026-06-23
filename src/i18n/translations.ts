@@ -35,8 +35,23 @@ export interface Translations {
 
   // Footer
   itemsCount: (n: number) => string;
+  storageSize: (formatted: string) => string;
   clearHistory: string;
   clearConfirm: string;
+
+  // Memos
+  memoTab: string;
+  memoDrawerTitle: string;
+  memoSearchPlaceholder: string;
+  memoNew: string;
+  memoTitlePlaceholder: string;
+  memoBodyPlaceholder: string;
+  memoTagsPlaceholder: string;
+  memoEmpty: string;
+  memoEmptyHint: string;
+  memoCount: (n: number) => string;
+  memoSetting: string;
+  memoSettingDesc: string;
 
   // Toast
   copied: string;
@@ -48,6 +63,8 @@ export interface Translations {
   langEn: string;
   autostart: string;
   autostartDesc: string;
+  alwaysOnTop: string;
+  alwaysOnTopDesc: string;
   shortcut: string;
   shortcutDesc: string;
   shortcutRecording: string;
@@ -62,7 +79,7 @@ export interface Translations {
 
 export const zhCN: Translations = {
   appTitle: 'SuperClipboard3',
-  shortcutHint: 'Ctrl+Shift+V',
+  shortcutHint: 'Shift+V',
 
   searchPlaceholder: '搜索剪贴板...',
   clearSearch: '清除搜索',
@@ -89,8 +106,22 @@ export const zhCN: Translations = {
   noEntriesHint: '复制一些内容开始使用',
 
   itemsCount: (n) => `${n} 条记录`,
+  storageSize: (s) => ` · ${s}`,
   clearHistory: '清除历史',
   clearConfirm: '确定清除所有未置顶的记录吗？',
+
+  memoTab: '备忘录',
+  memoDrawerTitle: '备忘录',
+  memoSearchPlaceholder: '搜索备忘录...',
+  memoNew: '新建备忘录',
+  memoTitlePlaceholder: '标题',
+  memoBodyPlaceholder: '写点什么...',
+  memoTagsPlaceholder: '添加标签，逗号分隔',
+  memoEmpty: '还没有备忘录',
+  memoEmptyHint: '点击新建开始记录',
+  memoCount: (n) => `${n} 条备忘录`,
+  memoSetting: '备忘录',
+  memoSettingDesc: '在标签栏显示备忘录入口',
 
   copied: '已复制！',
 
@@ -100,6 +131,8 @@ export const zhCN: Translations = {
   langEn: 'English',
   autostart: '开机自启',
   autostartDesc: '系统启动时自动运行',
+  alwaysOnTop: '窗口置顶',
+  alwaysOnTopDesc: '窗口始终显示在最前面',
   shortcut: '快捷键',
   shortcutDesc: '唤起/隐藏窗口',
   shortcutRecording: '按下新的组合键...',
@@ -114,7 +147,7 @@ export const zhCN: Translations = {
 
 export const en: Translations = {
   appTitle: 'SuperClipboard3',
-  shortcutHint: 'Ctrl+Shift+V',
+  shortcutHint: 'Shift+V',
 
   searchPlaceholder: 'Search clipboard...',
   clearSearch: 'Clear search',
@@ -141,8 +174,22 @@ export const en: Translations = {
   noEntriesHint: 'Copy something to get started',
 
   itemsCount: (n) => `${n} item${n !== 1 ? 's' : ''}`,
+  storageSize: (s) => ` · ${s}`,
   clearHistory: 'Clear History',
   clearConfirm: 'Clear all non-pinned entries?',
+
+  memoTab: 'Memos',
+  memoDrawerTitle: 'Memos',
+  memoSearchPlaceholder: 'Search memos...',
+  memoNew: 'New Memo',
+  memoTitlePlaceholder: 'Title',
+  memoBodyPlaceholder: 'Write something...',
+  memoTagsPlaceholder: 'Tags, comma separated',
+  memoEmpty: 'No memos yet',
+  memoEmptyHint: 'Click to create your first memo',
+  memoCount: (n) => `${n} memo${n !== 1 ? 's' : ''}`,
+  memoSetting: 'Memos',
+  memoSettingDesc: 'Show memo tab in sidebar',
 
   copied: 'Copied!',
 
@@ -152,6 +199,8 @@ export const en: Translations = {
   langEn: 'English',
   autostart: 'Auto-start',
   autostartDesc: 'Launch on system startup',
+  alwaysOnTop: 'Always on Top',
+  alwaysOnTopDesc: 'Keep window above others',
   shortcut: 'Shortcut',
   shortcutDesc: 'Show/hide window',
   shortcutRecording: 'Press new shortcut...',

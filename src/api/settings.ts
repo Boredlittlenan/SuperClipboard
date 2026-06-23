@@ -46,3 +46,8 @@ export async function checkUpdate(): Promise<UpdateInfo> {
 export async function openUrl(url: string): Promise<void> {
   return invoke('open_url', { url });
 }
+
+/** Set window always-on-top */
+export async function setAlwaysOnTop(enabled: boolean): Promise<void> {
+  return invoke('set_always_on_top', { enabled });
+}

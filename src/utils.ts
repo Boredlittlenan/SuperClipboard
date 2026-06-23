@@ -30,7 +30,9 @@ export function getCategoryLabel(category: Category, t: Translations): string {
 
 /** Get tab label from translations */
 export function getTabLabel(tab: FilterTab, t: Translations): string {
+  if (tab === 'memo') return t.memoTab;
   const map: Record<FilterTab, string> = {
+    memo: t.memoTab,
     all: t.tabAll,
     text: t.tabText,
     link: t.tabLink,

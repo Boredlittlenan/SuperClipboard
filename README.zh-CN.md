@@ -10,12 +10,16 @@
 - 实时监控：SHA-256 哈希去重，避免重复存储
 - SQLite 持久化存储，支持索引查询，搜索快速
 - 置顶重要条目，一键复制回剪贴板
-- 全局快捷键显示/隐藏窗口（可在设置中自定义快捷键）
+- 备忘录功能：独立标签页，支持标题/正文/标签/搜索/置顶/自动保存
+- 全局快捷键显示/隐藏窗口（默认：Shift+V，可在设置中自定义）
+- 窗口置顶开关（默认开启），窗口始终显示在最前面
 - 系统托盘集成，右键菜单支持打开设置和退出应用
 - 自动适配深色/浅色主题
 - 设置面板，支持中英文语言切换
 - 开机自启动（Windows 注册表）
 - 用户偏好设置持久化存储（SQLite）
+- 标签栏支持鼠标滚轮水平滑动
+- 底栏显示数据库占用大小
 - 一键检查更新（GitHub Releases）
 
 ## 技术栈
@@ -44,14 +48,18 @@ src-tauri/
   src/
     clipboard.rs    # 剪贴板监控服务
     classifier.rs   # 内容类型分类
-    storage.rs      # SQLite 存储层（条目 + 设置）
+    storage.rs      # SQLite 存储层（条目 + 备忘录 + 设置）
     autostart.rs    # 开机自启动（Windows 注册表）
     lib.rs          # Tauri 命令与应用初始化
     main.rs         # 入口文件
 src/
   components/       # React UI 组件
-    SettingsButton.tsx  # 设置面板（语言选择、快捷键、开机自启）
+    SettingsButton.tsx  # 设置面板（语言、快捷键、开机自启、窗口置顶、备忘录）
+    MemoList.tsx        # 备忘录列表（增删改查、自动保存、置顶）
   api/              # Tauri 命令封装
+    clipboard.ts    # 剪贴板 API
+    settings.ts     # 设置 API
+    memos.ts        # 备忘录 CRUD API
   i18n/             # 国际化（翻译文件 + Context）
   types/            # TypeScript 类型定义
 ```
