@@ -29,12 +29,13 @@ function keyToTauri(key: string): string {
 interface SettingsButtonProps {
   onShortcutChange?: (shortcut: string) => void;
   onMemoEnabledChange?: (enabled: boolean) => void;
+  onMemoColorChange?: (color: string | null) => void;
   onRawPreviewChange?: (enabled: boolean) => void;
   onThemeModeChange?: (mode: ThemeMode) => void;
   onThemeAccentChange?: (accent: string) => void;
 }
 
-export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, onRawPreviewChange, onThemeModeChange, onThemeAccentChange }: SettingsButtonProps) {
+export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, onMemoColorChange, onRawPreviewChange, onThemeModeChange, onThemeAccentChange }: SettingsButtonProps) {
   const { t, locale, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
   const [autostart, setAutostart] = useState(false);
@@ -45,6 +46,9 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
   const [themeAccent, setThemeAccentState] = useState('default');
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [appVersion, setAppVersion] = useState('');
+  const [memoColor, setMemoColor] = useState<string | null>(null);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [hexInput, setHexInput] = useState('');
   const [shortcut, setShortcutState] = useState('Shift+V');
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState('');
@@ -52,10 +56,20 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const recorderRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const colorRef = useRef<HTMLDivElement>(null);
   const keysRef = useRef<{ modifiers: Set<string>; mainKey: string | null }>({
     modifiers: new Set(),
     mainKey: null,
   });
+
+  const MEMO_PRESETS = ['#ec5f9e', '#2563eb', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#14b8a6', '#6366f1'];
+
+  function hexToRgba(hex: string, alpha: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
 
   // Listen for "open-settings" event from tray menu
   useEffect(() => {
@@ -101,6 +115,11 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
       getSetting('auto_update').then((v) => {
         setAutoUpdate(v === 'true');
       }).catch(console.error);
+      getSetting('memo_color').then((v) => {
+        setMemoColor(v);
+        setHexInput(v || '');
+      }).catch(console.error);
+      setShowColorPicker(false);
       getVersion().then(setAppVersion).catch(console.error);
     }
   }, [open, onMemoEnabledChange, onShortcutChange, onThemeModeChange, onThemeAccentChange]);
@@ -114,11 +133,25 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
         setRecording(false);
         setError('');
         setUpdateStatus('idle');
+        setShowColorPicker(false);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
+
+  // Close color picker when clicking outside it (but inside the panel)
+  useEffect(() => {
+    if (!showColorPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (colorRef.current && !colorRef.current.contains(e.target as Node)) {
+        setShowColorPicker(false);
+      }
+    };
+    // Delay to avoid the same click that opens it
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0);
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
+  }, [showColorPicker]);
 
   // Keyboard capture for shortcut recording
   useEffect(() => {
@@ -201,6 +234,21 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
     setMemoEnabledState(newValue);
     onMemoEnabledChange?.(newValue);
   }, [memoEnabled, onMemoEnabledChange]);
+
+  const handleMemoColorChange = useCallback(async (color: string) => {
+    if (!/^#[0-9a-fA-F]{6}$/.test(color)) return;
+    await setSetting('memo_color', color);
+    setMemoColor(color);
+    setHexInput(color);
+    onMemoColorChange?.(color);
+  }, [onMemoColorChange]);
+
+  const handleMemoColorReset = useCallback(async () => {
+    await setSetting('memo_color', '');
+    setMemoColor(null);
+    setHexInput('');
+    onMemoColorChange?.(null);
+  }, [onMemoColorChange]);
 
   const handleAlwaysOnTopToggle = useCallback(async () => {
     const newValue = !alwaysOnTop;
@@ -403,6 +451,61 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
               <div style={{ ...styles.toggleKnob, ...(memoEnabled ? styles.toggleKnobOn : {}) }} />
             </button>
           </div>
+
+          {/* Memo color picker (only when memo is enabled) */}
+          {memoEnabled && (
+            <div style={{ ...styles.compactRow, position: 'relative' }} title={t.memoColorDesc}>
+              <span style={styles.rowLabel}>{t.memoColor}</span>
+              <div ref={colorRef} style={{ position: 'relative' }}>
+                <button
+                  style={styles.memoColorBtn}
+                  onClick={(e) => { e.stopPropagation(); setShowColorPicker(!showColorPicker); }}
+                >
+                  <span style={{
+                    ...styles.memoColorSwatch,
+                    background: memoColor || 'var(--memo-contrast)',
+                  }} />
+                  {memoColor && <span style={styles.memoColorResetMini} onClick={(e) => { e.stopPropagation(); handleMemoColorReset(); }}>{'\u2715'}</span>}
+                </button>
+                {showColorPicker && (
+                  <div style={styles.colorPicker} onClick={(e) => e.stopPropagation()}>
+                    <div style={styles.colorGrid}>
+                      {MEMO_PRESETS.map((c) => (
+                        <button
+                          key={c}
+                          style={{
+                            ...styles.colorPreset,
+                            background: c,
+                            ...(memoColor === c ? styles.colorPresetActive : {}),
+                          }}
+                          onClick={() => handleMemoColorChange(c)}
+                        />
+                      ))}
+                    </div>
+                    <div style={styles.colorInputRow}>
+                      <span style={styles.colorHash}>#</span>
+                      <input
+                        style={styles.colorHexInput}
+                        value={hexInput.replace('#', '')}
+                        onChange={(e) => {
+                          const val = e.target.value.replace('#', '').slice(0, 6);
+                          setHexInput(val);
+                          if (/^[0-9a-fA-F]{6}$/.test(val)) {
+                            handleMemoColorChange('#' + val);
+                          }
+                        }}
+                        placeholder="ec5f9e"
+                        maxLength={6}
+                      />
+                      <button style={styles.colorResetBtn} onClick={handleMemoColorReset}>
+                        {t.memoColorReset}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Always on top */}
           <div style={styles.compactRow} title={t.alwaysOnTopDesc}>
@@ -753,6 +856,92 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '11px',
     fontWeight: 500,
     cursor: 'pointer',
+    flexShrink: 0,
+  },
+  memoColorBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '2px',
+    padding: '2px',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    background: 'transparent',
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+    position: 'relative',
+  },
+  memoColorSwatch: {
+    width: '18px',
+    height: '18px',
+    borderRadius: '4px',
+    flexShrink: 0,
+  },
+  memoColorResetMini: {
+    fontSize: '9px',
+    color: 'var(--text-muted)',
+    lineHeight: 1,
+    padding: '0 2px',
+  },
+  colorPicker: {
+    position: 'absolute',
+    top: '28px',
+    right: '0',
+    background: 'var(--surface)',
+    border: '1px solid var(--border)',
+    borderRadius: '8px',
+    padding: '10px',
+    zIndex: 300,
+    width: '180px',
+  },
+  colorGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, 1fr)',
+    gap: '6px',
+    marginBottom: '8px',
+  },
+  colorPreset: {
+    width: '100%',
+    aspectRatio: '1',
+    border: '2px solid transparent',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+    padding: 0,
+  },
+  colorPresetActive: {
+    border: '2px solid var(--text-primary)',
+  },
+  colorInputRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+  },
+  colorHash: {
+    fontSize: '11px',
+    color: 'var(--text-muted)',
+    fontFamily: 'monospace',
+  },
+  colorHexInput: {
+    flex: 1,
+    padding: '3px 4px',
+    border: '1px solid var(--border)',
+    borderRadius: '4px',
+    background: 'var(--bg)',
+    color: 'var(--text-primary)',
+    fontSize: '11px',
+    fontFamily: 'monospace',
+    outline: 'none',
+    minWidth: 0,
+  },
+  colorResetBtn: {
+    padding: '3px 8px',
+    border: '1px solid var(--border)',
+    borderRadius: '4px',
+    background: 'transparent',
+    color: 'var(--text-secondary)',
+    fontSize: '10px',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
     flexShrink: 0,
   },
 };

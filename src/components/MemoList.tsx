@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Memo } from '../types';
 import { getMemos, createMemo, updateMemo, deleteMemo, toggleMemoPin } from '../api/memos';
-import { formatRelativeTime } from '../utils';
 import { useI18n } from '../i18n';
 import { TrashIcon } from './icons/TrashIcon';
 
@@ -18,7 +17,6 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
   const [editBody, setEditBody] = useState('');
   const [editTags, setEditTags] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const [hoveredId, setHoveredId] = useState<number | null>(null);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const editingIdRef = useRef<number | null>(null);
@@ -70,7 +68,7 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
   const handleMemoClick = async (memo: Memo) => {
     if (editingIdRef.current === memo.id) return;
 
-    // 1. Save current editing memo's latest DOM values
+    // 1. Save current memo's latest DOM values
     if (editingIdRef.current !== null) {
       const id = editingIdRef.current;
       const vals = readEditorValues();
@@ -207,7 +205,7 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
   if (memos.length === 0 && !isCreating) {
     return (
       <div style={styles.container}>
-        <div style={styles.newBtnWrap}>
+        <div style={{ padding: '8px 12px' }}>
           <button style={styles.newBtn} onClick={handleCreate}>+ {t.memoNew}</button>
         </div>
         {editor}
@@ -222,77 +220,57 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
 
   return (
     <div style={styles.container}>
-      <div style={styles.newBtnWrap}>
+      <div style={{ padding: '8px 12px', flexShrink: 0 }}>
         <button style={styles.newBtn} onClick={handleCreate}>+ {t.memoNew}</button>
       </div>
       {editor}
       <div style={styles.list}>
-        {memos.map((memo) => {
-          const isActive = editingId === memo.id;
-          const isHovered = hoveredId === memo.id;
-          const displayTime = memo.updated_at || memo.created_at;
-          return (
-            <div
-              key={memo.id}
-              style={{
-                ...styles.memoItem,
-                ...(isActive ? styles.memoItemActive : {}),
-                ...(isHovered && !isActive ? styles.memoItemHover : {}),
-              }}
-              onClick={() => handleMemoClick(memo)}
-              onMouseEnter={() => setHoveredId(memo.id)}
-              onMouseLeave={() => setHoveredId(null)}
-            >
-              {/* Left accent bar */}
-              <div style={{
-                ...styles.accentBar,
-                background: memo.pinned ? 'var(--memo-contrast)' : 'var(--border)',
-              }} />
-
-              <div style={styles.memoBody}>
-                <div style={styles.memoHeader}>
-                  <span style={styles.memoTitle}>{memo.title || '(untitled)'}</span>
-                  <div style={styles.memoActions}>
-                    <button
-                      style={{
-                        ...styles.actionBtn,
-                        ...(memo.pinned ? styles.actionBtnActive : {}),
-                      }}
-                      onClick={(e) => { e.stopPropagation(); handleTogglePin(memo.id); }}
-                      title="Pin"
-                    >
-                      {'\uD83D\uDCCC'}
-                    </button>
-                    <button
-                      style={styles.actionBtn}
-                      onClick={(e) => { e.stopPropagation(); handleDelete(memo.id); }}
-                      title={t.delete}
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
+        {memos.map((memo) => (
+          <div
+            key={memo.id}
+            style={{
+              ...styles.memoItem,
+              ...(editingId === memo.id ? styles.memoItemActive : {}),
+              borderLeft: memo.pinned ? '3px solid var(--accent)' : '3px solid transparent',
+            }}
+            onClick={() => handleMemoClick(memo)}
+          >
+            <div style={styles.memoContent}>
+              <div style={styles.memoHeader}>
+                <span style={styles.memoTitle}>{memo.title || '(untitled)'}</span>
+                <div style={styles.memoActions}>
+                  <button
+                    style={{
+                      ...styles.actionBtn,
+                      ...(memo.pinned ? styles.actionBtnActive : {}),
+                    }}
+                    onClick={(e) => { e.stopPropagation(); handleTogglePin(memo.id); }}
+                    title="Pin"
+                  >
+                    {'\uD83D\uDCCC'}
+                  </button>
+                  <button
+                    style={styles.actionBtn}
+                    onClick={(e) => { e.stopPropagation(); handleDelete(memo.id); }}
+                    title={t.delete}
+                  >
+                    <TrashIcon />
+                  </button>
                 </div>
-                <p style={styles.memoPreview}>
-                  {memo.body.length > 100 ? memo.body.slice(0, 100) + '...' : memo.body || '\u00A0'}
-                </p>
-                {(memo.tags || displayTime) && (
-                  <div style={styles.memoFooter}>
-                    {memo.tags && (
-                      <div style={styles.tags}>
-                        {memo.tags.split(',').filter(Boolean).map((tag, i) => (
-                          <span key={i} style={styles.tag}>{tag.trim()}</span>
-                        ))}
-                      </div>
-                    )}
-                    {displayTime && (
-                      <span style={styles.memoTime}>{formatRelativeTime(displayTime, t)}</span>
-                    )}
-                  </div>
-                )}
               </div>
+              <p style={styles.memoPreview}>
+                {memo.body.length > 100 ? memo.body.slice(0, 100) + '...' : memo.body || '\u00A0'}
+              </p>
+              {memo.tags && (
+                <div style={styles.tags}>
+                  {memo.tags.split(',').filter(Boolean).map((tag, i) => (
+                    <span key={i} style={styles.tag}>{tag.trim()}</span>
+                  ))}
+                </div>
+              )}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -305,28 +283,21 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     overflow: 'hidden',
   },
-  newBtnWrap: {
-    padding: '10px 12px 4px',
-    flexShrink: 0,
-  },
   newBtn: {
     width: '100%',
-    padding: '10px 0',
-    border: 'none',
-    borderRadius: '8px',
-    background: 'var(--memo-contrast-bg)',
+    padding: '8px 0',
+    border: '1px dashed var(--memo-contrast)',
+    borderRadius: '6px',
+    background: 'transparent',
     color: 'var(--memo-contrast)',
     fontSize: '12px',
-    fontWeight: 600,
+    fontWeight: 500,
     cursor: 'pointer',
     transition: 'all 0.15s',
-    letterSpacing: '0.3px',
   },
   editor: {
-    margin: '8px 12px',
-    padding: '10px 14px',
-    border: '1px solid var(--memo-contrast)',
-    borderRadius: '8px',
+    padding: '8px 12px',
+    borderBottom: '1px solid var(--border)',
     background: 'var(--surface)',
     display: 'flex',
     flexDirection: 'column',
@@ -337,35 +308,34 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     outline: 'none',
     background: 'transparent',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: 600,
     color: 'var(--text-primary)',
-    padding: '2px 0',
+    padding: '4px 0',
   },
   editorBody: {
     border: 'none',
     outline: 'none',
     background: 'transparent',
-    fontSize: '13px',
+    fontSize: '12px',
     color: 'var(--text-primary)',
     resize: 'none' as const,
     fontFamily: 'inherit',
-    padding: '2px 0',
-    lineHeight: 1.6,
+    padding: '4px 0',
+    lineHeight: 1.5,
   },
   editorTags: {
     border: 'none',
     outline: 'none',
     background: 'transparent',
     fontSize: '11px',
-    color: 'var(--memo-contrast)',
-    padding: '2px 0',
+    color: '#8b5cf6',
+    padding: '4px 0',
   },
   list: {
     flex: 1,
     overflowY: 'auto',
     overflowX: 'hidden',
-    padding: '4px 12px 8px',
   },
   empty: {
     flex: 1,
@@ -373,12 +343,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '10px',
+    gap: '8px',
     padding: '40px 20px',
   },
   emptyIcon: {
-    fontSize: '40px',
-    opacity: 0.35,
+    fontSize: '36px',
+    opacity: 0.5,
   },
   emptyText: {
     fontSize: '13px',
@@ -390,39 +360,27 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
   },
   memoItem: {
-    display: 'flex',
-    margin: '6px 0',
-    borderRadius: '8px',
-    border: '1px solid var(--border)',
-    overflow: 'hidden',
+    padding: '10px 12px',
+    borderBottom: '1px solid var(--border)',
     cursor: 'pointer',
-    transition: 'all 0.12s ease',
-    background: 'transparent',
-  },
-  memoItemHover: {
-    background: 'var(--hover-bg)',
+    transition: 'background 0.1s',
   },
   memoItemActive: {
-    background: 'var(--memo-contrast-bg)',
-    borderColor: 'var(--memo-contrast)',
+    background: 'var(--hover-bg)',
   },
-  accentBar: {
-    width: '3px',
-    flexShrink: 0,
-    transition: 'background 0.15s',
-  },
-  memoBody: {
-    flex: 1,
-    padding: '10px 12px',
-    minWidth: 0,
+  memoContent: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '5px',
+    gap: '4px',
   },
   memoHeader: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    background: 'var(--memo-contrast-bg)',
+    padding: '4px 6px',
+    borderRadius: '4px',
+    margin: '-2px -4px 2px -4px',
   },
   memoTitle: {
     fontSize: '13px',
@@ -435,61 +393,46 @@ const styles: Record<string, React.CSSProperties> = {
   },
   memoActions: {
     display: 'flex',
-    gap: '2px',
+    gap: '4px',
     flexShrink: 0,
   },
   actionBtn: {
-    width: '22px',
-    height: '22px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
     border: 'none',
-    borderRadius: '4px',
     background: 'transparent',
     color: 'var(--text-muted)',
-    fontSize: '12px',
+    fontSize: '14px',
     cursor: 'pointer',
+    padding: '0 4px',
+    lineHeight: 1,
     opacity: 0.5,
-    transition: 'all 0.15s',
+    transition: 'opacity 0.15s',
   },
   actionBtnActive: {
     opacity: 1,
-    color: 'var(--memo-contrast)',
+    color: 'var(--accent)',
   },
   memoPreview: {
     fontSize: '13px',
     color: 'var(--text-secondary)',
     margin: 0,
-    lineHeight: 1.5,
+    lineHeight: 1.4,
     display: '-webkit-box',
     WebkitLineClamp: 2,
     WebkitBoxOrient: 'vertical',
     overflow: 'hidden',
   },
-  memoFooter: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '8px',
-    marginTop: '2px',
-  },
-  memoTime: {
-    fontSize: '10px',
-    color: 'var(--text-muted)',
-    flexShrink: 0,
-  },
   tags: {
     display: 'flex',
     gap: '4px',
     flexWrap: 'wrap',
+    marginTop: '2px',
   },
   tag: {
     display: 'inline-block',
-    padding: '1px 8px',
+    padding: '1px 6px',
     borderRadius: '8px',
-    background: 'var(--memo-contrast-bg)',
-    color: 'var(--memo-contrast)',
+    background: 'var(--hover-bg)',
+    color: 'var(--accent)',
     fontSize: '10px',
     fontWeight: 500,
   },

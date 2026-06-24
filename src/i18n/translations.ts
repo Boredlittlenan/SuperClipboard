@@ -56,6 +56,9 @@ export interface Translations {
   memoCount: (n: number) => string;
   memoSetting: string;
   memoSettingDesc: string;
+  memoColor: string;
+  memoColorDesc: string;
+  memoColorReset: string;
 
   // Toast
   copied: string;
@@ -144,6 +147,9 @@ export const zhCN: Translations = {
   memoCount: (n) => `${n} 条备忘录`,
   memoSetting: '备忘录',
   memoSettingDesc: '在标签栏显示备忘录入口',
+  memoColor: '备忘录配色',
+  memoColorDesc: '自定义备忘录模块配色，不受主题影响',
+  memoColorReset: '重置',
 
   copied: '已复制！',
 
@@ -230,6 +236,9 @@ export const en: Translations = {
   memoCount: (n) => `${n} memo${n !== 1 ? 's' : ''}`,
   memoSetting: 'Memos',
   memoSettingDesc: 'Show memo tab in sidebar',
+  memoColor: 'Memo Color',
+  memoColorDesc: 'Customize memo module color, independent of theme',
+  memoColorReset: 'Reset',
 
   copied: 'Copied!',
 

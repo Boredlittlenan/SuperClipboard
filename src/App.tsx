@@ -39,6 +39,7 @@ function AppContent() {
   const [memoEnabled, setMemoEnabled] = useState(false);
   const [memoCountState, setMemoCountState] = useState<number | null>(null);
   const [memoListCount, setMemoListCount] = useState<number>(0);
+  const [memoColor, setMemoColor] = useState<string | null>(null);
   const [rawPreview, setRawPreview] = useState(false);
   const [themeAccent, setThemeAccent] = useState('default');
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
@@ -55,6 +56,11 @@ function AppContent() {
   // Load memo_enabled setting on mount
   useEffect(() => {
     getSetting('memo_enabled').then((v) => setMemoEnabled(v === 'true')).catch(console.error);
+  }, []);
+
+  // Load memo_color setting on mount
+  useEffect(() => {
+    getSetting('memo_color').then((v) => setMemoColor(v || null)).catch(console.error);
   }, []);
 
   // Load raw_preview setting on mount
@@ -103,6 +109,21 @@ function AppContent() {
     document.documentElement.dataset.theme = resolvedTheme;
     document.documentElement.dataset.accent = themeAccent;
   }, [resolvedTheme, themeAccent]);
+
+  // Apply custom memo color as CSS variable override
+  useEffect(() => {
+    const root = document.documentElement;
+    if (memoColor) {
+      const r = parseInt(memoColor.slice(1, 3), 16);
+      const g = parseInt(memoColor.slice(3, 5), 16);
+      const b = parseInt(memoColor.slice(5, 7), 16);
+      root.style.setProperty('--memo-contrast', memoColor);
+      root.style.setProperty('--memo-contrast-bg', `rgba(${r}, ${g}, ${b}, 0.1)`);
+    } else {
+      root.style.removeProperty('--memo-contrast');
+      root.style.removeProperty('--memo-contrast-bg');
+    }
+  }, [memoColor]);
 
   // Auto-check for updates on startup if enabled
   useEffect(() => {
@@ -295,6 +316,7 @@ function AppContent() {
             <SettingsButton
               onShortcutChange={setCurrentShortcut}
               onMemoEnabledChange={setMemoEnabled}
+              onMemoColorChange={setMemoColor}
               onRawPreviewChange={setRawPreview}
               onThemeModeChange={setThemeMode}
               onThemeAccentChange={setThemeAccent}
