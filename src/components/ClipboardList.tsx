@@ -8,6 +8,7 @@ interface Props {
   onDelete: (id: number) => void;
   onTogglePin: (id: number) => void;
   onEdit: (id: number, content: string) => Promise<void>;
+  rawPreview: boolean;
   loading: boolean;
 }
 
@@ -17,6 +18,7 @@ export default function ClipboardList({
   onDelete,
   onTogglePin,
   onEdit,
+  rawPreview,
   loading,
 }: Props) {
   const { t } = useI18n();
@@ -50,6 +52,7 @@ export default function ClipboardList({
           onDelete={onDelete}
           onTogglePin={onTogglePin}
           onEdit={onEdit}
+          rawPreview={rawPreview}
         />
       ))}
     </div>

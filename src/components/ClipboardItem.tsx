@@ -9,9 +9,10 @@ interface Props {
   onDelete: (id: number) => void;
   onTogglePin: (id: number) => void;
   onEdit: (id: number, content: string) => Promise<void>;
+  rawPreview?: boolean;
 }
 
-export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, onEdit }: Props) {
+export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, onEdit, rawPreview }: Props) {
   const [hovered, setHovered] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(entry.content);
@@ -135,6 +136,8 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                 alt="Clipboard image"
                 style={styles.imagePreview}
               />
+            ) : rawPreview ? (
+              <pre style={styles.rawPreview}>{entry.content}</pre>
             ) : entry.category === 'code' ? (
               <pre style={styles.codePreview}>{entry.preview}</pre>
             ) : (
@@ -288,6 +291,20 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitLineClamp: 3,
     WebkitBoxOrient: 'vertical',
     whiteSpace: 'pre-wrap',
+  },
+  rawPreview: {
+    margin: 0,
+    fontSize: '12px',
+    lineHeight: 1.4,
+    color: 'var(--text-primary)',
+    fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
+    background: 'var(--code-bg)',
+    padding: '6px 8px',
+    borderRadius: '4px',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+    maxHeight: '300px',
+    overflowY: 'auto',
   },
   imagePreview: {
     maxWidth: '100%',

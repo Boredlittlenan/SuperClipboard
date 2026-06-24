@@ -54,7 +54,11 @@ export function formatRelativeTime(isoString: string, t: Translations): string {
   if (diffSec < 60) return t.justNow;
   if (diffSec < 3600) return t.minutesAgo(Math.floor(diffSec / 60));
   if (diffSec < 86400) return t.hoursAgo(Math.floor(diffSec / 3600));
-  if (diffSec < 604800) return t.daysAgo(Math.floor(diffSec / 86400));
 
-  return date.toLocaleDateString();
+  // Show concrete date/time for entries older than 24 hours
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${month}/${day} ${hours}:${minutes}`;
 }

@@ -72,6 +72,11 @@ export interface Translations {
   autostartDesc: string;
   alwaysOnTop: string;
   alwaysOnTopDesc: string;
+  rawPreview: string;
+  rawPreviewDesc: string;
+  autoUpdate: string;
+  autoUpdateDesc: string;
+  version: string;
   shortcut: string;
   shortcutDesc: string;
   shortcutRecording: string;
@@ -147,6 +152,11 @@ export const zhCN: Translations = {
   autostartDesc: '系统启动时自动运行',
   alwaysOnTop: '窗口置顶',
   alwaysOnTopDesc: '窗口始终显示在最前面',
+  rawPreview: '原格式预览',
+  rawPreviewDesc: '以原始格式显示剪贴板内容',
+  autoUpdate: '自动检查更新',
+  autoUpdateDesc: '每次启动时自动检查更新',
+  version: '版本号',
   shortcut: '快捷键',
   shortcutDesc: '唤起/隐藏窗口',
   shortcutRecording: '按下新的组合键...',
@@ -222,6 +232,11 @@ export const en: Translations = {
   autostartDesc: 'Launch on system startup',
   alwaysOnTop: 'Always on Top',
   alwaysOnTopDesc: 'Keep window above others',
+  rawPreview: 'Raw Preview',
+  rawPreviewDesc: 'Show clipboard content in raw format',
+  autoUpdate: 'Auto Update',
+  autoUpdateDesc: 'Check for updates on startup',
+  version: 'Version',
   shortcut: 'Shortcut',
   shortcutDesc: 'Show/hide window',
   shortcutRecording: 'Press new shortcut...',

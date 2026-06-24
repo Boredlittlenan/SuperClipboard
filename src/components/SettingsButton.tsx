@@ -4,6 +4,7 @@ import type { Locale } from '../i18n/translations';
 import { getAutostartEnabled, setAutostartEnabled, getShortcut, setShortcut, checkUpdate, openUrl, getSetting, setSetting, setAlwaysOnTop } from '../api/settings';
 import type { UpdateInfo } from '../api/settings';
 import { listen } from '@tauri-apps/api/event';
+import { getVersion } from '@tauri-apps/api/app';
 
 const LANGUAGES: { value: Locale; labelKey: 'langZhCN' | 'langEn' }[] = [
   { value: 'zh-CN', labelKey: 'langZhCN' },
@@ -27,14 +28,18 @@ function keyToTauri(key: string): string {
 interface SettingsButtonProps {
   onShortcutChange?: (shortcut: string) => void;
   onMemoEnabledChange?: (enabled: boolean) => void;
+  onRawPreviewChange?: (enabled: boolean) => void;
 }
 
-export default function SettingsButton({ onShortcutChange, onMemoEnabledChange }: SettingsButtonProps) {
+export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, onRawPreviewChange }: SettingsButtonProps) {
   const { t, locale, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
   const [autostart, setAutostart] = useState(false);
   const [memoEnabled, setMemoEnabledState] = useState(false);
   const [alwaysOnTop, setAlwaysOnTopState] = useState(true);
+  const [rawPreview, setRawPreviewState] = useState(false);
+  const [autoUpdate, setAutoUpdate] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
   const [shortcut, setShortcutState] = useState('Shift+V');
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState('');
@@ -75,6 +80,13 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange }
       getSetting('always_on_top').then((v) => {
         setAlwaysOnTopState(v === null ? true : v === 'true');
       }).catch(console.error);
+      getSetting('raw_preview').then((v) => {
+        setRawPreviewState(v === 'true');
+      }).catch(console.error);
+      getSetting('auto_update').then((v) => {
+        setAutoUpdate(v === 'true');
+      }).catch(console.error);
+      getVersion().then(setAppVersion).catch(console.error);
     }
   }, [open]);
 
@@ -181,6 +193,19 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange }
     await setSetting('always_on_top', newValue ? 'true' : 'false');
     setAlwaysOnTopState(newValue);
   }, [alwaysOnTop]);
+
+  const handleRawPreviewToggle = useCallback(async () => {
+    const newValue = !rawPreview;
+    await setSetting('raw_preview', newValue ? 'true' : 'false');
+    setRawPreviewState(newValue);
+    onRawPreviewChange?.(newValue);
+  }, [rawPreview, onRawPreviewChange]);
+
+  const handleAutoUpdateToggle = useCallback(async () => {
+    const newValue = !autoUpdate;
+    await setSetting('auto_update', newValue ? 'true' : 'false');
+    setAutoUpdate(newValue);
+  }, [autoUpdate]);
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateStatus('checking');
@@ -333,6 +358,28 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange }
             </div>
           </div>
 
+          {/* Raw preview section */}
+          <div style={{ ...styles.section, marginTop: '12px' }}>
+            <label style={styles.label}>{t.rawPreview}</label>
+            <div style={styles.toggleRow}>
+              <span style={styles.toggleLabel}>{t.rawPreviewDesc}</span>
+              <button
+                style={{
+                  ...styles.toggle,
+                  ...(rawPreview ? styles.toggleOn : {}),
+                }}
+                onClick={handleRawPreviewToggle}
+              >
+                <div
+                  style={{
+                    ...styles.toggleKnob,
+                    ...(rawPreview ? styles.toggleKnobOn : {}),
+                  }}
+                />
+              </button>
+            </div>
+          </div>
+
           {/* Check for updates section */}
           <div style={{ ...styles.section, marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
             {updateStatus === 'idle' && (
@@ -369,6 +416,35 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange }
               </div>
             )}
           </div>
+
+          {/* Auto update section */}
+          <div style={{ ...styles.section, marginTop: '8px' }}>
+            <div style={styles.toggleRow}>
+              <span style={styles.toggleLabel}>{t.autoUpdateDesc}</span>
+              <button
+                style={{
+                  ...styles.toggle,
+                  ...(autoUpdate ? styles.toggleOn : {}),
+                }}
+                onClick={handleAutoUpdateToggle}
+              >
+                <div
+                  style={{
+                    ...styles.toggleKnob,
+                    ...(autoUpdate ? styles.toggleKnobOn : {}),
+                  }}
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Version info */}
+          {appVersion && (
+            <div style={styles.versionRow}>
+              <span style={styles.versionLabel}>{t.version}</span>
+              <span style={styles.versionValue}>v{appVersion}</span>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -586,5 +662,23 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     cursor: 'pointer',
     flexShrink: 0,
+  },
+  versionRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: '12px',
+    paddingTop: '8px',
+    borderTop: '1px solid var(--border)',
+  },
+  versionLabel: {
+    fontSize: '11px',
+    color: 'var(--text-muted)',
+  },
+  versionValue: {
+    fontSize: '11px',
+    color: 'var(--text-secondary)',
+    fontWeight: 500,
+    fontFamily: 'monospace',
   },
 };

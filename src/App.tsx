@@ -10,7 +10,7 @@ import {
   updateEntry,
   onClipboardChanged,
 } from './api/clipboard';
-import { getShortcut, getSetting } from './api/settings';
+import { getShortcut, getSetting, checkUpdate } from './api/settings';
 import { memoCount } from './api/memos';
 import { I18nProvider, useI18n } from './i18n';
 import CategoryTabs from './components/CategoryTabs';
@@ -38,6 +38,7 @@ function AppContent() {
   const [memoEnabled, setMemoEnabled] = useState(false);
   const [memoCountState, setMemoCountState] = useState<number | null>(null);
   const [memoListCount, setMemoListCount] = useState<number>(0);
+  const [rawPreview, setRawPreview] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Fetch current shortcut on mount
@@ -48,6 +49,20 @@ function AppContent() {
   // Load memo_enabled setting on mount
   useEffect(() => {
     getSetting('memo_enabled').then((v) => setMemoEnabled(v === 'true')).catch(console.error);
+  }, []);
+
+  // Load raw_preview setting on mount
+  useEffect(() => {
+    getSetting('raw_preview').then((v) => setRawPreview(v === 'true')).catch(console.error);
+  }, []);
+
+  // Auto-check for updates on startup if enabled
+  useEffect(() => {
+    getSetting('auto_update').then((v) => {
+      if (v === 'true') {
+        checkUpdate().catch(() => {}); // silent check
+      }
+    }).catch(console.error);
   }, []);
 
   // Fetch entries based on current filter
@@ -213,7 +228,7 @@ function AppContent() {
           <span className="title-text">{t.appTitle}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span className="shortcut-hint">{currentShortcut}</span>
-            <SettingsButton onShortcutChange={setCurrentShortcut} onMemoEnabledChange={setMemoEnabled} />
+            <SettingsButton onShortcutChange={setCurrentShortcut} onMemoEnabledChange={setMemoEnabled} onRawPreviewChange={setRawPreview} />
           </div>
         </div>
       </div>
@@ -259,6 +274,7 @@ function AppContent() {
           onDelete={handleDelete}
           onTogglePin={handleTogglePin}
           onEdit={handleEdit}
+          rawPreview={rawPreview}
           loading={loading}
         />
       )}
