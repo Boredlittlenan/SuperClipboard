@@ -33,6 +33,51 @@ pub struct AppState {
     current_shortcut: std::sync::Mutex<String>,
 }
 
+fn tray_menu_labels(language: &str) -> (&'static str, &'static str) {
+    match language {
+        "zh-CN" => ("设置", "退出"),
+        _ => ("Settings", "Quit"),
+    }
+}
+
+fn update_tray_menu(app: &tauri::AppHandle, language: &str) -> tauri::Result<()> {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let (settings_label, quit_label) = tray_menu_labels(language);
+        let settings_item = MenuItemBuilder::with_id("settings", settings_label).build(app)?;
+        let quit_item = MenuItemBuilder::with_id("quit", quit_label).build(app)?;
+        let menu = MenuBuilder::new(app)
+            .item(&settings_item)
+            .separator()
+            .item(&quit_item)
+            .build()?;
+        tray.set_menu(Some(menu))?;
+    }
+    Ok(())
+}
+
+// ─── Shortcut Helpers ────────────────────────────────────────────────
+
+/// Register a global shortcut that toggles the main window visibility.
+fn register_toggle_shortcut(
+    app: &tauri::AppHandle,
+    shortcut: &str,
+) -> Result<(), tauri_plugin_global_shortcut::Error> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    app.global_shortcut()
+        .on_shortcut(shortcut, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                if let Some(window) = app.get_webview_window("main") {
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = window.hide();
+                    } else {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+        })
+}
+
 // ─── Tauri Commands ──────────────────────────────────────────────────
 
 #[tauri::command]
@@ -68,6 +113,8 @@ fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, Str
     let link = state.storage.count(Some("link")).map_err(|e| e.to_string())?;
     let image = state.storage.count(Some("image")).map_err(|e| e.to_string())?;
     let code = state.storage.count(Some("code")).map_err(|e| e.to_string())?;
+    let email = state.storage.count(Some("email")).map_err(|e| e.to_string())?;
+    let file_path = state.storage.count(Some("file_path")).map_err(|e| e.to_string())?;
     let db_size = state.storage.db_size().map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
@@ -76,6 +123,8 @@ fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, Str
         "link": link,
         "image": image,
         "code": code,
+        "email": email,
+        "file_path": file_path,
         "dbSize": db_size,
     }))
 }
@@ -129,8 +178,17 @@ fn get_setting(state: tauri::State<'_, AppState>, key: String) -> Result<Option<
 
 /// Set a user setting value
 #[tauri::command]
-fn set_setting(state: tauri::State<'_, AppState>, key: String, value: String) -> Result<(), String> {
-    state.storage.set_setting(&key, &value).map_err(|e| e.to_string())
+fn set_setting(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    state.storage.set_setting(&key, &value).map_err(|e| e.to_string())?;
+    if key == "language" {
+        update_tray_menu(&app, &value).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Check if auto-start on boot is enabled
@@ -163,7 +221,7 @@ fn set_shortcut(
     state: tauri::State<'_, AppState>,
     new_shortcut: String,
 ) -> Result<String, String> {
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
     let old_shortcut = state.current_shortcut.lock().unwrap().clone();
 
@@ -173,19 +231,7 @@ fn set_shortcut(
         let _ = app.global_shortcut().unregister(old_shortcut.as_str());
 
         // Register new shortcut
-        app.global_shortcut()
-            .on_shortcut(new_shortcut.as_str(), |app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    if let Some(window) = app.get_webview_window("main") {
-                        if window.is_visible().unwrap_or(false) {
-                            let _ = window.hide();
-                        } else {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                }
-            })
+        register_toggle_shortcut(&app, new_shortcut.as_str())
             .map_err(|e| format!("Failed to register shortcut: {}", e))?;
 
         // Update state
@@ -379,6 +425,11 @@ pub fn run() {
             let always_on_top = storage.get_setting("always_on_top").ok().flatten()
                 .map(|v| v == "true")
                 .unwrap_or(true);
+            let saved_language = storage
+                .get_setting("language")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "en".to_string());
 
             app.manage(AppState {
                 storage,
@@ -387,19 +438,7 @@ pub fn run() {
             });
 
             // Register global shortcut to show/hide window
-            use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-            let _ = app.global_shortcut().on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
-                if event.state == ShortcutState::Pressed {
-                    if let Some(window) = app.get_webview_window("main") {
-                        if window.is_visible().unwrap_or(false) {
-                            let _ = window.hide();
-                        } else {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                }
-            });
+            let _ = register_toggle_shortcut(&app.handle(), shortcut.as_str());
 
             // Apply always-on-top setting (default: true, tauri.conf.json also sets true)
             if let Some(window) = app.get_webview_window("main") {
@@ -409,15 +448,7 @@ pub fn run() {
             // Set up system tray menu and click handler
             let handle = app.handle().clone();
             if let Some(tray) = app.tray_by_id("main-tray") {
-                // Build tray context menu
-                let settings_item = MenuItemBuilder::with_id("settings", "Settings").build(app)?;
-                let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-                let menu = MenuBuilder::new(app)
-                    .item(&settings_item)
-                    .separator()
-                    .item(&quit_item)
-                    .build()?;
-                tray.set_menu(Some(menu))?;
+                update_tray_menu(&handle, &saved_language)?;
 
                 // Handle menu item clicks
                 tray.on_menu_event(move |app_handle, event| {

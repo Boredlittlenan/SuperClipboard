@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Memo } from '../types';
 import { getMemos, createMemo, updateMemo, deleteMemo, toggleMemoPin } from '../api/memos';
 import { useI18n } from '../i18n';
+import { TrashIcon } from './icons/TrashIcon';
 
 interface Props {
   searchQuery: string;
@@ -133,6 +134,17 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
     }
   };
 
+  const handleCreateFieldBlur = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (!isCreating) return;
+
+    const nextFocused = e.relatedTarget;
+    if (nextFocused instanceof Node && editorRef.current?.contains(nextFocused)) {
+      return;
+    }
+
+    handleSaveNew();
+  };
+
   const handleDelete = async (id: number) => {
     try {
       await deleteMemo(id);
@@ -169,7 +181,7 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
         placeholder={t.memoTitlePlaceholder}
         value={editTitle}
         onChange={onFieldChange(setEditTitle)}
-        onBlur={() => { if (isCreating) handleSaveNew(); }}
+        onBlur={handleCreateFieldBlur}
         autoFocus
       />
       <textarea
@@ -177,7 +189,7 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
         placeholder={t.memoBodyPlaceholder}
         value={editBody}
         onChange={onFieldChange(setEditBody)}
-        onBlur={() => { if (isCreating) handleSaveNew(); }}
+        onBlur={handleCreateFieldBlur}
         rows={4}
       />
       <input
@@ -185,7 +197,7 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
         placeholder={t.memoTagsPlaceholder}
         value={editTags}
         onChange={onFieldChange(setEditTags)}
-        onBlur={() => { if (isCreating) handleSaveNew(); }}
+        onBlur={handleCreateFieldBlur}
       />
     </div>
   ) : null;
@@ -219,7 +231,7 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
             style={{
               ...styles.memoItem,
               ...(editingId === memo.id ? styles.memoItemActive : {}),
-              borderLeft: memo.pinned ? '3px solid #8b5cf6' : '3px solid transparent',
+              borderLeft: memo.pinned ? '3px solid var(--memo-accent)' : '3px solid transparent',
             }}
             onClick={() => handleMemoClick(memo)}
           >
@@ -240,9 +252,9 @@ export default function MemoList({ searchQuery, onCountChange }: Props) {
                   <button
                     style={styles.actionBtn}
                     onClick={(e) => { e.stopPropagation(); handleDelete(memo.id); }}
-                    title="Delete"
+                    title={t.delete}
                   >
-                    &times;
+                    <TrashIcon />
                   </button>
                 </div>
               </div>
@@ -274,10 +286,10 @@ const styles: Record<string, React.CSSProperties> = {
   newBtn: {
     width: '100%',
     padding: '8px 0',
-    border: '1px dashed var(--border)',
+    border: '1px dashed var(--memo-border)',
     borderRadius: '6px',
     background: 'transparent',
-    color: '#8b5cf6',
+    color: 'var(--memo-accent)',
     fontSize: '12px',
     fontWeight: 500,
     cursor: 'pointer',
@@ -285,8 +297,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   editor: {
     padding: '8px 12px',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--surface)',
+    borderBottom: '1px solid var(--memo-border)',
+    background: 'var(--memo-bg)',
     display: 'flex',
     flexDirection: 'column',
     gap: '6px',
@@ -317,13 +329,14 @@ const styles: Record<string, React.CSSProperties> = {
     outline: 'none',
     background: 'transparent',
     fontSize: '11px',
-    color: '#8b5cf6',
+    color: 'var(--memo-accent)',
     padding: '4px 0',
   },
   list: {
     flex: 1,
     overflowY: 'auto',
     overflowX: 'hidden',
+    padding: '4px 0',
   },
   empty: {
     flex: 1,
@@ -348,13 +361,17 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
   },
   memoItem: {
+    margin: '4px 8px',
     padding: '10px 12px',
-    borderBottom: '1px solid var(--border)',
+    background: 'var(--memo-bg)',
+    border: '1px solid var(--memo-border)',
+    borderRadius: '8px',
     cursor: 'pointer',
     transition: 'background 0.1s',
   },
   memoItemActive: {
     background: 'var(--hover-bg)',
+    borderColor: 'var(--memo-accent)',
   },
   memoContent: {
     display: 'flex',
@@ -393,7 +410,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   actionBtnActive: {
     opacity: 1,
-    color: '#8b5cf6',
+    color: 'var(--accent)',
   },
   memoPreview: {
     fontSize: '11px',
@@ -415,8 +432,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-block',
     padding: '1px 6px',
     borderRadius: '8px',
-    background: 'var(--hover-bg)',
-    color: '#8b5cf6',
+    background: 'var(--memo-border)',
+    color: 'var(--memo-accent)',
     fontSize: '10px',
     fontWeight: 500,
   },

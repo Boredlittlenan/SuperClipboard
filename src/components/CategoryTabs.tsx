@@ -46,7 +46,7 @@ export default function CategoryTabs({ activeTab, onTabChange, stats, memoEnable
               onClick={() => onTabChange(tab)}
               style={{
                 ...styles.tab,
-                ...(isActive ? (tab === 'memo' ? { ...styles.tabActive, background: '#8b5cf6' } : styles.tabActive) : {}),
+                ...(isActive ? styles.tabActive : {}),
               }}
               onMouseEnter={(e) => {
                 if (!isActive) {

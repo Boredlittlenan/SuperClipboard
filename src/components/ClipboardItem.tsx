@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import type { ClipboardEntry } from '../types';
 import { getCategoryColor, getCategoryLabel, formatRelativeTime } from '../utils';
 import { useI18n } from '../i18n';
+import { TrashIcon } from './icons/TrashIcon';
 
 interface Props {
   entry: ClipboardEntry;
@@ -82,15 +83,53 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
       <div style={styles.body}>
         {/* Header row */}
         <div style={styles.header}>
-          <span
-            style={{
-              ...styles.categoryBadge,
-              background: `${categoryColor}20`,
-              color: categoryColor,
-            }}
-          >
-            {getCategoryLabel(entry.category, t)}
-          </span>
+          <div style={styles.headerLeft}>
+            <span
+              style={{
+                ...styles.categoryBadge,
+                background: `${categoryColor}20`,
+                color: categoryColor,
+              }}
+            >
+              {getCategoryLabel(entry.category, t)}
+            </span>
+            {hovered && !editing && (
+              <div style={styles.inlineActions}>
+                {!isImage && (
+                  <button
+                    style={styles.actionBtn}
+                    onClick={handleEditClick}
+                    title={t.edit}
+                  >
+                    {'\u270E'}
+                  </button>
+                )}
+                <button
+                  style={{
+                    ...styles.actionBtn,
+                    ...(entry.pinned ? styles.actionBtnActive : {}),
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTogglePin(entry.id);
+                  }}
+                  title={entry.pinned ? t.unpin : t.pin}
+                >
+                  {'\uD83D\uDCCC'}
+                </button>
+                <button
+                  style={{ ...styles.actionBtn, ...styles.deleteBtn }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(entry.id);
+                  }}
+                  title={t.delete}
+                >
+                  <TrashIcon />
+                </button>
+              </div>
+            )}
+          </div>
           <div style={styles.headerRight}>
             {entry.updated_at && (
               <span style={styles.editedBadge}>
@@ -164,41 +203,6 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
             )}
           </div>
         )}
-
-        {/* Action buttons (visible on hover) */}
-        {hovered && !editing && (
-          <div style={styles.actions}>
-            {!isImage && (
-              <button
-                style={styles.actionBtn}
-                onClick={handleEditClick}
-                title={t.edit}
-              >
-                {'\u270E'}
-              </button>
-            )}
-            <button
-              style={styles.actionBtn}
-              onClick={(e) => {
-                e.stopPropagation();
-                onTogglePin(entry.id);
-              }}
-              title={entry.pinned ? t.unpin : t.pin}
-            >
-              {entry.pinned ? '\u2716' : '\u2605'}
-            </button>
-            <button
-              style={{ ...styles.actionBtn, ...styles.deleteBtn }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(entry.id);
-              }}
-              title={t.delete}
-            >
-              {'\u2715'}
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -231,11 +235,20 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: '6px',
+    gap: '8px',
+  },
+  headerLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    minWidth: 0,
+    flexShrink: 1,
   },
   headerRight: {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
+    flexShrink: 0,
   },
   categoryBadge: {
     fontSize: '10px',
@@ -404,16 +417,14 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: 'auto',
   },
   // Action buttons
-  actions: {
-    position: 'absolute',
-    top: '8px',
-    right: '8px',
+  inlineActions: {
     display: 'flex',
     gap: '4px',
+    flexShrink: 0,
   },
   actionBtn: {
-    width: '26px',
-    height: '26px',
+    width: '22px',
+    height: '22px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -421,11 +432,14 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     background: 'var(--surface)',
     color: 'var(--text-secondary)',
-    fontSize: '12px',
+    fontSize: '11px',
     cursor: 'pointer',
     transition: 'background 0.12s',
   },
   deleteBtn: {
     color: '#ef4444',
+  },
+  actionBtnActive: {
+    color: 'var(--accent)',
   },
 };

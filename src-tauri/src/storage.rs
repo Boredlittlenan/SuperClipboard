@@ -61,6 +61,39 @@ pub struct MemoFilter {
     pub offset: Option<i64>,
 }
 
+/// Map a SQLite row to a ClipboardEntry (shared by query and get_entry_by_id)
+fn map_row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry> {
+    let category_str: String = row.get(1)?;
+    let category = match category_str.as_str() {
+        "link" => Category::Link,
+        "image" => Category::Image,
+        "code" => Category::Code,
+        "email" => Category::Email,
+        "file_path" => Category::FilePath,
+        _ => Category::Text,
+    };
+
+    let pinned_int: i32 = row.get(6)?;
+    let created_str: String = row.get(7)?;
+    let original_content: Option<String> = row.get(8)?;
+    let updated_at: Option<String> = row.get(9)?;
+
+    Ok(ClipboardEntry {
+        id: row.get(0)?,
+        category,
+        content_type: row.get(2)?,
+        content: row.get(3)?,
+        preview: row.get(4)?,
+        hash: row.get(5)?,
+        pinned: pinned_int != 0,
+        created_at: DateTime::parse_from_rfc3339(&created_str)
+            .unwrap_or_else(|_| Utc::now().into())
+            .with_timezone(&Utc),
+        original_content,
+        updated_at,
+    })
+}
+
 pub struct Storage {
     conn: Mutex<Connection>,
 }
@@ -182,37 +215,7 @@ impl Storage {
 
         let mut stmt = conn.prepare(&sql)?;
         let entries = stmt
-            .query_map(params_refs.as_slice(), |row| {
-                let category_str: String = row.get(1)?;
-                let category = match category_str.as_str() {
-                    "link" => Category::Link,
-                    "image" => Category::Image,
-                    "code" => Category::Code,
-                    "email" => Category::Email,
-                    "file_path" => Category::FilePath,
-                    _ => Category::Text,
-                };
-
-                let pinned_int: i32 = row.get(6)?;
-                let created_str: String = row.get(7)?;
-                let original_content: Option<String> = row.get(8)?;
-                let updated_at: Option<String> = row.get(9)?;
-
-                Ok(ClipboardEntry {
-                    id: row.get(0)?,
-                    category,
-                    content_type: row.get(2)?,
-                    content: row.get(3)?,
-                    preview: row.get(4)?,
-                    hash: row.get(5)?,
-                    pinned: pinned_int != 0,
-                    created_at: DateTime::parse_from_rfc3339(&created_str)
-                        .unwrap_or_else(|_| Utc::now().into())
-                        .with_timezone(&Utc),
-                    original_content,
-                    updated_at,
-                })
-            })?
+            .query_map(params_refs.as_slice(), map_row_to_entry)?
             .collect::<SqlResult<Vec<_>>>()?;
 
         Ok(entries)
@@ -227,37 +230,7 @@ impl Storage {
         )?;
 
         let entry = stmt
-            .query_row(params![id], |row| {
-                let category_str: String = row.get(1)?;
-                let category = match category_str.as_str() {
-                    "link" => Category::Link,
-                    "image" => Category::Image,
-                    "code" => Category::Code,
-                    "email" => Category::Email,
-                    "file_path" => Category::FilePath,
-                    _ => Category::Text,
-                };
-
-                let pinned_int: i32 = row.get(6)?;
-                let created_str: String = row.get(7)?;
-                let original_content: Option<String> = row.get(8)?;
-                let updated_at: Option<String> = row.get(9)?;
-
-                Ok(ClipboardEntry {
-                    id: row.get(0)?,
-                    category,
-                    content_type: row.get(2)?,
-                    content: row.get(3)?,
-                    preview: row.get(4)?,
-                    hash: row.get(5)?,
-                    pinned: pinned_int != 0,
-                    created_at: DateTime::parse_from_rfc3339(&created_str)
-                        .unwrap_or_else(|_| Utc::now().into())
-                        .with_timezone(&Utc),
-                    original_content,
-                    updated_at,
-                })
-            })
+            .query_row(params![id], map_row_to_entry)
             .ok();
 
         Ok(entry)

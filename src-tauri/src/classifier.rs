@@ -79,13 +79,33 @@ static SHELL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^\s*\$\s+\w+|#!/bin/|\b(sudo|apt-get|apt|npm|pnpm|yarn|pip|cargo|docker|git|curl|wget|chmod|chown|mkdir)\b").unwrap()
 });
 
+/// Regex literal patterns (e.g. /\w+/g, /^test$/i)
+static REGEX_LITERAL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"/[^/\n]+/[gimsuy]{0,6}").unwrap()
+});
+
+/// Markdown indicators: # headers, **bold**, [text](url), ```code blocks```, - list items
+static MARKDOWN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^#{1,6}\s+\S|^\s*[-*]\s+\S|\*\*\S[^*]+\*\*|`{3}|\[[^\]]+\]\([^)]+\)|^\s*>\s+\S").unwrap()
+});
+
+/// YAML/TOML indicators: key: value lines (without braces), [section] headers
+static CONFIG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^[\w][\w.-]*:\s+\S|^\[[\w][\w.-]*\]$").unwrap()
+});
+
 /// Generic code structure
 static CODE_STRUCTURE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)\{[\s]*$|^[\s]*\}|;\s*$|//[^\n]*$|/\*.*\*/"#).unwrap()
 });
 
+/// JSON with quoted keys: `"key":` or `"key" :`
+static JSON_KEY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#""[a-zA-Z_][\w]*"\s*:"#).unwrap()
+});
+
 // Threshold to classify as code
-const CODE_SCORE_THRESHOLD: i32 = 4;
+const CODE_SCORE_THRESHOLD: i32 = 5;
 
 /// Score the content for code-likeness and classify
 fn score_code(text: &str) -> i32 {
@@ -121,6 +141,18 @@ fn score_code(text: &str) -> i32 {
     let shell_matches: usize = SHELL_RE.find_iter(text).take(2).count();
     score += shell_matches as i32 * 2;
 
+    // Regex literals: 2 points each, max 4
+    let regex_matches: usize = REGEX_LITERAL_RE.find_iter(text).take(2).count();
+    score += regex_matches as i32 * 2;
+
+    // Markdown patterns: 2 points each, max 6
+    let md_matches: usize = MARKDOWN_RE.find_iter(text).take(3).count();
+    score += md_matches as i32 * 2;
+
+    // YAML/TOML config patterns: 2 points each, max 4
+    let config_matches: usize = CONFIG_RE.find_iter(text).take(2).count();
+    score += config_matches as i32 * 2;
+
     // Generic code structure: 1 point each, max 5
     let struct_matches: usize = CODE_STRUCTURE.find_iter(text).take(5).count();
     score += struct_matches as i32;
@@ -136,13 +168,15 @@ fn score_code(text: &str) -> i32 {
     }
 
     // Penalty: if text looks like natural language (no structure markers)
+    // Only applied to single-line or very short text
     let has_semicolon = text.contains(';');
     let has_braces = text.contains('{') || text.contains('}');
-    if !has_semicolon && !has_braces && line_count <= 3
+    if !has_semicolon && !has_braces && line_count == 1
         && kw_matches == 0 && css_prop_matches == 0
         && html_matches == 0 && !CSS_SELECTOR_RE.is_match(text)
+        && regex_matches == 0 && md_matches == 0 && config_matches == 0
     {
-        score -= 3;
+        score -= 2;
     }
 
     score
@@ -179,11 +213,11 @@ pub fn classify_text(text: &str) -> Category {
         return Category::FilePath;
     }
 
-    // Check for JSON-like content
+    // Check for JSON-like content (stricter: require quoted key)
     if (trimmed.starts_with('{') && trimmed.ends_with('}'))
         || (trimmed.starts_with('[') && trimmed.ends_with(']'))
     {
-        if trimmed.contains(':') || trimmed.contains(',') {
+        if JSON_KEY_RE.is_match(trimmed) || (trimmed.contains(',') && trimmed.contains(':')) {
             return Category::Code;
         }
     }
@@ -236,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_classify_code_css_property() {
-        let css = "justify-content: center; display: flex;";
+        let css = "justify-content: center;\ndisplay: flex;\nmargin: 0 auto;";
         assert_eq!(classify_text(css), Category::Code, "CSS properties should be code");
     }
 
@@ -265,6 +299,31 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_json_not_false_positive() {
+        // Simple braces without quoted keys should not be code
+        assert_ne!(classify_text("{smile}"), Category::Code);
+        assert_ne!(classify_text("[test]"), Category::Code);
+    }
+
+    #[test]
+    fn test_classify_markdown() {
+        let md = "# Hello World\n\nThis is **bold** text.\n\n- item one\n- item two";
+        assert_eq!(classify_text(md), Category::Code, "Markdown should be code");
+    }
+
+    #[test]
+    fn test_classify_yaml() {
+        let yaml = "name: my-app\nversion: 1.0.0\ndescription: A test app\nport: 3000";
+        assert_eq!(classify_text(yaml), Category::Code, "YAML should be code");
+    }
+
+    #[test]
+    fn test_classify_toml() {
+        let toml = "[package]\nname = \"test\"\nversion = \"0.1.0\"\nedition = \"2021\"";
+        assert_eq!(classify_text(toml), Category::Code, "TOML should be code");
+    }
+
+    #[test]
     fn test_classify_text() {
         assert_eq!(classify_text("Hello, world!"), Category::Text);
         assert_eq!(classify_text("这是一段普通的中文文本"), Category::Text);
@@ -280,5 +339,11 @@ mod tests {
     fn test_natural_text_not_code() {
         assert_ne!(classify_text("今天天气不错，适合出去走走"), Category::Code);
         assert_ne!(classify_text("Check out the documentation for more info"), Category::Code);
+    }
+
+    #[test]
+    fn test_classify_regex_literal() {
+        let code = "const pattern = /\\bhello\\b/gi;\nconst match = text.match(pattern);";
+        assert_eq!(classify_text(code), Category::Code, "Regex literal should be code");
     }
 }

@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { Locale, Translations } from './translations';
-import { translationsMap, zhCN } from './translations';
+import { translationsMap, en } from './translations';
 import { getSetting, setSetting } from '../api/settings';
 
 const DEFAULT_LOCALE: Locale = 'en';
@@ -14,7 +14,7 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue>({
   locale: DEFAULT_LOCALE,
-  t: zhCN,
+  t: en,
   setLocale: () => {},
 });
 

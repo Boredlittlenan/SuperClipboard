@@ -17,6 +17,7 @@ import CategoryTabs from './components/CategoryTabs';
 import ClipboardList from './components/ClipboardList';
 import SettingsButton from './components/SettingsButton';
 import MemoList from './components/MemoList';
+import type { ThemeMode } from './types';
 import './App.css';
 
 function formatBytes(bytes: number): string {
@@ -39,6 +40,11 @@ function AppContent() {
   const [memoCountState, setMemoCountState] = useState<number | null>(null);
   const [memoListCount, setMemoListCount] = useState<number>(0);
   const [rawPreview, setRawPreview] = useState(false);
+  const [themeAccent, setThemeAccent] = useState('default');
+  const [themeMode, setThemeMode] = useState<ThemeMode>('system');
+  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(() =>
+    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  );
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Fetch current shortcut on mount
@@ -56,6 +62,48 @@ function AppContent() {
     getSetting('raw_preview').then((v) => setRawPreview(v === 'true')).catch(console.error);
   }, []);
 
+  // Load theme accent setting on mount
+  useEffect(() => {
+    getSetting('theme_accent')
+      .then((v) => setThemeAccent(v === 'sakura' ? 'sakura' : 'default'))
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    getSetting('theme_mode')
+      .then((v) => {
+        if (v === 'light' || v === 'dark' || v === 'system') {
+          setThemeMode(v);
+        }
+      })
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const updateSystemTheme = (value: boolean) => {
+      setSystemTheme(value ? 'dark' : 'light');
+    };
+
+    updateSystemTheme(media.matches);
+
+    const listener = (event: MediaQueryListEvent) => updateSystemTheme(event.matches);
+    if (media.addEventListener) {
+      media.addEventListener('change', listener);
+      return () => media.removeEventListener('change', listener);
+    }
+
+    media.addListener(listener);
+    return () => media.removeListener(listener);
+  }, []);
+
+  const resolvedTheme = themeMode === 'system' ? systemTheme : themeMode;
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.dataset.accent = themeAccent;
+  }, [resolvedTheme, themeAccent]);
+
   // Auto-check for updates on startup if enabled
   useEffect(() => {
     getSetting('auto_update').then((v) => {
@@ -68,7 +116,7 @@ function AppContent() {
   // Fetch entries based on current filter
   const fetchEntries = useCallback(async () => {
     const filter: QueryFilter = { limit: 100 };
-    if (activeTab !== 'all') {
+    if (activeTab !== 'all' && activeTab !== 'memo') {
       filter.category = activeTab;
     }
     if (searchQuery.trim()) {
@@ -105,14 +153,30 @@ function AppContent() {
 
   // Initial load
   useEffect(() => {
-    Promise.all([fetchEntries(), fetchStats(), fetchMemoCount()]).finally(() => setLoading(false));
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        await Promise.all([fetchEntries(), fetchStats(), fetchMemoCount()]);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
   }, [fetchEntries, fetchStats, fetchMemoCount]);
 
   // Listen for real-time clipboard events
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
-    onClipboardChanged((_entry: ClipboardEntry) => {
+    onClipboardChanged(() => {
       // Refresh from backend so order and dedup are correct
       fetchEntries();
       fetchStats();
@@ -221,14 +285,20 @@ function AppContent() {
   }, [searchInput, fetchEntries]);
 
   return (
-    <div className="app-root">
+    <div className="app-root" data-theme={resolvedTheme} data-accent={themeAccent}>
       {/* Title bar (draggable, frameless window) */}
       <div data-tauri-drag-region className="title-bar">
         <div data-tauri-drag-region className="title-content">
           <span className="title-text">{t.appTitle}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span className="shortcut-hint">{currentShortcut}</span>
-            <SettingsButton onShortcutChange={setCurrentShortcut} onMemoEnabledChange={setMemoEnabled} onRawPreviewChange={setRawPreview} />
+            <SettingsButton
+              onShortcutChange={setCurrentShortcut}
+              onMemoEnabledChange={setMemoEnabled}
+              onRawPreviewChange={setRawPreview}
+              onThemeModeChange={setThemeMode}
+              onThemeAccentChange={setThemeAccent}
+            />
           </div>
         </div>
       </div>
@@ -239,7 +309,7 @@ function AppContent() {
         <input
           ref={searchRef}
           type="text"
-          placeholder={t.searchPlaceholder}
+          placeholder={activeTab === 'memo' ? t.memoSearchPlaceholder : t.searchPlaceholder}
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
           className="search-input"

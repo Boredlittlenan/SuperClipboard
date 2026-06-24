@@ -26,6 +26,8 @@ export interface Stats {
   link: number;
   image: number;
   code: number;
+  email: number;
+  file_path: number;
   dbSize: number;
 }
 
@@ -46,3 +48,4 @@ export interface MemoFilter {
 }
 
 export type FilterTab = 'memo' | 'all' | Category;
+export type ThemeMode = 'system' | 'light' | 'dark';

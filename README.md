@@ -25,6 +25,8 @@ A lightweight clipboard manager built with Rust + Tauri + React + TypeScript.
 - Auto-update check on startup toggle (configurable in settings)
 - Improved time display: entries older than 24h show concrete date/time (e.g. "6/24 15:30")
 - Compact settings panel with hover tooltips for each option
+- 3-way theme toggle (Light / Dark / Auto) in a single segmented button
+- Memo module with distinct warm amber visual style across all themes
 - One-click update check via GitHub Releases
 
 ## Tech Stack
@@ -59,6 +61,7 @@ src-tauri/
     main.rs         # Entry point
 src/
   components/       # React UI components
+    icons/              # Shared icon components (TrashIcon)
     SettingsButton.tsx  # Settings panel (language, shortcut, autostart, always-on-top, memo)
     MemoList.tsx        # Inline memo list with CRUD, auto-save, pin
   api/              # Tauri command wrappers

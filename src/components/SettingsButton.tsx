@@ -3,6 +3,7 @@ import { useI18n } from '../i18n';
 import type { Locale } from '../i18n/translations';
 import { getAutostartEnabled, setAutostartEnabled, getShortcut, setShortcut, checkUpdate, openUrl, getSetting, setSetting, setAlwaysOnTop } from '../api/settings';
 import type { UpdateInfo } from '../api/settings';
+import type { ThemeMode } from '../types';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 
@@ -29,15 +30,19 @@ interface SettingsButtonProps {
   onShortcutChange?: (shortcut: string) => void;
   onMemoEnabledChange?: (enabled: boolean) => void;
   onRawPreviewChange?: (enabled: boolean) => void;
+  onThemeModeChange?: (mode: ThemeMode) => void;
+  onThemeAccentChange?: (accent: string) => void;
 }
 
-export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, onRawPreviewChange }: SettingsButtonProps) {
+export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, onRawPreviewChange, onThemeModeChange, onThemeAccentChange }: SettingsButtonProps) {
   const { t, locale, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
   const [autostart, setAutostart] = useState(false);
   const [memoEnabled, setMemoEnabledState] = useState(false);
   const [alwaysOnTop, setAlwaysOnTopState] = useState(true);
   const [rawPreview, setRawPreviewState] = useState(false);
+  const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
+  const [themeAccent, setThemeAccentState] = useState('default');
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [shortcut, setShortcutState] = useState('Shift+V');
@@ -83,12 +88,22 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
       getSetting('raw_preview').then((v) => {
         setRawPreviewState(v === 'true');
       }).catch(console.error);
+      getSetting('theme_mode').then((v) => {
+        const mode = v === 'light' || v === 'dark' || v === 'system' ? v : 'system';
+        setThemeModeState(mode);
+        onThemeModeChange?.(mode);
+      }).catch(console.error);
+      getSetting('theme_accent').then((v) => {
+        const accent = v === 'sakura' ? 'sakura' : 'default';
+        setThemeAccentState(accent);
+        onThemeAccentChange?.(accent);
+      }).catch(console.error);
       getSetting('auto_update').then((v) => {
         setAutoUpdate(v === 'true');
       }).catch(console.error);
       getVersion().then(setAppVersion).catch(console.error);
     }
-  }, [open]);
+  }, [open, onMemoEnabledChange, onShortcutChange, onThemeModeChange, onThemeAccentChange]);
 
   // Close panel when clicking outside
   useEffect(() => {
@@ -201,6 +216,18 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
     onRawPreviewChange?.(newValue);
   }, [rawPreview, onRawPreviewChange]);
 
+  const handleThemeModeChange = useCallback(async (mode: ThemeMode) => {
+    await setSetting('theme_mode', mode);
+    setThemeModeState(mode);
+    onThemeModeChange?.(mode);
+  }, [onThemeModeChange]);
+
+  const handleThemeAccentChange = useCallback(async (accent: string) => {
+    await setSetting('theme_accent', accent);
+    setThemeAccentState(accent);
+    onThemeAccentChange?.(accent);
+  }, [onThemeAccentChange]);
+
   const handleAutoUpdateToggle = useCallback(async () => {
     const newValue = !autoUpdate;
     await setSetting('auto_update', newValue ? 'true' : 'false');
@@ -292,6 +319,69 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
           </div>
           {error && <span style={styles.errorText}>{error}</span>}
 
+          {/* Theme mode */}
+          <div style={styles.compactRow} title={t.themeModeDesc}>
+            <span style={styles.rowLabel}>{t.themeMode}</span>
+            <div style={styles.themeSegmented}>
+              <button
+                style={{
+                  ...styles.themeSegBtn,
+                  ...(themeMode === 'light' ? styles.themeSegBtnActive : {}),
+                }}
+                onClick={() => handleThemeModeChange('light')}
+              >
+                {t.themeLight}
+              </button>
+              <button
+                style={{
+                  ...styles.themeSegBtn,
+                  ...(themeMode === 'dark' ? styles.themeSegBtnActive : {}),
+                }}
+                onClick={() => handleThemeModeChange('dark')}
+              >
+                {t.themeDark}
+              </button>
+              <button
+                style={{
+                  ...styles.themeSegBtn,
+                  ...(themeMode === 'system' ? styles.themeSegBtnActive : {}),
+                }}
+                onClick={() => handleThemeModeChange('system')}
+              >
+                {t.themeSystem}
+              </button>
+            </div>
+          </div>
+
+          {/* Theme accent */}
+          <div style={styles.compactRow} title={t.themeColorDesc}>
+            <span style={styles.rowLabel}>{t.themeColor}</span>
+            <div style={styles.colorOptions}>
+              <button
+                style={{
+                  ...styles.colorBtn,
+                  ...(themeAccent === 'default' ? styles.colorBtnActive : {}),
+                }}
+                onClick={() => handleThemeAccentChange('default')}
+                title={t.themeDefault}
+              >
+                <span style={{ ...styles.colorSwatch, background: '#2563eb' }} />
+                <span>{t.themeDefault}</span>
+              </button>
+              <button
+                style={{
+                  ...styles.colorBtn,
+                  ...(themeAccent === 'sakura' ? styles.colorBtnActive : {}),
+                }}
+                onClick={() => handleThemeAccentChange('sakura')}
+                title={t.themeSakura}
+              >
+                <span style={{ ...styles.colorSwatch, background: '#ec5f9e' }} />
+                <span>{t.themeSakura}</span>
+              </button>
+            </div>
+          </div>
+
           {/* Autostart */}
           <div style={styles.compactRow} title={t.autostartDesc}>
             <span style={styles.rowLabel}>{t.autostart}</span>
@@ -336,6 +426,17 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
             </button>
           </div>
 
+          {/* Auto update */}
+          <div style={styles.compactRow} title={t.autoUpdateDesc}>
+            <span style={styles.rowLabel}>{t.autoUpdate}</span>
+            <button
+              style={{ ...styles.toggle, ...(autoUpdate ? styles.toggleOn : {}) }}
+              onClick={handleAutoUpdateToggle}
+            >
+              <div style={{ ...styles.toggleKnob, ...(autoUpdate ? styles.toggleKnobOn : {}) }} />
+            </button>
+          </div>
+
           {/* Divider */}
           <div style={styles.divider} />
 
@@ -374,17 +475,6 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
                 </button>
               </div>
             )}
-          </div>
-
-          {/* Auto update */}
-          <div style={styles.compactRow} title={t.autoUpdateDesc}>
-            <span style={styles.rowLabel}>{t.autoUpdate}</span>
-            <button
-              style={{ ...styles.toggle, ...(autoUpdate ? styles.toggleOn : {}) }}
-              onClick={handleAutoUpdateToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(autoUpdate ? styles.toggleKnobOn : {}) }} />
-            </button>
           </div>
         </div>
       )}
@@ -477,8 +567,62 @@ const styles: Record<string, React.CSSProperties> = {
   },
   langBtnActive: {
     background: 'var(--accent)',
-    borderColor: 'var(--accent)',
+    border: '1px solid var(--accent)',
     color: '#ffffff',
+  },
+  themeSegmented: {
+    display: 'flex',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    overflow: 'hidden',
+    flexShrink: 0,
+  },
+  themeSegBtn: {
+    flex: 1,
+    padding: '4px 8px',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--text-secondary)',
+    fontSize: '10px',
+    fontWeight: 500,
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+    whiteSpace: 'nowrap',
+  },
+  themeSegBtnActive: {
+    background: 'var(--accent)',
+    color: '#ffffff',
+  },
+  colorOptions: {
+    display: 'flex',
+    gap: '4px',
+    flexShrink: 0,
+  },
+  colorBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '3px 6px',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'var(--text-secondary)',
+    fontSize: '10px',
+    fontWeight: 500,
+    cursor: 'pointer',
+    transition: 'all 0.15s',
+    whiteSpace: 'nowrap',
+  },
+  colorBtnActive: {
+    border: '1px solid var(--accent)',
+    color: 'var(--accent)',
+    background: 'var(--accent-bg)',
+  },
+  colorSwatch: {
+    width: '9px',
+    height: '9px',
+    borderRadius: '50%',
+    flexShrink: 0,
   },
   shortcutBtn: {
     padding: '3px 8px',
@@ -495,12 +639,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   shortcutBtnRecording: {
-    borderColor: 'var(--accent)',
+    border: '1px solid var(--accent)',
     color: 'var(--accent)',
     animation: 'pulse 1s infinite',
   },
   shortcutBtnError: {
-    borderColor: '#e74c3c',
+    border: '1px solid #e74c3c',
     color: '#e74c3c',
   },
   errorText: {

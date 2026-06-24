@@ -3,7 +3,6 @@ export type Locale = 'zh-CN' | 'en';
 export interface Translations {
   // Title bar
   appTitle: string;
-  shortcutHint: string;
 
   // Search
   searchPlaceholder: string;
@@ -22,7 +21,6 @@ export interface Translations {
   justNow: string;
   minutesAgo: (n: number) => string;
   hoursAgo: (n: number) => string;
-  daysAgo: (n: number) => string;
   clickToCopy: string;
   pin: string;
   unpin: string;
@@ -48,7 +46,6 @@ export interface Translations {
 
   // Memos
   memoTab: string;
-  memoDrawerTitle: string;
   memoSearchPlaceholder: string;
   memoNew: string;
   memoTitlePlaceholder: string;
@@ -68,6 +65,15 @@ export interface Translations {
   language: string;
   langZhCN: string;
   langEn: string;
+  themeColor: string;
+  themeColorDesc: string;
+  themeDefault: string;
+  themeSakura: string;
+  themeMode: string;
+  themeModeDesc: string;
+  themeSystem: string;
+  themeLight: string;
+  themeDark: string;
   autostart: string;
   autostartDesc: string;
   alwaysOnTop: string;
@@ -91,7 +97,6 @@ export interface Translations {
 
 export const zhCN: Translations = {
   appTitle: 'SuperClipboard3',
-  shortcutHint: 'Shift+V',
 
   searchPlaceholder: '搜索剪贴板...',
   clearSearch: '清除搜索',
@@ -107,7 +112,6 @@ export const zhCN: Translations = {
   justNow: '刚刚',
   minutesAgo: (n) => `${n} 分钟前`,
   hoursAgo: (n) => `${n} 小时前`,
-  daysAgo: (n) => `${n} 天前`,
   clickToCopy: '点击复制',
   pin: '置顶',
   unpin: '取消置顶',
@@ -130,7 +134,6 @@ export const zhCN: Translations = {
   clearConfirm: '确定清除所有未置顶的记录吗？',
 
   memoTab: '备忘录',
-  memoDrawerTitle: '备忘录',
   memoSearchPlaceholder: '搜索备忘录...',
   memoNew: '新建备忘录',
   memoTitlePlaceholder: '标题',
@@ -148,6 +151,15 @@ export const zhCN: Translations = {
   language: '语言',
   langZhCN: '中文',
   langEn: 'English',
+  themeColor: '主题配色',
+  themeColorDesc: '切换界面强调色，深浅色仍跟随系统',
+  themeDefault: '少年蓝',
+  themeSakura: '樱花粉',
+  themeMode: '主题模式',
+  themeModeDesc: '自动跟随系统浅色/深色，或手动指定',
+  themeSystem: '跟随系统',
+  themeLight: '浅色',
+  themeDark: '深色',
   autostart: '开机自启',
   autostartDesc: '系统启动时自动运行',
   alwaysOnTop: '窗口置顶',
@@ -171,7 +183,6 @@ export const zhCN: Translations = {
 
 export const en: Translations = {
   appTitle: 'SuperClipboard3',
-  shortcutHint: 'Shift+V',
 
   searchPlaceholder: 'Search clipboard...',
   clearSearch: 'Clear search',
@@ -187,7 +198,6 @@ export const en: Translations = {
   justNow: 'just now',
   minutesAgo: (n) => `${n}m ago`,
   hoursAgo: (n) => `${n}h ago`,
-  daysAgo: (n) => `${n}d ago`,
   clickToCopy: 'Click to copy',
   pin: 'Pin',
   unpin: 'Unpin',
@@ -210,7 +220,6 @@ export const en: Translations = {
   clearConfirm: 'Clear all non-pinned entries?',
 
   memoTab: 'Memos',
-  memoDrawerTitle: 'Memos',
   memoSearchPlaceholder: 'Search memos...',
   memoNew: 'New Memo',
   memoTitlePlaceholder: 'Title',
@@ -228,6 +237,15 @@ export const en: Translations = {
   language: 'Language',
   langZhCN: '中文',
   langEn: 'English',
+  themeColor: 'Theme Color',
+  themeColorDesc: 'Switch accent color while light/dark follows system',
+  themeDefault: 'Youth Blue',
+  themeSakura: 'Sakura Pink',
+  themeMode: 'Theme Mode',
+  themeModeDesc: 'Follow system light/dark automatically or choose manually',
+  themeSystem: 'System',
+  themeLight: 'Light',
+  themeDark: 'Dark',
   autostart: 'Auto-start',
   autostartDesc: 'Launch on system startup',
   alwaysOnTop: 'Always on Top',
