@@ -79,6 +79,8 @@ impl ClipboardMonitor {
                                         ),
                                         pinned: false,
                                         created_at: Utc::now(),
+                                        original_content: None,
+                                        updated_at: None,
                                     };
 
                                     match storage.insert(&entry) {
@@ -122,6 +124,8 @@ impl ClipboardMonitor {
                             hash,
                             pinned: false,
                             created_at: Utc::now(),
+                            original_content: None,
+                            updated_at: None,
                         };
 
                         match storage.insert(&entry) {

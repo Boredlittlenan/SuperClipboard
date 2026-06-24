@@ -57,6 +57,11 @@ fn toggle_pin(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String
 }
 
 #[tauri::command]
+fn update_entry(state: tauri::State<'_, AppState>, id: i64, content: String) -> Result<bool, String> {
+    state.storage.update_entry(id, &content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     let total = state.storage.count(None).map_err(|e| e.to_string())?;
     let text = state.storage.count(Some("text")).map_err(|e| e.to_string())?;
@@ -459,6 +464,7 @@ pub fn run() {
             get_entries,
             delete_entry,
             toggle_pin,
+            update_entry,
             get_stats,
             clear_unpinned,
             copy_to_clipboard,

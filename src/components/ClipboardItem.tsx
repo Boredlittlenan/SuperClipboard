@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import type { ClipboardEntry } from '../types';
 import { getCategoryColor, getCategoryLabel, formatRelativeTime } from '../utils';
 import { useI18n } from '../i18n';
@@ -8,25 +8,73 @@ interface Props {
   onCopy: (id: number) => void;
   onDelete: (id: number) => void;
   onTogglePin: (id: number) => void;
+  onEdit: (id: number, content: string) => Promise<void>;
 }
 
-export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin }: Props) {
+export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, onEdit }: Props) {
   const [hovered, setHovered] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState(entry.content);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [saving, setSaving] = useState(false);
   const { t } = useI18n();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const categoryColor = getCategoryColor(entry.category);
   const isImage = entry.category === 'image';
+  const hasOriginal = entry.original_content != null;
+
+  const handleEditClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditContent(entry.content);
+    setEditing(true);
+    // Focus the textarea after render
+    setTimeout(() => textareaRef.current?.focus(), 50);
+  }, [entry.content]);
+
+  const handleSave = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onEdit(entry.id, editContent);
+      setEditing(false);
+    } catch (err) {
+      console.error('Failed to save edit:', err);
+    } finally {
+      setSaving(false);
+    }
+  }, [entry.id, editContent, onEdit, saving]);
+
+  const handleCancel = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditing(false);
+    setEditContent(entry.content);
+  }, [entry.content]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      handleCancel(e as unknown as React.MouseEvent);
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      handleSave(e as unknown as React.MouseEvent);
+    }
+  }, [handleCancel, handleSave]);
+
+  const handleToggleOriginal = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowOriginal(prev => !prev);
+  }, []);
 
   return (
     <div
       style={{
         ...styles.container,
-        ...(hovered ? styles.containerHover : {}),
+        ...(hovered && !editing ? styles.containerHover : {}),
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      onClick={() => onCopy(entry.id)}
-      title={t.clickToCopy}
+      onClick={() => !editing && onCopy(entry.id)}
+      title={editing ? undefined : t.clickToCopy}
     >
       {/* Category indicator */}
       <div style={{ ...styles.categoryBar, background: categoryColor }} />
@@ -44,29 +92,89 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin }: 
             {getCategoryLabel(entry.category, t)}
           </span>
           <div style={styles.headerRight}>
+            {entry.updated_at && (
+              <span style={styles.editedBadge}>
+                {t.editedAt(formatRelativeTime(entry.updated_at, t))}
+              </span>
+            )}
             <span style={styles.time}>{formatRelativeTime(entry.created_at, t)}</span>
-            {entry.pinned && <span style={styles.pinBadge}>&#x1F4CC;</span>}
+            {entry.pinned && <span style={styles.pinBadge}>{'\u{1F4CC}'}</span>}
           </div>
         </div>
 
-        {/* Content preview */}
-        <div style={styles.preview}>
-          {isImage ? (
-            <img
-              src={`data:image/png;base64,${entry.content}`}
-              alt="Clipboard image"
-              style={styles.imagePreview}
+        {/* Content area */}
+        {editing ? (
+          <div style={styles.editContainer} onClick={(e) => e.stopPropagation()}>
+            <textarea
+              ref={textareaRef}
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              onKeyDown={handleKeyDown}
+              style={styles.textarea}
+              rows={Math.min(Math.max(editContent.split('\n').length, 3), 15)}
             />
-          ) : entry.category === 'code' ? (
-            <pre style={styles.codePreview}>{entry.preview}</pre>
-          ) : (
-            <p style={styles.textPreview}>{entry.preview}</p>
-          )}
-        </div>
+            <div style={styles.editActions}>
+              <span style={styles.editHint}>Ctrl+Enter {t.save} / Esc {t.cancel}</span>
+              <button style={styles.cancelBtn} onClick={handleCancel} disabled={saving}>
+                {t.cancel}
+              </button>
+              <button
+                style={{ ...styles.saveBtn, ...(saving ? styles.saveBtnDisabled : {}) }}
+                onClick={handleSave}
+                disabled={saving}
+              >
+                {saving ? '...' : t.save}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={styles.preview}>
+            {isImage ? (
+              <img
+                src={`data:image/png;base64,${entry.content}`}
+                alt="Clipboard image"
+                style={styles.imagePreview}
+              />
+            ) : entry.category === 'code' ? (
+              <pre style={styles.codePreview}>{entry.preview}</pre>
+            ) : (
+              <p style={styles.textPreview}>{entry.preview}</p>
+            )}
+          </div>
+        )}
+
+        {/* Original content collapsible */}
+        {hasOriginal && !editing && (
+          <div style={styles.originalSection} onClick={(e) => e.stopPropagation()}>
+            <button style={styles.originalToggle} onClick={handleToggleOriginal}>
+              <span style={{
+                ...styles.toggleArrow,
+                transform: showOriginal ? 'rotate(90deg)' : 'rotate(0deg)',
+              }}>
+                {'\u25B6'}
+              </span>
+              {showOriginal ? t.hideOriginal : t.showOriginal}
+            </button>
+            {showOriginal && (
+              <div style={styles.originalContent}>
+                <pre style={styles.originalPre}>{entry.original_content}</pre>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Action buttons (visible on hover) */}
-        {hovered && (
+        {hovered && !editing && (
           <div style={styles.actions}>
+            {!isImage && (
+              <button
+                style={styles.actionBtn}
+                onClick={handleEditClick}
+                title={t.edit}
+              >
+                {'\u270E'}
+              </button>
+            )}
             <button
               style={styles.actionBtn}
               onClick={(e) => {
@@ -85,7 +193,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin }: 
               }}
               title={t.delete}
             >
-              &#x2715;
+              {'\u2715'}
             </button>
           </div>
         )}
@@ -139,6 +247,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '11px',
     color: 'var(--text-muted)',
   },
+  editedBadge: {
+    fontSize: '10px',
+    color: 'var(--accent)',
+    background: 'var(--accent-bg, rgba(59,130,246,0.1))',
+    padding: '1px 6px',
+    borderRadius: '8px',
+    fontWeight: 500,
+  },
   pinBadge: {
     fontSize: '12px',
   },
@@ -179,6 +295,99 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     objectFit: 'contain',
   },
+  // Edit mode styles
+  editContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  textarea: {
+    width: '100%',
+    boxSizing: 'border-box',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
+    color: 'var(--text-primary)',
+    background: 'var(--code-bg, #f5f5f5)',
+    border: '1px solid var(--accent, #3b82f6)',
+    borderRadius: '4px',
+    padding: '8px',
+    resize: 'vertical' as const,
+    outline: 'none',
+  },
+  editActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    justifyContent: 'flex-end',
+  },
+  editHint: {
+    fontSize: '10px',
+    color: 'var(--text-muted)',
+    marginRight: 'auto',
+  },
+  saveBtn: {
+    fontSize: '12px',
+    padding: '4px 12px',
+    borderRadius: '4px',
+    border: 'none',
+    background: 'var(--accent, #3b82f6)',
+    color: '#fff',
+    cursor: 'pointer',
+    fontWeight: 500,
+  },
+  saveBtnDisabled: {
+    opacity: 0.6,
+    cursor: 'not-allowed',
+  },
+  cancelBtn: {
+    fontSize: '12px',
+    padding: '4px 12px',
+    borderRadius: '4px',
+    border: '1px solid var(--border)',
+    background: 'transparent',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+  },
+  // Original content collapsible styles
+  originalSection: {
+    marginTop: '6px',
+  },
+  originalToggle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    background: 'none',
+    border: 'none',
+    color: 'var(--text-muted)',
+    fontSize: '11px',
+    cursor: 'pointer',
+    padding: '2px 0',
+  },
+  toggleArrow: {
+    fontSize: '8px',
+    display: 'inline-block',
+    transition: 'transform 0.2s ease',
+  },
+  originalContent: {
+    marginTop: '4px',
+    background: 'var(--code-bg, #f5f5f5)',
+    borderRadius: '4px',
+    padding: '6px 8px',
+    borderLeft: '3px solid var(--text-muted)',
+  },
+  originalPre: {
+    margin: 0,
+    fontSize: '11px',
+    lineHeight: 1.4,
+    color: 'var(--text-secondary)',
+    fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+    maxHeight: '200px',
+    overflowY: 'auto',
+  },
+  // Action buttons
   actions: {
     position: 'absolute',
     top: '8px',

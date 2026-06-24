@@ -26,6 +26,10 @@ pub struct ClipboardEntry {
     pub hash: String,         // SHA-256 hash for deduplication
     pub pinned: bool,
     pub created_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_content: Option<String>, // Content before first edit (null = never edited)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,       // Timestamp of last edit (null = never edited)
 }
 
 /// Query filter for listing entries
@@ -84,7 +88,9 @@ impl Storage {
                 preview     TEXT    NOT NULL DEFAULT '',
                 hash        TEXT    NOT NULL UNIQUE,
                 pinned      INTEGER NOT NULL DEFAULT 0,
-                created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                original_content TEXT,
+                updated_at  TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_category ON clipboard_entries(category);
@@ -107,7 +113,13 @@ impl Storage {
             );
             CREATE INDEX IF NOT EXISTS idx_memos_updated_at ON memos(updated_at DESC);
             ",
-        )
+        )?;
+
+        // Migration: add columns to existing databases (ignore error if already present)
+        let _ = conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN original_content TEXT");
+        let _ = conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN updated_at TEXT");
+
+        Ok(())
     }
 
     /// Compute SHA-256 hash of content for deduplication
@@ -141,7 +153,7 @@ impl Storage {
     pub fn query(&self, filter: &QueryFilter) -> Result<Vec<ClipboardEntry>, StorageError> {
         let conn = self.conn.lock().unwrap();
 
-        let mut sql = String::from("SELECT id, category, content_type, content, preview, hash, pinned, created_at FROM clipboard_entries WHERE 1=1");
+        let mut sql = String::from("SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at FROM clipboard_entries WHERE 1=1");
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref cat) = filter.category {
@@ -183,6 +195,8 @@ impl Storage {
 
                 let pinned_int: i32 = row.get(6)?;
                 let created_str: String = row.get(7)?;
+                let original_content: Option<String> = row.get(8)?;
+                let updated_at: Option<String> = row.get(9)?;
 
                 Ok(ClipboardEntry {
                     id: row.get(0)?,
@@ -195,6 +209,8 @@ impl Storage {
                     created_at: DateTime::parse_from_rfc3339(&created_str)
                         .unwrap_or_else(|_| Utc::now().into())
                         .with_timezone(&Utc),
+                    original_content,
+                    updated_at,
                 })
             })?
             .collect::<SqlResult<Vec<_>>>()?;
@@ -206,7 +222,7 @@ impl Storage {
     pub fn get_entry_by_id(&self, id: i64) -> Result<Option<ClipboardEntry>, StorageError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, category, content_type, content, preview, hash, pinned, created_at 
+            "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at
              FROM clipboard_entries WHERE id = ?1",
         )?;
 
@@ -224,6 +240,8 @@ impl Storage {
 
                 let pinned_int: i32 = row.get(6)?;
                 let created_str: String = row.get(7)?;
+                let original_content: Option<String> = row.get(8)?;
+                let updated_at: Option<String> = row.get(9)?;
 
                 Ok(ClipboardEntry {
                     id: row.get(0)?,
@@ -236,6 +254,8 @@ impl Storage {
                     created_at: DateTime::parse_from_rfc3339(&created_str)
                         .unwrap_or_else(|_| Utc::now().into())
                         .with_timezone(&Utc),
+                    original_content,
+                    updated_at,
                 })
             })
             .ok();
@@ -266,6 +286,40 @@ impl Storage {
             )
             .unwrap_or(false);
         Ok(pinned)
+    }
+
+    /// Update a clipboard entry's content. Saves original content on first edit.
+    pub fn update_entry(&self, id: i64, new_content: &str) -> Result<bool, StorageError> {
+        let conn = self.conn.lock().unwrap();
+
+        // Read current entry to check if original_content is already set
+        let current: Option<(String, Option<String>)> = conn
+            .query_row(
+                "SELECT content, original_content FROM clipboard_entries WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+
+        let (current_content, existing_original) = match current {
+            Some(c) => c,
+            None => return Ok(false),
+        };
+
+        // Only save original_content on first edit
+        let original = existing_original.unwrap_or(current_content);
+        let preview = if new_content.len() > 200 {
+            new_content.chars().take(200).collect::<String>()
+        } else {
+            new_content.to_string()
+        };
+        let now = Utc::now().to_rfc3339();
+
+        let rows = conn.execute(
+            "UPDATE clipboard_entries SET content = ?1, preview = ?2, original_content = ?3, updated_at = ?4 WHERE id = ?5",
+            params![new_content, preview, original, now, id],
+        )?;
+        Ok(rows > 0)
     }
 
     /// Get total count of entries, optionally filtered by category

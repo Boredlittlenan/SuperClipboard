@@ -7,6 +7,7 @@ import {
   getStats,
   clearUnpinned,
   copyToClipboard,
+  updateEntry,
   onClipboardChanged,
 } from './api/clipboard';
 import { getShortcut, getSetting } from './api/settings';
@@ -160,6 +161,19 @@ function AppContent() {
     []
   );
 
+  const handleEdit = useCallback(
+    async (id: number, content: string) => {
+      try {
+        await updateEntry(id, content);
+        fetchEntries();
+        fetchStats();
+      } catch (err) {
+        console.error('Failed to update entry:', err);
+      }
+    },
+    [fetchEntries, fetchStats]
+  );
+
   const handleClear = useCallback(async () => {
     if (!confirm(t.clearConfirm)) return;
     try {
@@ -244,6 +258,7 @@ function AppContent() {
           onCopy={handleCopy}
           onDelete={handleDelete}
           onTogglePin={handleTogglePin}
+          onEdit={handleEdit}
           loading={loading}
         />
       )}

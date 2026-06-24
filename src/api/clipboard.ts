@@ -32,6 +32,11 @@ export async function copyToClipboard(id: number): Promise<boolean> {
   return invoke('copy_to_clipboard', { id });
 }
 
+/** Update a clipboard entry's content */
+export async function updateEntry(id: number, content: string): Promise<boolean> {
+  return invoke('update_entry', { id, content });
+}
+
 /** Listen for new clipboard events */
 export function onClipboardChanged(
   callback: (entry: ClipboardEntry) => void

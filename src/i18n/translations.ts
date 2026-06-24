@@ -27,6 +27,13 @@ export interface Translations {
   pin: string;
   unpin: string;
   delete: string;
+  edit: string;
+  save: string;
+  cancel: string;
+  editedAt: (time: string) => string;
+  originalContent: string;
+  showOriginal: string;
+  hideOriginal: string;
 
   // List states
   loading: string;
@@ -100,6 +107,13 @@ export const zhCN: Translations = {
   pin: '置顶',
   unpin: '取消置顶',
   delete: '删除',
+  edit: '编辑',
+  save: '保存',
+  cancel: '取消',
+  editedAt: (time) => `编辑于 ${time}`,
+  originalContent: '原始内容',
+  showOriginal: '查看原文',
+  hideOriginal: '收起原文',
 
   loading: '加载中...',
   noEntries: '暂无剪贴板记录',
@@ -168,6 +182,13 @@ export const en: Translations = {
   pin: 'Pin',
   unpin: 'Unpin',
   delete: 'Delete',
+  edit: 'Edit',
+  save: 'Save',
+  cancel: 'Cancel',
+  editedAt: (time) => `Edited ${time}`,
+  originalContent: 'Original',
+  showOriginal: 'Show original',
+  hideOriginal: 'Hide original',
 
   loading: 'Loading...',
   noEntries: 'No clipboard entries yet',

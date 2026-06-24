@@ -9,6 +9,8 @@ export interface ClipboardEntry {
   hash: string;
   pinned: boolean;
   created_at: string;
+  original_content: string | null;
+  updated_at: string | null;
 }
 
 export interface QueryFilter {
