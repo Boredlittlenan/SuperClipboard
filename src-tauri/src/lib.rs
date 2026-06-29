@@ -55,26 +55,170 @@ fn update_tray_menu(app: &tauri::AppHandle, language: &str) -> tauri::Result<()>
     Ok(())
 }
 
+// ─── Position Helpers ────────────────────────────────────────────────
+
+/// Get the caret (insertion point) position in screen coordinates.
+/// Returns None if there's no caret in the foreground window.
+#[cfg(windows)]
+fn get_caret_pos_screen() -> Option<(i32, i32)> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetCaretPos};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return None;
+        }
+        let mut pt = windows::Win32::Foundation::POINT { x: 0, y: 0 };
+        if GetCaretPos(&mut pt).is_err() || (pt.x == 0 && pt.y == 0) {
+            return None;
+        }
+        if !ClientToScreen(hwnd, &mut pt).as_bool() {
+            return None;
+        }
+        Some((pt.x, pt.y))
+    }
+}
+
+/// Get the primary monitor's work area (excludes taskbar).
+#[cfg(windows)]
+fn get_work_area() -> (i32, i32, i32, i32) {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
+    use windows::Win32::Foundation::POINT;
+    unsafe {
+        let hmonitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(hmonitor, &mut mi).into() {
+            let rc = mi.rcWork;
+            (rc.left, rc.top, rc.right, rc.bottom)
+        } else {
+            (0, 0, 1920, 1080) // fallback
+        }
+    }
+}
+
+/// Position the window using SetWindowPos (native Windows API).
+#[cfg(windows)]
+fn set_window_pos_native(hwnd: isize, x: i32, y: i32) {
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOZORDER, SWP_NOACTIVATE, SWP_NOSIZE};
+    let _ = unsafe {
+        SetWindowPos(
+            windows::Win32::Foundation::HWND(hwnd as *mut _),
+            windows::Win32::Foundation::HWND(std::ptr::null_mut()),
+            x, y,
+            0, 0,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE,
+        )
+    };
+}
+
 // ─── Shortcut Helpers ────────────────────────────────────────────────
 
 /// Register a global shortcut that toggles the main window visibility.
 fn register_toggle_shortcut(
     app: &tauri::AppHandle,
     shortcut: &str,
+    storage: Arc<Storage>,
 ) -> Result<(), tauri_plugin_global_shortcut::Error> {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let app = app.clone();
     app.global_shortcut()
-        .on_shortcut(shortcut, |app, _shortcut, event| {
+        .on_shortcut(shortcut, move |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
-                if let Some(window) = app.get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) {
-                        let _ = window.hide();
-                    } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        let _ = app.emit("window-shown", "shortcut");
+                let app = app.clone();
+                let storage = storage.clone();
+
+                let app_for_main = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if let Some(window) = app_for_main.get_webview_window("main") {
+                        if window.is_visible().unwrap_or(false) {
+                            let _ = window.hide();
+                        } else {
+                            let follow_mode = storage.get_setting("follow_mode").ok().flatten()
+                                .map(|v| v != "false")
+                                .unwrap_or(true);
+                            let save_position = storage.get_setting("save_position").ok().flatten()
+                                .map(|v| v == "true")
+                                .unwrap_or(false);
+
+                            #[cfg(windows)]
+                            {
+                                if let Ok(hwnd) = window.hwnd() {
+                                    let hwnd_raw = hwnd.0 as isize;
+                                    let (wa_left, wa_top, wa_right, wa_bottom) = get_work_area();
+                                    let wa_h = wa_bottom - wa_top;
+                                    // Window dimensions (physical pixels)
+                                    let win_size = window.outer_size().unwrap_or(tauri::PhysicalSize::new(420u32, 600u32));
+                                    let win_w = win_size.width as i32;
+                                    let win_h = win_size.height as i32;
+
+                                    let mut pos: Option<(i32, i32)> = None;
+
+                                    // 1. Follow mode: try caret position
+                                    if follow_mode {
+                                        if let Some((cx, cy)) = get_caret_pos_screen() {
+                                            // Horizontal: prefer right of caret, fallback left
+                                            let x = if cx + win_w + 10 <= wa_right {
+                                                cx + 10
+                                            } else {
+                                                (cx - win_w - 10).max(wa_left)
+                                            };
+                                            // Vertical: if caret in top half → below; else above
+                                            let y = if cy < wa_top + wa_h / 2 {
+                                                (cy + 20).min(wa_bottom - win_h)
+                                            } else {
+                                                (cy - win_h - 20).max(wa_top)
+                                            };
+                                            let x = x.clamp(wa_left, wa_right - win_w);
+                                            let y = y.clamp(wa_top, wa_bottom - win_h);
+                                            pos = Some((x, y));
+                                        }
+                                    }
+
+                                    // 2. No caret or follow_mode off: saved position or default
+                                    if pos.is_none() {
+                                        if save_position {
+                                            if let Some(saved) = storage.get_setting("window_pos").ok().flatten() {
+                                                let parts: Vec<&str> = saved.split(',').collect();
+                                                if parts.len() == 2 {
+                                                    if let (Ok(sx), Ok(sy)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
+                                                        let x = sx.clamp(wa_left, wa_right - win_w);
+                                                        let y = sy.clamp(wa_top, wa_bottom - win_h);
+                                                        pos = Some((x, y));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // 3. Default: right-center of screen
+                                    if pos.is_none() {
+                                        let x = wa_right - win_w - 20;
+                                        let y = wa_top + (wa_h - win_h) / 2;
+                                        pos = Some((x, y));
+                                    }
+
+                                    // Apply position before show
+                                    if let Some((x, y)) = pos {
+                                        set_window_pos_native(hwnd_raw, x, y);
+                                    }
+
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+
+                                    // Apply position again after show as fallback
+                                    if let Some((x, y)) = pos {
+                                        set_window_pos_native(hwnd_raw, x, y);
+                                    }
+                                }
+                            }
+
+                            let _ = app_for_main.emit("window-shown", "shortcut");
+                        }
                     }
-                }
+                });
             }
         })
 }
@@ -123,6 +267,9 @@ fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, Str
     let db_size = state.storage.db_size().map_err(|e| e.to_string())?;
     let archive = state.storage.archive_count().map_err(|e| e.to_string())?;
 
+    let clipboard_size = state.storage.clipboard_storage_size().map_err(|e| e.to_string())?;
+    let memo_size = state.storage.memo_storage_size().map_err(|e| e.to_string())?;
+
     Ok(serde_json::json!({
         "total": total,
         "text": text,
@@ -132,6 +279,8 @@ fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, Str
         "email": email,
         "file_path": file_path,
         "dbSize": db_size,
+        "clipboardSize": clipboard_size,
+        "memoSize": memo_size,
         "archive": archive,
     }))
 }
@@ -276,7 +425,7 @@ fn set_shortcut(
         let _ = app.global_shortcut().unregister(old_shortcut.as_str());
 
         // Register new shortcut
-        register_toggle_shortcut(&app, new_shortcut.as_str())
+        register_toggle_shortcut(&app, new_shortcut.as_str(), state.storage.clone())
             .map_err(|e| format!("Failed to register shortcut: {}", e))?;
 
         // Update state
@@ -608,18 +757,32 @@ pub fn run() {
                 .flatten()
                 .unwrap_or_else(|| "en".to_string());
 
+            let storage_for_shortcut = storage.clone();
+            let storage_for_tray = storage.clone();
+
             app.manage(AppState {
-                storage,
+                storage: storage.clone(),
                 monitor: std::sync::Mutex::new(monitor),
                 current_shortcut: std::sync::Mutex::new(shortcut.clone()),
             });
 
             // Register global shortcut to show/hide window
-            let _ = register_toggle_shortcut(&app.handle(), shortcut.as_str());
+            let _ = register_toggle_shortcut(&app.handle(), shortcut.as_str(), storage_for_shortcut);
 
-            // Apply always-on-top setting (default: true, tauri.conf.json also sets true)
+            // Apply always-on-top setting and track window position for "save position" feature
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_always_on_top(always_on_top);
+
+                #[cfg(windows)]
+                {
+                    let storage_for_events = storage.clone();
+                    window.on_window_event(move |event| {
+                        if let tauri::WindowEvent::Moved(pos) = event {
+                            let pos_str = format!("{},{}", pos.x, pos.y);
+                            let _ = storage_for_events.set_setting("window_pos", &pos_str);
+                        }
+                    });
+                }
             }
 
             // Set up system tray menu and click handler
@@ -628,10 +791,26 @@ pub fn run() {
                 update_tray_menu(&handle, &saved_language)?;
 
                 // Handle menu item clicks
+                let storage_tray = storage_for_tray.clone();
                 tray.on_menu_event(move |app_handle, event| {
                     match event.id().as_ref() {
                         "settings" => {
                             if let Some(window) = app_handle.get_webview_window("main") {
+                                // Reset position to default (right-center) and clear saved position
+                                #[cfg(windows)]
+                                {
+                                    let _ = storage_tray.set_setting("window_pos", "");
+                                    if let Ok(hwnd) = window.hwnd() {
+                                        let (_wa_left, wa_top, wa_right, wa_bottom) = get_work_area();
+                                        let wa_h = wa_bottom - wa_top;
+                                        let win_size = window.outer_size().unwrap_or(tauri::PhysicalSize::new(420u32, 600u32));
+                                        let win_w = win_size.width as i32;
+                                        let win_h = win_size.height as i32;
+                                        let x = wa_right - win_w - 20;
+                                        let y = wa_top + (wa_h - win_h) / 2;
+                                        set_window_pos_native(hwnd.0 as isize, x, y);
+                                    }
+                                }
                                 let _ = window.show();
                                 let _ = window.set_focus();
                                 // Emit event to frontend to open settings panel

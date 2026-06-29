@@ -52,6 +52,8 @@ export interface Translations {
   // Footer
   itemsCount: (n: number) => string;
   storageSize: (formatted: string) => string;
+  clipboardStorage: (formatted: string) => string;
+  memoStorage: (formatted: string) => string;
   clearHistory: string;
   clearConfirm: string;
 
@@ -72,6 +74,8 @@ export interface Translations {
   memoColorReset: string;
   archiveSetting: string;
   archiveSettingDesc: string;
+  savePosition: string;
+  savePositionDesc: string;
 
   // Toast
   copied: string;
@@ -128,7 +132,7 @@ export const zhCN: Translations = {
   tabCode: '代码',
   tabEmail: '邮箱',
   tabPath: '路径',
-  tabArchive: '归档',
+  tabArchive: '回收站',
 
   justNow: '刚刚',
   minutesAgo: (n) => `${n} 分钟前`,
@@ -142,12 +146,12 @@ export const zhCN: Translations = {
   cancel: '取消',
   openInBrowser: '在浏览器中打开',
   restore: '恢复',
-  archive: '归档',
+  archive: '回收站',
   permanentDelete: '彻底删除',
   permanentDeleteConfirm: '确定要彻底删除此条目吗？此操作不可恢复。',
-  archiveEmpty: '归档为空',
-  archiveEmptyHint: '删除的条目会自动归档',
-  daysRemaining: (n) => `${n} 天后自动删除`,
+  archiveEmpty: '回收站为空',
+  archiveEmptyHint: '删除的条目会暂存在回收站，30天后自动清除',
+  daysRemaining: (n) => `${n} 天后清除`,
   archiveSubTab: '剪贴板',
   memoSubTab: '备忘录',
   editedAt: (time) => `编辑于 ${time}`,
@@ -161,6 +165,8 @@ export const zhCN: Translations = {
 
   itemsCount: (n) => `${n} 条记录`,
   storageSize: (s) => ` · ${s}`,
+  clipboardStorage: (s) => `剪贴板 ${s}`,
+  memoStorage: (s) => `备忘录 ${s}`,
   clearHistory: '清除历史',
   clearConfirm: '确定清除所有未置顶的记录吗？',
 
@@ -178,8 +184,10 @@ export const zhCN: Translations = {
   memoColor: '备忘录配色',
   memoColorDesc: '自定义备忘录模块配色，不受主题影响',
   memoColorReset: '重置',
-  archiveSetting: '归档功能',
-  archiveSettingDesc: '删除条目时自动归档，30天内可恢复',
+  archiveSetting: '回收站',
+  archiveSettingDesc: '删除条目时暂存回收站，30天内可恢复',
+  savePosition: '保存位置',
+  savePositionDesc: '记录上次窗口位置，下次启动时恢复',
 
   copied: '已复制！',
 
@@ -203,7 +211,7 @@ export const zhCN: Translations = {
   rawPreview: '原格式预览',
   rawPreviewDesc: '以原始格式显示剪贴板内容',
   followMode: '跟随模式',
-  followModeDesc: '快捷键唤起时窗口跟随鼠标位置',
+  followModeDesc: '快捷键唤起时窗口跟随插入符位置',
   autoUpdate: '自动检查更新',
   autoUpdateDesc: '每次启动时自动检查更新',
   version: '版本号',
@@ -234,7 +242,7 @@ export const en: Translations = {
   tabCode: 'Code',
   tabEmail: 'Email',
   tabPath: 'Path',
-  tabArchive: 'Archive',
+  tabArchive: 'Recycle Bin',
 
   justNow: 'just now',
   minutesAgo: (n) => `${n}m ago`,
@@ -248,12 +256,12 @@ export const en: Translations = {
   cancel: 'Cancel',
   openInBrowser: 'Open in browser',
   restore: 'Restore',
-  archive: 'Archive',
+  archive: 'Recycle Bin',
   permanentDelete: 'Delete Forever',
   permanentDeleteConfirm: 'Permanently delete this item? This cannot be undone.',
-  archiveEmpty: 'Archive is empty',
-  archiveEmptyHint: 'Deleted items will be archived automatically',
-  daysRemaining: (n) => `${n} day${n !== 1 ? 's' : ''} until auto-delete`,
+  archiveEmpty: 'Recycle bin is empty',
+  archiveEmptyHint: 'Deleted items stay in recycle bin, auto-cleared after 30 days',
+  daysRemaining: (n) => `${n} day${n !== 1 ? 's' : ''} until cleared`,
   archiveSubTab: 'Clipboard',
   memoSubTab: 'Memos',
   editedAt: (time) => `Edited ${time}`,
@@ -267,6 +275,8 @@ export const en: Translations = {
 
   itemsCount: (n) => `${n} item${n !== 1 ? 's' : ''}`,
   storageSize: (s) => ` · ${s}`,
+  clipboardStorage: (s) => `Clipboard ${s}`,
+  memoStorage: (s) => `Memo ${s}`,
   clearHistory: 'Clear History',
   clearConfirm: 'Clear all non-pinned entries?',
 
@@ -284,8 +294,10 @@ export const en: Translations = {
   memoColor: 'Memo Color',
   memoColorDesc: 'Customize memo module color, independent of theme',
   memoColorReset: 'Reset',
-  archiveSetting: 'Archive',
-  archiveSettingDesc: 'Auto-archive deleted items, recoverable within 30 days',
+  archiveSetting: 'Recycle Bin',
+  archiveSettingDesc: 'Keep deleted items in recycle bin, recoverable within 30 days',
+  savePosition: 'Save Position',
+  savePositionDesc: 'Remember last window position across restarts',
 
   copied: 'Copied!',
 
@@ -309,7 +321,7 @@ export const en: Translations = {
   rawPreview: 'Raw Preview',
   rawPreviewDesc: 'Show clipboard content in raw format',
   followMode: 'Follow Mode',
-  followModeDesc: 'Window follows cursor position when shown via shortcut',
+  followModeDesc: 'Window follows caret position when shown via shortcut',
   autoUpdate: 'Auto Update',
   autoUpdateDesc: 'Check for updates on startup',
   version: 'Version',

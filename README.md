@@ -19,7 +19,7 @@ A lightweight clipboard manager built with Rust + Tauri + React + TypeScript.
 - Auto-start on system boot (Windows registry)
 - User preferences persisted in SQLite
 - Horizontally scrollable tab bar (mouse wheel supported)
-- Database size display in footer
+- Separate storage size display in footer: clipboard tab shows clipboard storage, memo tab shows memo storage
 - Clipboard content editing: inline edit with original content preservation and collapsible diff view
 - Raw preview toggle: view clipboard content in monospace full format without truncation
 - Auto-update check on startup toggle (configurable in settings)
@@ -28,9 +28,10 @@ A lightweight clipboard manager built with Rust + Tauri + React + TypeScript.
 - 3-way theme toggle (Light / Dark / Auto) in a single segmented button
 - Memo module with distinct warm amber visual style across all themes
 - Custom memo color: 8 presets + HEX input, independent of theme
-- Memo archiving: soft-delete with archive tab split into "Clipboard" and "Memos" sub-tabs, 30-day auto-purge
-- Archive countdown: shows days remaining before auto-deletion with yellow badge
-- Follow mode: window auto-positions near cursor when opened via shortcut (not tray click)
+- Recycle Bin: soft-delete with Recycle Bin tab split into "Clipboard" and "Memos" sub-tabs, 30-day auto-purge
+- Recycle Bin countdown: shows days remaining before auto-deletion with yellow badge
+- Save window position: remembers last window position and restores on next launch (tray settings resets to default)
+- Follow mode: window auto-positions near caret (insertion point) when opened via shortcut, with smart direction to keep window fully visible (not tray click)
 - Paste to active window: click an entry after shortcut-open to auto-hide and simulate Ctrl+V paste
 - Memo drag-and-drop reordering: Pointer Events implementation, reliable in Tauri WebView2
 - One-click update check via GitHub Releases

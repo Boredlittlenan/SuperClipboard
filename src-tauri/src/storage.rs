@@ -346,6 +346,30 @@ impl Storage {
         Ok(page_count * page_size)
     }
 
+    /// Get clipboard entries storage size in bytes (sum of content field lengths)
+    pub fn clipboard_storage_size(&self) -> Result<i64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let size: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(content) + LENGTH(preview) + LENGTH(original_content)), 0) FROM clipboard_entries",
+                [],
+                |row| row.get(0),
+            )?;
+        Ok(size)
+    }
+
+    /// Get memos storage size in bytes (sum of title + body + tags field lengths)
+    pub fn memo_storage_size(&self) -> Result<i64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let size: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(title) + LENGTH(body) + LENGTH(tags)), 0) FROM memos",
+                [],
+                |row| row.get(0),
+            )?;
+        Ok(size)
+    }
+
     /// Clear all non-pinned entries (archive them if archive is enabled, otherwise hard delete)
     pub fn clear_unpinned(&self, archive: bool) -> Result<u64, StorageError> {
         let conn = self.conn.lock().unwrap();

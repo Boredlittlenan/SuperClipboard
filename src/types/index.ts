@@ -30,6 +30,8 @@ export interface Stats {
   email: number;
   file_path: number;
   dbSize: number;
+  clipboardSize: number;
+  memoSize: number;
   archive: number;
 }
 

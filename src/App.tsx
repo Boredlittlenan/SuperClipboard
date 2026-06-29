@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { ClipboardEntry, FilterTab, QueryFilter, Stats, Memo } from './types';
 import {
   getEntries,
@@ -17,7 +16,7 @@ import {
   permanentDelete,
   purgeOldArchives,
 } from './api/clipboard';
-import { getShortcut, getSetting, checkUpdate, getCursorPosition, pasteToActiveWindow } from './api/settings';
+import { getShortcut, getSetting, checkUpdate, pasteToActiveWindow } from './api/settings';
 import { memoCount, getArchivedMemos, memoArchiveCount, unarchiveMemo, permanentDeleteMemo, purgeOldMemoArchives } from './api/memos';
 import { formatRelativeTime } from './utils';
 import { I18nProvider, useI18n } from './i18n';
@@ -41,7 +40,7 @@ function ArchivedMemoItem({ memo, onRestore, onPermanentDelete }: { memo: Memo; 
     <div className="memo-entry" style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'var(--memo-contrast-bg)', padding: '4px 6px', borderRadius: '4px', margin: '-2px -4px 2px -4px' }}>
-          <span className="memo-selectable" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span className="memo-selectable" style={{ fontSize: '13px', fontWeight: 600, color: '#1a1a1a', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {memo.title || '(untitled)'}
           </span>
           <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
@@ -100,7 +99,6 @@ function AppContent() {
   const [archivedMemos, setArchivedMemos] = useState<Memo[]>([]);
   const [memoArchiveCountState, setMemoArchiveCountState] = useState<number>(0);
   const [openedViaShortcut, setOpenedViaShortcut] = useState(false);
-  const [followMode, setFollowMode] = useState(true);
 
   // Fetch current shortcut on mount
   useEffect(() => {
@@ -195,27 +193,15 @@ function AppContent() {
     }).catch(console.error);
   }, []);
 
-  // Load follow_mode setting on mount
-  useEffect(() => {
-    getSetting('follow_mode').then((v) => setFollowMode(v !== 'false')).catch(console.error);
-  }, []);
-
   // Listen for window-shown events to track how the window was opened
   useEffect(() => {
     const unlisten = listen<string>('window-shown', (event) => {
       const source = event.payload;
       setOpenedViaShortcut(source === 'shortcut');
-
-      // Follow mode: position window near cursor when opened via shortcut
-      if (source === 'shortcut' && followMode) {
-        getCursorPosition().then(({ x, y }) => {
-          const win = getCurrentWindow();
-          win.setPosition({ x: x + 10, y: y - 110 }).catch(console.error);
-        }).catch(console.error);
-      }
+      // Follow mode positioning is handled in Rust before window.show()
     });
     return () => { unlisten.then(fn => fn()); };
-  }, [followMode]);
+  }, []);
 
   // Fetch entries based on current filter
   const fetchEntries = useCallback(async () => {
@@ -521,7 +507,6 @@ function AppContent() {
               onThemeModeChange={setThemeMode}
               onThemeAccentChange={setThemeAccent}
               onArchiveEnabledChange={setArchiveEnabled}
-              onFollowModeChange={setFollowMode}
             />
           </div>
         </div>
@@ -592,7 +577,7 @@ function AppContent() {
           {archiveSubTab === 'clipboard' ? (
             entries.length === 0 && !loading ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '40px 20px' }}>
-                <span style={{ fontSize: '36px', opacity: 0.5 }}>{'\uD83D\uDCC1'}</span>
+                <span style={{ fontSize: '36px', opacity: 0.5 }}>{'\uD83D\uDDD1\uFE0F'}</span>
                 <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 500 }}>{t.archiveEmpty}</span>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.archiveEmptyHint}</span>
               </div>
@@ -655,7 +640,11 @@ function AppContent() {
             : activeTab === 'archive' && archiveSubTab === 'memos'
             ? t.itemsCount(archivedMemos.length)
             : t.itemsCount(entries.length)}
-          {stats?.dbSize != null && t.storageSize(formatBytes(stats.dbSize))}
+          {activeTab === 'memo'
+            ? stats?.memoSize != null && ` · ${t.memoStorage(formatBytes(stats.memoSize))}`
+            : activeTab === 'archive' && archiveSubTab === 'memos'
+            ? stats?.memoSize != null && ` · ${t.memoStorage(formatBytes(stats.memoSize))}`
+            : stats?.clipboardSize != null && ` · ${t.clipboardStorage(formatBytes(stats.clipboardSize))}`}
         </span>
         {activeTab !== 'memo' && activeTab !== 'archive' && (
           <button
