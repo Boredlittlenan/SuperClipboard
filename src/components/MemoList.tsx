@@ -20,10 +20,15 @@ export default function MemoList({ searchQuery, rawPreview, archiveEnabled, onCo
   const [editDraft, setEditDraft] = useState<{ title: string; body: string; tags: string } | null>(null);
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
-  const [creatingNewId, setCreatingNewId] = useState<number | null>(null);
 
   const editingItemRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const editingIdRef = useRef<number | null>(null);
+
+  // Keep editingIdRef in sync with editingId state
+  useEffect(() => {
+    editingIdRef.current = editingId;
+  }, [editingId]);
 
   // ─── Fetch memos ──────────────────────────────────────────
   const fetchMemos = useCallback(async () => {
@@ -57,19 +62,6 @@ export default function MemoList({ searchQuery, rawPreview, archiveEnabled, onCo
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [editDraft, editingId]);
 
-  // ─── Click outside to exit editing ────────────────────────
-  useEffect(() => {
-    if (editingId === null) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (editingItemRef.current && !editingItemRef.current.contains(e.target as Node)) {
-        setEditingId(null);
-        setEditDraft(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [editingId]);
-
   // ─── Auto-scroll editing item into view ───────────────────
   useEffect(() => {
     if (editingId !== null && editingItemRef.current) {
@@ -82,11 +74,13 @@ export default function MemoList({ searchQuery, rawPreview, archiveEnabled, onCo
 
   // ─── Editing handlers ─────────────────────────────────────
   const startEditing = useCallback((memo: Memo) => {
+    editingIdRef.current = memo.id;
     setEditingId(memo.id);
     setEditDraft({ title: memo.title, body: memo.body, tags: memo.tags });
   }, []);
 
   const stopEditing = useCallback(() => {
+    editingIdRef.current = null;
     setEditingId(null);
     setEditDraft(null);
   }, []);
@@ -95,37 +89,32 @@ export default function MemoList({ searchQuery, rawPreview, archiveEnabled, onCo
     setEditDraft(prev => prev ? { ...prev, [field]: value } : null);
   };
 
-  // ─── Create new memo (smart toggle) ───────────────────────
+  // ─── Create new memo (toggle editor) ───────────────────────
   const handleCreate = async () => {
     try {
-      // Case 1: Currently editing a newly-created memo
-      if (editingId !== null && editingId === creatingNewId) {
+      // Use ref for synchronous check — state is stale during rapid clicks
+      if (editingIdRef.current !== null) {
+        const id = editingIdRef.current;
         const hasContent = editDraft && (editDraft.title.trim() || editDraft.body.trim());
         if (hasContent) {
-          // Auto-save already handles persistence; just close editor
-          await updateMemo(editingId, editDraft!.title, editDraft!.body, editDraft!.tags);
+          // Has content — save and close
+          await updateMemo(id, editDraft!.title, editDraft!.body, editDraft!.tags);
         } else {
-          // Empty memo — delete it
-          await deleteMemo(editingId);
-          setMemos(prev => prev.filter(m => m.id !== editingId));
+          // Empty — cancel creation, delete the memo
+          await deleteMemo(id);
+          setMemos(prev => prev.filter(m => m.id !== id));
+          onCountChange?.(memos.length - 1);
         }
+        editingIdRef.current = null;
         setEditingId(null);
         setEditDraft(null);
-        setCreatingNewId(null);
-        onCountChange?.(memos.length - (hasContent ? 0 : 1));
         return;
       }
 
-      // Case 2: Editing an existing memo — let auto-save handle it, then create new
-      if (editingId !== null) {
-        setEditingId(null);
-        setEditDraft(null);
-      }
-
-      // Case 3: Not editing — create new memo and start editing
+      // Not editing — create new memo and start editing
       const newMemo = await createMemo('', '', '');
       setMemos(prev => [newMemo, ...prev]);
-      setCreatingNewId(newMemo.id);
+      editingIdRef.current = newMemo.id;
       startEditing(newMemo);
     } catch (err) {
       console.error('Failed to create memo:', err);
@@ -344,9 +333,9 @@ export default function MemoList({ searchQuery, rawPreview, archiveEnabled, onCo
                   <button
                     style={{ ...styles.actionBtn, ...styles.deleteBtn }}
                     onClick={(e) => { e.stopPropagation(); handleDelete(memo.id); }}
-                    title={archiveEnabled ? t.archive : t.delete}
+                    title={archiveEnabled ? t.archiveSetting : t.delete}
                   >
-                    {archiveEnabled ? '\uD83D\uDCE6' : <TrashIcon />}
+                    {archiveEnabled ? '\uD83D\uDDD1\uFE0F' : <TrashIcon />}
                   </button>
                 </div>
               )}
@@ -540,7 +529,7 @@ const styles: Record<string, React.CSSProperties> = {
   memoTitle: {
     fontSize: '13px',
     fontWeight: 600,
-    color: 'var(--text-primary)',
+    color: '#1a1a1a',
     flex: 1,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -595,7 +584,7 @@ const styles: Record<string, React.CSSProperties> = {
   // ─── Preview (non-editing) ────────────────────────────────
   memoPreview: {
     fontSize: '13px',
-    color: 'var(--text-secondary)',
+    color: '#525252',
     margin: 0,
     lineHeight: 1.4,
     display: '-webkit-box',
@@ -607,9 +596,9 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0,
     fontSize: '12px',
     lineHeight: 1.4,
-    color: 'var(--text-primary)',
+    color: '#1a1a1a',
     fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
-    background: 'var(--code-bg)',
+    background: '#f5f5f5',
     padding: '6px 8px',
     borderRadius: '4px',
     whiteSpace: 'pre-wrap',
@@ -640,7 +629,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   timestamp: {
     fontSize: '11px',
-    color: 'var(--text-muted)',
+    color: '#999999',
   },
   editedBadge: {
     fontSize: '10px',

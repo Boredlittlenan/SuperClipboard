@@ -34,10 +34,9 @@ interface SettingsButtonProps {
   onThemeModeChange?: (mode: ThemeMode) => void;
   onThemeAccentChange?: (accent: string) => void;
   onArchiveEnabledChange?: (enabled: boolean) => void;
-  onFollowModeChange?: (enabled: boolean) => void;
 }
 
-export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, onMemoColorChange, onRawPreviewChange, onThemeModeChange, onThemeAccentChange, onArchiveEnabledChange, onFollowModeChange }: SettingsButtonProps) {
+export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, onMemoColorChange, onRawPreviewChange, onThemeModeChange, onThemeAccentChange, onArchiveEnabledChange }: SettingsButtonProps) {
   const { t, locale, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
   const [autostart, setAutostart] = useState(false);
@@ -49,6 +48,7 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [archiveEnabled, setArchiveEnabledState] = useState(false);
   const [followMode, setFollowModeState] = useState(true);
+  const [savePosition, setSavePositionState] = useState(true);
   const [appVersion, setAppVersion] = useState('');
   const [memoColor, setMemoColor] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
@@ -128,14 +128,15 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
         setHexInput(v || '');
       }).catch(console.error);
       getSetting('follow_mode').then((v) => {
-        const enabled = v !== 'false';
-        setFollowModeState(enabled);
-        onFollowModeChange?.(enabled);
+        setFollowModeState(v !== 'false');
+      }).catch(console.error);
+      getSetting('save_position').then((v) => {
+        setSavePositionState(v !== 'false');
       }).catch(console.error);
       setShowColorPicker(false);
       getVersion().then(setAppVersion).catch(console.error);
     }
-  }, [open, onMemoEnabledChange, onShortcutChange, onThemeModeChange, onThemeAccentChange, onArchiveEnabledChange, onFollowModeChange]);
+  }, [open, onMemoEnabledChange, onShortcutChange, onThemeModeChange, onThemeAccentChange, onArchiveEnabledChange]);
 
   // Close panel when clicking outside
   useEffect(() => {
@@ -306,8 +307,13 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
     const newValue = !followMode;
     await setSetting('follow_mode', newValue ? 'true' : 'false');
     setFollowModeState(newValue);
-    onFollowModeChange?.(newValue);
-  }, [followMode, onFollowModeChange]);
+  }, [followMode]);
+
+  const handleSavePositionToggle = useCallback(async () => {
+    const newValue = !savePosition;
+    await setSetting('save_position', newValue ? 'true' : 'false');
+    setSavePositionState(newValue);
+  }, [savePosition]);
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateStatus('checking');
@@ -490,6 +496,17 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
               onClick={handleRawPreviewToggle}
             >
               <div style={{ ...styles.toggleKnob, ...(rawPreview ? styles.toggleKnobOn : {}) }} />
+            </button>
+          </div>
+
+          {/* Save position */}
+          <div style={styles.compactRow} title={t.savePositionDesc}>
+            <span style={styles.rowLabel}>{t.savePosition}</span>
+            <button
+              style={{ ...styles.toggle, ...(savePosition ? styles.toggleOn : {}) }}
+              onClick={handleSavePositionToggle}
+            >
+              <div style={{ ...styles.toggleKnob, ...(savePosition ? styles.toggleKnobOn : {}) }} />
             </button>
           </div>
 

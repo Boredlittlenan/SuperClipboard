@@ -1,5 +1,30 @@
 # Changelog
 
+## v2.0.1 (2026-06-29)
+
+### 新功能
+
+- **插入符跟随**：跟随模式从跟随鼠标位置改为跟随插入符（光标）位置，使用 Windows 原生 `GetCaretPos` + `ClientToScreen` API 获取前台窗口的插入符屏幕坐标
+- **智能窗口定位**：快捷键唤起时根据插入符位置智能放置窗口——插入符在屏幕上半部则窗口显示在下方，在右半部则显示在左侧，始终保证窗口完整显示在屏幕工作区内
+- **保存位置**：新增「保存位置」设置选项（跟随模式上方），开启后每次唤起和关闭窗口自动记录窗口位置到 SQLite，重启应用也能恢复；关闭则每次唤起定位到屏幕右侧中央
+- **托盘设置重置位置**：右键托盘图标选择「设置」打开应用时，窗口位置自动重置为屏幕右侧中央默认位置，并清除已保存的位置记录
+
+### 改进
+
+- **归档→回收站**：「归档模式」重命名为「回收站」，更符合用户直觉。归档按钮图标从文件夹（📁/📦）统一更换为废纸篓（🗑️），包括剪贴板条目和备忘录的删除按钮
+- **底栏存储分离**：底栏存储空间按页面分别显示——备忘录页显示备忘录占用，剪贴板页显示剪贴板占用，归档页按子标签对应显示
+- **工作区感知**：窗口定位使用 `GetMonitorInfoW` 获取显示器工作区域（排除任务栏），确保窗口不会被任务栏遮挡
+- **主线程安全**：快捷键回调中的窗口操作统一派发到主线程执行（`run_on_main_thread`），避免跨线程窗口操作导致的崩溃
+- **原生窗口定位**：使用 Windows `SetWindowPos` API 替代 Tauri `set_position`，在 `show()` 前后各调用一次确保位置生效
+
+### 技术细节
+
+- 新增 `get_caret_pos_screen()` 辅助函数：通过 `GetForegroundWindow` → `GetCaretPos` → `ClientToScreen` 链获取前台窗口插入符的屏幕坐标
+- 新增 `get_work_area()` 辅助函数：使用 `MonitorFromPoint` + `GetMonitorInfoW` 获取主显示器工作区域矩形
+- 新增 `set_window_pos_native()` 辅助函数：封装 `SetWindowPos` 调用，show 前后各定位一次
+- 窗口位置通过 `WindowEvent::Moved` 事件实时保存到 SQLite `settings` 表（key: `window_pos`，格式: `"x,y"`）
+- Cargo.toml 新增 `Win32_Graphics_Gdi` feature（`GetMonitorInfoW`、`MonitorFromPoint`、`ClientToScreen` 所需）
+
 ## v2.0.0 (2026-06-27)
 
 ### 新功能

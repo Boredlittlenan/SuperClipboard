@@ -171,7 +171,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                       }}
                       title={archiveEnabled ? t.archiveSetting : t.delete}
                     >
-                      {archiveEnabled ? '\uD83D\uDCC1' : <TrashIcon />}
+                      {archiveEnabled ? '\uD83D\uDDD1\uFE0F' : <TrashIcon />}
                     </button>
                   </>
                 )}

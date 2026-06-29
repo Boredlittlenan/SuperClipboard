@@ -282,11 +282,11 @@
 
 /* ─── Entry Hover Fix (CSS :hover instead of React state) ─── */
 .clipboard-entry {
-  background: #f5f5f5;
+  background: var(--surface);
   transition: background 0.12s ease;
 }
 .clipboard-entry:hover {
-  background: #ebebeb;
+  background: var(--hover-bg);
 }
 .clipboard-entry .entry-actions {
   opacity: 0;
@@ -299,11 +299,22 @@
 }
 
 .memo-entry {
-  background: #f5f5f5;
+  background: #ffffff;
   transition: background 0.15s ease;
 }
 .memo-entry:hover {
-  background: #ebebeb;
+  background: #f5f5f5;
+}
+/* Fixed text colors inside memo entries — readable on white regardless of theme */
+.memo-entry,
+.memo-entry .memo-selectable {
+  color: #1a1a1a;
+}
+.memo-entry .memo-time {
+  color: #999999;
+}
+.memo-entry .memo-preview {
+  color: #525252;
 }
 .memo-entry .memo-actions {
   opacity: 0;
@@ -319,21 +330,4 @@
 .memo-selectable {
   user-select: text;
   -webkit-user-select: text;
-}
-
-/* Fixed text colors for entries (readable on light bg regardless of theme) */
-.clipboard-entry,
-.memo-entry {
-  color: #1a1a1a;
-}
-.clipboard-entry .entry-category-badge {
-  color: #525252;
-}
-.clipboard-entry .entry-time,
-.memo-entry .memo-time {
-  color: #999999;
-}
-.clipboard-entry .entry-preview,
-.memo-entry .memo-preview {
-  color: #525252;
 }
