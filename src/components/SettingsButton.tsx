@@ -48,7 +48,7 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [archiveEnabled, setArchiveEnabledState] = useState(false);
   const [followMode, setFollowModeState] = useState(true);
-  const [savePosition, setSavePositionState] = useState(true);
+  const [savePosition, setSavePositionState] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [memoColor, setMemoColor] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
@@ -131,7 +131,7 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
         setFollowModeState(v !== 'false');
       }).catch(console.error);
       getSetting('save_position').then((v) => {
-        setSavePositionState(v !== 'false');
+        setSavePositionState(v === 'true');
       }).catch(console.error);
       setShowColorPicker(false);
       getVersion().then(setAppVersion).catch(console.error);

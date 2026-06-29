@@ -149,6 +149,7 @@ fn register_toggle_shortcut(
                             let save_position = storage.get_setting("save_position").ok().flatten()
                                 .map(|v| v == "true")
                                 .unwrap_or(false);
+                            info!("[position] follow_mode={}, save_position={}", follow_mode, save_position);
 
                             #[cfg(windows)]
                             {
@@ -166,6 +167,7 @@ fn register_toggle_shortcut(
                                     // 1. Follow mode: try caret position
                                     if follow_mode {
                                         if let Some((cx, cy)) = get_caret_pos_screen() {
+                                            info!("[position] caret found at ({}, {})", cx, cy);
                                             // Horizontal: prefer right of caret, fallback left
                                             let x = if cx + win_w + 10 <= wa_right {
                                                 cx + 10
@@ -180,6 +182,7 @@ fn register_toggle_shortcut(
                                             };
                                             let x = x.clamp(wa_left, wa_right - win_w);
                                             let y = y.clamp(wa_top, wa_bottom - win_h);
+                                            info!("[position] using caret position: ({}, {})", x, y);
                                             pos = Some((x, y));
                                         }
                                     }
@@ -193,6 +196,7 @@ fn register_toggle_shortcut(
                                                     if let (Ok(sx), Ok(sy)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
                                                         let x = sx.clamp(wa_left, wa_right - win_w);
                                                         let y = sy.clamp(wa_top, wa_bottom - win_h);
+                                                        info!("[position] using saved position: ({}, {})", x, y);
                                                         pos = Some((x, y));
                                                     }
                                                 }
@@ -205,6 +209,7 @@ fn register_toggle_shortcut(
                                         let x = (wa_left + wa_right * 3) / 4 - win_w / 2;
                                         let x = x.clamp(wa_left, wa_right - win_w);
                                         let y = wa_top + (wa_h - win_h) / 2;
+                                        info!("[position] using default position: ({}, {})", x, y);
                                         pos = Some((x, y));
                                     }
 
