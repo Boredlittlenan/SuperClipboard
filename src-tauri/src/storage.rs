@@ -346,24 +346,24 @@ impl Storage {
         Ok(page_count * page_size)
     }
 
-    /// Get clipboard entries storage size in bytes (sum of content field lengths)
+    /// Get clipboard entries storage size in bytes (sum of content field lengths, excluding archived)
     pub fn clipboard_storage_size(&self) -> Result<i64, StorageError> {
         let conn = self.conn.lock().unwrap();
         let size: i64 = conn
             .query_row(
-                "SELECT COALESCE(SUM(LENGTH(content) + LENGTH(preview) + LENGTH(original_content)), 0) FROM clipboard_entries",
+                "SELECT COALESCE(SUM(LENGTH(content) + LENGTH(preview) + LENGTH(COALESCE(original_content, ''))), 0) FROM clipboard_entries WHERE archived_at IS NULL",
                 [],
                 |row| row.get(0),
             )?;
         Ok(size)
     }
 
-    /// Get memos storage size in bytes (sum of title + body + tags field lengths)
+    /// Get memos storage size in bytes (sum of title + body + tags field lengths, excluding archived)
     pub fn memo_storage_size(&self) -> Result<i64, StorageError> {
         let conn = self.conn.lock().unwrap();
         let size: i64 = conn
             .query_row(
-                "SELECT COALESCE(SUM(LENGTH(title) + LENGTH(body) + LENGTH(tags)), 0) FROM memos",
+                "SELECT COALESCE(SUM(LENGTH(title) + LENGTH(body) + LENGTH(tags)), 0) FROM memos WHERE archived_at IS NULL",
                 [],
                 |row| row.get(0),
             )?;

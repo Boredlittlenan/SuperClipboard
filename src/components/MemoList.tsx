@@ -5,6 +5,20 @@ import { useI18n } from '../i18n';
 import { formatRelativeTime } from '../utils';
 import { TrashIcon } from './icons/TrashIcon';
 
+// Render memo body with embedded markdown images
+const IMG_RE = /!\[image\]\((data:image\/[^)]+)\)/g;
+function renderMemoBody(body: string): React.ReactNode {
+  if (!body) return '\u00A0';
+  const truncated = body.length > 300 ? body.slice(0, 300) + '...' : body;
+  const parts = truncated.split(IMG_RE);
+  if (parts.length === 1) return truncated;
+  return parts.map((part, i) =>
+    i % 2 === 1
+      ? <img key={i} src={part} alt="memo" style={{ maxWidth: '100%', maxHeight: 120, borderRadius: 4, margin: '4px 0', display: 'block' }} />
+      : part ? <span key={i}>{part}</span> : null
+  );
+}
+
 interface Props {
   searchQuery: string;
   rawPreview?: boolean;
@@ -88,6 +102,34 @@ export default function MemoList({ searchQuery, rawPreview, archiveEnabled, onCo
   const handleDraftChange = (field: 'title' | 'body' | 'tags', value: string) => {
     setEditDraft(prev => prev ? { ...prev, [field]: value } : null);
   };
+
+  // ─── Handle image paste in memo body ──────────────────────
+  const handleBodyPaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = reader.result as string;
+          const imgMarkdown = `\n![image](${base64})\n`;
+          setEditDraft(prev => {
+            if (!prev) return prev;
+            const textarea = e.target as HTMLTextAreaElement;
+            const cursor = textarea.selectionStart;
+            const before = prev.body.slice(0, cursor);
+            const after = prev.body.slice(cursor);
+            return { ...prev, body: before + imgMarkdown + after };
+          });
+        };
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
+  }, []);
 
   // ─── Create new memo (toggle editor) ───────────────────────
   const handleCreate = async () => {
@@ -349,6 +391,7 @@ export default function MemoList({ searchQuery, rawPreview, archiveEnabled, onCo
                 style={styles.editBody}
                 value={editDraft.body}
                 onChange={(e) => handleDraftChange('body', e.target.value)}
+                onPaste={handleBodyPaste}
                 onKeyDown={(e) => { if (e.key === 'Escape') stopEditing(); }}
                 placeholder={t.memoBodyPlaceholder}
                 rows={textareaRows}
@@ -367,9 +410,9 @@ export default function MemoList({ searchQuery, rawPreview, archiveEnabled, onCo
               {rawPreview ? (
                 <pre className="memo-selectable" style={styles.rawPreview}>{memo.body || '\u00A0'}</pre>
               ) : (
-                <p className="memo-selectable memo-preview" style={styles.memoPreview}>
-                  {memo.body.length > 100 ? memo.body.slice(0, 100) + '...' : memo.body || '\u00A0'}
-                </p>
+                <div className="memo-selectable memo-preview" style={styles.memoPreview}>
+                  {renderMemoBody(memo.body)}
+                </div>
               )}
               {memo.tags && (
                 <div style={styles.tags}>
@@ -587,10 +630,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#525252',
     margin: 0,
     lineHeight: 1.4,
-    display: '-webkit-box',
-    WebkitLineClamp: 2,
-    WebkitBoxOrient: 'vertical',
+    maxHeight: '60px',
     overflow: 'hidden',
+    wordBreak: 'break-word',
   },
   rawPreview: {
     margin: 0,

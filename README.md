@@ -19,7 +19,8 @@ A lightweight clipboard manager built with Rust + Tauri + React + TypeScript.
 - Auto-start on system boot (Windows registry)
 - User preferences persisted in SQLite
 - Horizontally scrollable tab bar (mouse wheel supported)
-- Database size display in footer
+- Separate storage display in footer: memo tab shows memo content size, clipboard tabs show clipboard content size
+- Memo image paste: paste images (Ctrl+V) into memo body, stored as embedded base64 markdown, rendered in preview
 - Clipboard content editing: inline edit with original content preservation and collapsible diff view
 - Raw preview toggle: view clipboard content in monospace full format without truncation
 - Auto-update check on startup toggle (configurable in settings)

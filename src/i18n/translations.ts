@@ -52,6 +52,8 @@ export interface Translations {
   // Footer
   itemsCount: (n: number) => string;
   storageSize: (formatted: string) => string;
+  clipboardStorage: (formatted: string) => string;
+  memoStorage: (formatted: string) => string;
   clearHistory: string;
   clearConfirm: string;
 
@@ -162,6 +164,8 @@ export const zhCN: Translations = {
 
   itemsCount: (n) => `${n} 条记录`,
   storageSize: (s) => ` · ${s}`,
+  clipboardStorage: (s) => `剪贴板 ${s}`,
+  memoStorage: (s) => `备忘录 ${s}`,
   clearHistory: '清除历史',
   clearConfirm: '确定清除所有未置顶的记录吗？',
 
@@ -269,6 +273,8 @@ export const en: Translations = {
 
   itemsCount: (n) => `${n} item${n !== 1 ? 's' : ''}`,
   storageSize: (s) => ` · ${s}`,
+  clipboardStorage: (s) => `Clipboard ${s}`,
+  memoStorage: (s) => `Memo ${s}`,
   clearHistory: 'Clear History',
   clearConfirm: 'Clear all non-pinned entries?',
 

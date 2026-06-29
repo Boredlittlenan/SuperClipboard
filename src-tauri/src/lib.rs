@@ -193,9 +193,10 @@ fn register_toggle_shortcut(
                                         }
                                     }
 
-                                    // 3. Default: right-center of screen
+                                    // 3. Default: center of right half
                                     if pos.is_none() {
-                                        let x = wa_right - win_w - 20;
+                                        let x = (wa_left + wa_right * 3) / 4 - win_w / 2;
+                                        let x = x.clamp(wa_left, wa_right - win_w);
                                         let y = wa_top + (wa_h - win_h) / 2;
                                         pos = Some((x, y));
                                     }
@@ -801,12 +802,12 @@ pub fn run() {
                                 {
                                     let _ = storage_tray.set_setting("window_pos", "");
                                     if let Ok(hwnd) = window.hwnd() {
-                                        let (_wa_left, wa_top, wa_right, wa_bottom) = get_work_area();
+                                        let (wa_left, wa_top, wa_right, wa_bottom) = get_work_area();
                                         let wa_h = wa_bottom - wa_top;
                                         let win_size = window.outer_size().unwrap_or(tauri::PhysicalSize::new(420u32, 600u32));
                                         let win_w = win_size.width as i32;
                                         let win_h = win_size.height as i32;
-                                        let x = wa_right - win_w - 20;
+                                        let x = ((wa_left + wa_right * 3) / 4 - win_w / 2).clamp(wa_left, wa_right - win_w);
                                         let y = wa_top + (wa_h - win_h) / 2;
                                         set_window_pos_native(hwnd.0 as isize, x, y);
                                     }

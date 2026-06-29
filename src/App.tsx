@@ -640,7 +640,11 @@ function AppContent() {
             : activeTab === 'archive' && archiveSubTab === 'memos'
             ? t.itemsCount(archivedMemos.length)
             : t.itemsCount(entries.length)}
-          {stats?.dbSize != null && t.storageSize(formatBytes(stats.dbSize))}
+          {activeTab === 'memo'
+            ? stats?.memoSize != null && ` · ${t.memoStorage(formatBytes(stats.memoSize))}`
+            : activeTab === 'archive' && archiveSubTab === 'memos'
+            ? stats?.memoSize != null && ` · ${t.memoStorage(formatBytes(stats.memoSize))}`
+            : stats?.clipboardSize != null && ` · ${t.clipboardStorage(formatBytes(stats.clipboardSize))}`}
         </span>
         {activeTab !== 'memo' && activeTab !== 'archive' && (
           <button
