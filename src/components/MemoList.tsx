@@ -15,6 +15,38 @@ import {
 const MEMO_COLLAPSE_TEXT_LIMIT = 300;
 const MEMO_COLLAPSE_LINE_LIMIT = 5;
 
+/**
+ * Semantic tag→color mapping matching clipboard category badge colors
+ * (src/utils.ts CATEGORY_COLORS). Auto-detected memo tags use these labels.
+ */
+const TAG_COLOR_MAP: Record<string, string> = {
+  // English labels
+  'image': '#8b5cf6',
+  'email': '#f59e0b',
+  'path': '#ef4444',
+  'link': '#3b82f6',
+  'code': '#10b981',
+  // Chinese labels (zhCN)
+  '图片': '#8b5cf6',
+  '邮箱': '#f59e0b',
+  '路径': '#ef4444',
+  '链接': '#3b82f6',
+  '代码': '#10b981',
+};
+
+const TAG_FALLBACK_COLORS = ['#6b7280', '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444'];
+
+function getTagColor(tag: string): string {
+  const key = tag.trim().toLocaleLowerCase();
+  if (TAG_COLOR_MAP[key]) return TAG_COLOR_MAP[key];
+  // Hash-based fallback for user-defined tags
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+  }
+  return TAG_FALLBACK_COLORS[Math.abs(hash) % TAG_FALLBACK_COLORS.length];
+}
+
 function isMemoBodyCollapsible(body: string): boolean {
   if (!body) return false;
   const blocks = parseMemoBody(body);
@@ -536,9 +568,16 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
               )}
               {memo.tags && (
                 <div style={styles.tags}>
-                  {memo.tags.split(',').filter(Boolean).map((tag, i) => (
-                    <span key={i} style={styles.tag}>{tag.trim()}</span>
-                  ))}
+                  {memo.tags.split(',').filter(Boolean).map((tag, i) => {
+                    const color = getTagColor(tag);
+                    return (
+                      <span key={i} style={{
+                        ...styles.tag,
+                        background: `${color}20`,
+                        color,
+                      }}>{tag.trim()}</span>
+                    );
+                  })}
                 </div>
               )}
               {/* Timestamps */}
@@ -808,16 +847,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: '4px',
     flexWrap: 'wrap',
+    justifyContent: 'flex-end',
     marginTop: '2px',
   },
   tag: {
     display: 'inline-block',
-    padding: '1px 6px',
-    borderRadius: '8px',
-    background: 'var(--memo-contrast-bg)',
-    color: 'var(--memo-contrast)',
+    padding: '2px 8px',
+    borderRadius: '10px',
     fontSize: '10px',
-    fontWeight: 500,
+    fontWeight: 600,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
   },
   timestampRow: {
     display: 'flex',
