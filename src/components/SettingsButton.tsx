@@ -13,8 +13,12 @@ const LANGUAGES: { value: Locale; labelKey: 'langZhCN' | 'langEn' }[] = [
   { value: 'en', labelKey: 'langEn' },
 ];
 
-/** Convert a JS KeyboardEvent key to Tauri shortcut token */
-function keyToTauri(key: string): string {
+/** Convert a JS KeyboardEvent to a Tauri shortcut token */
+function keyToTauri(key: string, code: string): string {
+  if (/^Key[A-Z]$/.test(code) || /^Digit[0-9]$/.test(code) || /^Numpad/.test(code)) {
+    return code;
+  }
+
   switch (key) {
     case 'Control': return 'Ctrl';
     case 'Meta': return 'Super';
@@ -40,6 +44,16 @@ function addEventModifiers(event: KeyboardEvent, modifiers: Set<string>) {
   if (event.shiftKey || event.key === 'Shift') modifiers.add('Shift');
   if (event.altKey || event.key === 'Alt') modifiers.add('Alt');
   if (event.metaKey || event.key === 'Meta' || event.key === 'OS') modifiers.add('Meta');
+}
+
+function shortcutParts(modifiers: Set<string>, mainKey: string): string[] {
+  const parts: string[] = [];
+  if (modifiers.has('Control')) parts.push('Ctrl');
+  if (modifiers.has('Meta')) parts.push('Super');
+  if (modifiers.has('Alt')) parts.push('Alt');
+  if (modifiers.has('Shift')) parts.push('Shift');
+  parts.push(mainKey);
+  return parts;
 }
 
 interface SettingsButtonProps {
@@ -79,6 +93,7 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
     modifiers: new Set(),
     mainKey: null,
   });
+  const savingShortcutRef = useRef(false);
 
   const handleShortcutButtonClick = useCallback(async () => {
     if (recording) {
@@ -205,6 +220,22 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
       setShortcutRecording(false).catch(console.error);
     };
 
+    const saveShortcut = async (combo: string) => {
+      if (savingShortcutRef.current) return;
+      savingShortcutRef.current = true;
+      try {
+        const saved = await setShortcut(combo);
+        setShortcutState(saved);
+        onShortcutChange?.(saved);
+        setError('');
+      } catch (err) {
+        setError(String(err));
+      } finally {
+        savingShortcutRef.current = false;
+        setRecording(false);
+      }
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
@@ -219,42 +250,21 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
       if (isModifierKey(e.key)) {
         keysRef.current.modifiers.add(e.key);
       } else {
-        keysRef.current.mainKey = e.key;
+        const mainKey = keyToTauri(e.key, e.code);
+        keysRef.current.mainKey = mainKey;
+        const { modifiers } = keysRef.current;
+        if (modifiers.size === 0) {
+          setError(t.shortcutInvalid);
+          setRecording(false);
+          return;
+        }
+        void saveShortcut(shortcutParts(modifiers, mainKey).join('+'));
       }
     };
 
-    const onKeyUp = async (e: KeyboardEvent) => {
+    const onKeyUp = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
-
-      addEventModifiers(e, keysRef.current.modifiers);
-      const { modifiers, mainKey } = keysRef.current;
-      if (mainKey === null) return; // only modifier released, no main key yet
-
-      // Build the shortcut string
-      const parts: string[] = [];
-      if (modifiers.has('Control')) parts.push('Ctrl');
-      if (modifiers.has('Meta')) parts.push('Super');
-      if (modifiers.has('Alt')) parts.push('Alt');
-      if (modifiers.has('Shift')) parts.push('Shift');
-      parts.push(keyToTauri(mainKey));
-
-      if (modifiers.size === 0) {
-        setError(t.shortcutInvalid);
-        setRecording(false);
-        return;
-      }
-
-      const combo = parts.join('+');
-      try {
-        const saved = await setShortcut(combo);
-        setShortcutState(saved);
-        onShortcutChange?.(saved);
-        setError('');
-      } catch (err) {
-        setError(String(err));
-      }
-      setRecording(false);
     };
 
     window.addEventListener('keydown', onKeyDown, true);

@@ -81,6 +81,8 @@ export function formatShortcutLabel(shortcut: string): string {
       const token = part.trim();
       if (token === 'Super' || token === 'Meta') return 'Win';
       if (token === 'Ctrl') return 'Ctrl';
+      if (/^Key[A-Z]$/.test(token)) return token.slice(3);
+      if (/^Digit[0-9]$/.test(token)) return token.slice(5);
       return token;
     })
     .filter(Boolean)
