@@ -12,8 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_2.0.1_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_2.0.1_x64_en-US.msi`: MSI package
+- `SuperClipboard_2.0.2_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_2.0.2_x64_en-US.msi`: MSI package
 
 ## Highlights
 
@@ -29,7 +29,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 
 ## Default Behavior
 
-- Version: `2.0.1`
+- Version: `2.0.2`
 - Default shortcut: `Alt+X`
 - Startup: shows the main window on the desktop and keeps the tray icon available
 - Theme mode: follows system

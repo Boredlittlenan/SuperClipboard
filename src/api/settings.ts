@@ -44,7 +44,19 @@ export interface UpdateInfo {
 
 /** Check for updates from GitHub Releases */
 export async function checkUpdate(): Promise<UpdateInfo> {
-  return invoke('check_update');
+  const info = await invoke<UpdateInfo & {
+    current_version?: string;
+    latest_version?: string;
+    download_url?: string;
+    has_update?: boolean;
+  }>('check_update');
+
+  return {
+    currentVersion: info.currentVersion ?? info.current_version ?? '',
+    latestVersion: info.latestVersion ?? info.latest_version ?? '',
+    downloadUrl: info.downloadUrl ?? info.download_url ?? '',
+    hasUpdate: info.hasUpdate ?? info.has_update ?? false,
+  };
 }
 
 /** Open a URL in the system default browser */

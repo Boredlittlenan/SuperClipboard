@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.0.2 (2026-07-01)
+
+### 修复
+
+- **检查更新结果判断**：修复后端返回 `has_update/latest_version/download_url`，前端读取 `hasUpdate/latestVersion/downloadUrl` 导致检查更新始终显示“已是最新版本”的问题
+- **更新接口兼容性**：后端更新信息统一输出 camelCase，前端同时兼容 camelCase 与 snake_case 字段，避免后续字段名不一致再次误判
+
 ## v2.0.1 (2026-07-01)
 
 ### 变更

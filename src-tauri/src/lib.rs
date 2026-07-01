@@ -25,6 +25,7 @@ const DEFAULT_SHORTCUT: &str = "Alt+X";
 const DEFAULT_SETTINGS_VERSION: &str = "2";
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     pub current_version: String,
     pub latest_version: String,
