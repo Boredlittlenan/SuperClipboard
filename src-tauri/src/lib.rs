@@ -911,6 +911,8 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_always_on_top(always_on_top);
                 move_window_to_default_position(&window, "startup");
+                let _ = window.show();
+                let _ = window.set_focus();
             }
 
             // Set up system tray menu and click handler
