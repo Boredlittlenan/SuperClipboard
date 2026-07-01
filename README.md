@@ -2,50 +2,62 @@
 
 [中文文档](README.zh-CN.md)
 
-A lightweight clipboard manager built with Rust + Tauri + React + TypeScript.
+SuperClipboard is a lightweight Windows clipboard manager built with Rust, Tauri, React, and TypeScript. It keeps clipboard history local, categorizes content automatically, and adds optional memos, recycle bin recovery, themes, tray controls, and quick paste workflows.
+
 Chinese display name: `超级剪贴板`.
 
-## Features
+[Latest Release](https://github.com/Boredlittlenan/SuperClipboard/releases/latest) · [Version Notes](VERSIONS.md) · [Changelog](CHANGELOG.md)
 
-- Smart categorization: automatically classifies clipboard content (text, links, images, code, emails, file paths)
-- Real-time clipboard monitoring with SHA-256 deduplication
-- SQLite storage with indexed queries for fast search
-- Pin important entries, one-click copy back to clipboard
-- Memo / quick notes: independent tab for title, body, tags, search, pin, and auto-save; disabled by default and available from settings
-- Global shortcut to show/hide window (default: Alt+X, customizable in settings)
-- Always-on-top toggle (default: off) to keep the window above others when enabled
-- System tray with context menu (open settings, quit app)
-- Single-instance launch: repeated shortcut/icon launches focus the existing app instead of creating duplicate tray icons
-- Theme mode follows the system by default, with Light / Dark / Auto segmented switching
-- Settings panel with language switching (Chinese / English); first launch follows the system language
-- Auto-start on system boot (Windows registry)
-- User preferences persisted in SQLite
-- Horizontally scrollable tab bar (mouse wheel supported)
-- Separate storage display in footer: memo tab shows memo content size, clipboard tabs show clipboard content size
-- Memo image paste: paste images (Ctrl+V) into memo body and render them directly in preview without showing base64 text
-- Clipboard content editing: inline edit with original content preservation and collapsible diff view
-- Raw preview toggle: view clipboard content in monospace full format without truncation; memos always use formatted preview
-- Auto-update check on startup toggle, enabled by default
-- Improved time display: entries older than 24h show concrete date/time (e.g. "6/24 15:30")
-- Compact settings panel with hover tooltips for each option
-- 3-way theme toggle (Light / Dark / Auto) in a single segmented button
-- Memo module with independent visual styling; its initial color is `#3f3f3f` and does not follow the app accent
-- Custom memo color: 8 presets + HEX input, independent of theme
-- Recycle Bin: soft-delete with Recycle Bin tab split into "Clipboard" and "Memos" sub-tabs, 30-day auto-purge; disabled by default
-- Recycle Bin countdown: shows days remaining before auto-deletion with yellow badge
-- Window position: the app starts at the same default position used by tray context menu > Settings; shortcut and tray-left-click restores keep the user's current dragged position
-- Paste to active window: click an entry after shortcut-open to auto-hide and simulate Ctrl+V paste
-- Paste-to-caret status: the current implementation depends on the previous app regaining focus after the clipboard window hides, then sends Ctrl+V after a short delay. Some apps or slow focus transitions may make it feel intermittent; this is documented for future redesign.
-- Memo drag-and-drop reordering: Pointer Events implementation, reliable in Tauri WebView2
-- App rename migration: `SuperClipboard3` data is migrated automatically to `SuperClipboard`
-- Title easter egg: double-click the version badge to restore, triple-click for `小楠の剪贴板`, five-click for `瑛楠の剪贴板`
-- One-click update check via GitHub Releases
+## Download
+
+Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
+
+- `SuperClipboard_2.0.1_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_2.0.1_x64_en-US.msi`: MSI package
+
+## Highlights
+
+- Smart categorization for text, links, images, code, emails, and file paths
+- Local SQLite history with SHA-256 deduplication and indexed search
+- Pin, edit, copy, delete, and restore clipboard entries
+- Optional memo module with title, rich body, pasted image preview, tags, pinning, search, and drag sorting
+- Optional recycle bin with separate Clipboard and Memos views and 30-day cleanup
+- Global shortcut, tray controls, single-instance launch, and auto-start support
+- Theme mode switcher with System / Light / Dark and independent accent colors
+- First launch follows the system language, with Chinese and English UI available
+- Built-in update check through GitHub Releases
+
+## Default Behavior
+
+- Version: `2.0.1`
+- Default shortcut: `Alt+X`
+- Startup: shows the main window on the desktop and keeps the tray icon available
+- Theme mode: follows system
+- Theme accent: blue
+- Auto-start: enabled
+- Always on top: disabled
+- Raw preview: disabled for clipboard entries; memos always use formatted preview
+- Auto update check: enabled
+- Memos and Recycle Bin: disabled by default, available in Settings
+
+## Usage Notes
+
+- Click a clipboard item to copy it back to the system clipboard.
+- If the window was opened by the global shortcut, clicking a clipboard item also hides the window and simulates `Ctrl+V` into the previously active app.
+- Paste-to-caret is currently timing-sensitive: it depends on the previous app regaining focus after SuperClipboard hides, then sends `Ctrl+V` after a short delay. Some apps or slow focus transitions may make it feel intermittent; this is documented for a future redesign.
+- Repeatedly launching the app shortcut focuses the existing instance instead of creating duplicate tray icons.
+- When upgrading from `SuperClipboard3`, the old local data directory is migrated automatically.
+- Title easter egg: double-click the Settings version badge to restore the default title, triple-click for `小楠の剪贴板`, and five-click for `瑛楠の剪贴板`.
+
+## Privacy
+
+SuperClipboard stores clipboard entries, memos, and settings locally in SQLite under the app data directory. Clipboard content is not uploaded by the app. Update checks contact GitHub Releases when enabled.
 
 ## Tech Stack
 
-- **Backend**: Rust, Tauri v2, SQLite (rusqlite), arboard
-- **Frontend**: React 19, TypeScript, Vite 8
-- **Storage**: SQLite with content hashing for deduplication
+- Backend: Rust, Tauri v2, SQLite (`rusqlite`), `arboard`
+- Frontend: React 19, TypeScript, Vite 8
+- Platform target: Windows x64
 
 ## Development
 
@@ -56,38 +68,34 @@ pnpm install
 # Run in dev mode
 pnpm tauri:dev
 
-# Build for production
+# Build frontend
+pnpm build
+
+# Build Windows installers
 pnpm tauri:build
 ```
 
 ## Project Structure
 
-```
+```text
 src-tauri/
   src/
-    clipboard.rs    # Clipboard monitoring service
-    classifier.rs   # Content type classification
-    storage.rs      # SQLite storage layer (entries + memos + settings)
-    autostart.rs    # Auto-start on boot (Windows registry)
-    window_position.rs # Default settings-entry positioning with work-area clamping
-    lib.rs          # Tauri commands & app setup
-    main.rs         # Entry point
+    clipboard.rs        # Clipboard monitoring service
+    classifier.rs       # Content type classification
+    storage.rs          # SQLite storage layer
+    autostart.rs        # Windows auto-start registry integration
+    window_position.rs  # Default window positioning and work-area clamping
+    lib.rs              # Tauri commands and app setup
+    main.rs             # Entry point
 src/
-  components/       # React UI components
-    icons/              # Shared icon components (TrashIcon)
-    SettingsButton.tsx  # Settings panel (language, shortcut, autostart, always-on-top, memo)
-    MemoList.tsx        # Inline memo list with CRUD, auto-save, pin, reorder
-    MemoRichEditor.tsx  # Rich memo editor with image blocks
-    MemoBody.tsx        # Memo preview renderer
-  api/              # Tauri command wrappers
-    clipboard.ts    # Clipboard API
-    settings.ts     # Settings API
-    memos.ts        # Memo CRUD API
-  i18n/             # Internationalization (translations + context)
-  types/            # TypeScript type definitions
+  components/           # React UI components
+  api/                  # Tauri command wrappers
+  i18n/                 # Translations and i18n context
+  types/                # TypeScript types
 ```
 
 ## Roadmap
 
-- [ ] **Virtual Scrolling**: When clipboard entries accumulate to thousands, the current `.map()` full-render approach creates excessive DOM nodes and causes scroll jank. Introduce a virtual list (e.g. `@tanstack/react-virtual` or `react-window`) to render only visible items, keeping render cost constant, and support infinite scroll for history browsing.
-- [ ] **Window Follow / Save Position**: Save Position and caret Follow Mode are paused for now and should be redesigned before being exposed again.
+- Improve paste-to-caret reliability by tracking the previously active window and confirming focus before sending `Ctrl+V`.
+- Add virtual scrolling for very large clipboard histories.
+- Revisit caret follow mode and saved window position after the interaction model is stable.
