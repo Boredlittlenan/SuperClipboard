@@ -35,6 +35,7 @@ Chinese display name: `超级剪贴板`.
 - Recycle Bin countdown: shows days remaining before auto-deletion with yellow badge
 - Window position: the app starts at the same default position used by tray context menu > Settings; shortcut and tray-left-click restores keep the user's current dragged position
 - Paste to active window: click an entry after shortcut-open to auto-hide and simulate Ctrl+V paste
+- Paste-to-caret status: the current implementation depends on the previous app regaining focus after the clipboard window hides, then sends Ctrl+V after a short delay. Some apps or slow focus transitions may make it feel intermittent; this is documented for future redesign.
 - Memo drag-and-drop reordering: Pointer Events implementation, reliable in Tauri WebView2
 - App rename migration: `SuperClipboard3` data is migrated automatically to `SuperClipboard`
 - Title easter egg: double-click the version badge to restore, triple-click for `小楠の剪贴板`, five-click for `瑛楠の剪贴板`
