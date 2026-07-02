@@ -424,7 +424,7 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
       >
         <div style={styles.memoContent}>
           {/* Header row */}
-          <div style={styles.memoHeader}>
+          <div style={{ ...styles.memoHeader, ...(isEditing ? styles.memoHeaderEditing : {}) }}>
             {isEditing && editDraft ? (
               <input
                 style={styles.editTitle}
@@ -441,21 +441,20 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
             ) : (
               <span className="memo-selectable" style={styles.memoTitle}>{memo.title || '(untitled)'}</span>
             )}
-            <div className="memo-actions" style={styles.memoActions}>
-              {/* Drag handle — always visible for unpinned items */}
-              {draggable && (
-                <span
-                  style={{
-                    ...styles.dragHandle,
-                    ...(canDrag ? {} : styles.dragHandleDisabled),
-                  }}
-                  onPointerDown={(e) => handlePointerDown(e, memo.id)}
-                >
-                  {'\u2261'}
-                </span>
-              )}
-              {/* Action buttons — CSS handles visibility on hover */}
-              {!isEditing && (
+            {!isEditing && (
+              <div className="memo-actions" style={styles.memoActions}>
+                {/* Drag handle — visible only while the item can leave edit mode cleanly */}
+                {draggable && (
+                  <span
+                    style={{
+                      ...styles.dragHandle,
+                      ...(canDrag ? {} : styles.dragHandleDisabled),
+                    }}
+                    onPointerDown={(e) => handlePointerDown(e, memo.id)}
+                  >
+                    {'\u2261'}
+                  </span>
+                )}
                 <div style={styles.hoverActions}>
                   <button
                     style={styles.actionBtn}
@@ -482,8 +481,8 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
                     {archiveEnabled ? '\uD83D\uDDD1\uFE0F' : <TrashIcon />}
                   </button>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Content area */}
@@ -743,6 +742,11 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     margin: '-2px -4px 2px -4px',
   },
+  memoHeaderEditing: {
+    width: '100%',
+    boxSizing: 'border-box',
+    margin: '0 0 2px 0',
+  },
   memoTitle: {
     fontSize: '13px',
     fontWeight: 600,
@@ -898,6 +902,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 0',
     flex: 1,
     minWidth: 0,
+    width: '100%',
+    boxSizing: 'border-box',
   },
   editTags: {
     border: 'none',
