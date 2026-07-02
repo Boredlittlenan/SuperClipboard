@@ -396,6 +396,7 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
                 style={styles.versionBadge}
                 onClick={(event) => {
                   event.stopPropagation();
+                  // Undocumented title easter egg hook; App owns the title state.
                   onVersionTitleTrigger?.(event.detail);
                 }}
               >

@@ -113,6 +113,7 @@ function AppContent() {
   const [memoArchiveCountState, setMemoArchiveCountState] = useState<number>(0);
   const [openedViaShortcut, setOpenedViaShortcut] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  // Hidden title variants triggered from the Settings version badge.
   const displayTitle = titleVariant === 'xiaonan'
     ? '小楠の剪贴板'
     : titleVariant === 'yingnan'
@@ -124,6 +125,7 @@ function AppContent() {
   }, [displayTitle]);
 
   const handleVersionTitleTrigger = useCallback((clickCount: number) => {
+    // Keep this undocumented; it is a small maintenance-only title easter egg.
     if (clickCount === 2) {
       setTitleVariant('default');
     } else if (clickCount === 3) {

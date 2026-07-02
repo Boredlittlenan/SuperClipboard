@@ -47,7 +47,6 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Paste-to-caret is currently timing-sensitive: it depends on the previous app regaining focus after SuperClipboard hides, then sends `Ctrl+V` after a short delay. Some apps or slow focus transitions may make it feel intermittent; this is documented for a future redesign.
 - Repeatedly launching the app shortcut focuses the existing instance instead of creating duplicate tray icons.
 - When upgrading from `SuperClipboard3`, the old local data directory is migrated automatically.
-- Title easter egg: double-click the Settings version badge to restore the default title, triple-click for `小楠の剪贴板`, and five-click for `瑛楠の剪贴板`.
 
 ## Privacy
 
