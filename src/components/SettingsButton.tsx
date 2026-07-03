@@ -1,8 +1,23 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useI18n } from '../i18n';
 import type { Locale } from '../i18n/translations';
-import { getAutostartEnabled, setAutostartEnabled, getShortcut, setShortcut, setShortcutRecording, checkUpdate, openUrl, getSetting, setSetting, setAlwaysOnTop } from '../api/settings';
-import type { UpdateInfo } from '../api/settings';
+import {
+  getAutostartEnabled,
+  setAutostartEnabled,
+  getShortcut,
+  setShortcut,
+  setShortcutRecording,
+  checkUpdate,
+  openUrl,
+  getSetting,
+  setSetting,
+  setAlwaysOnTop,
+  createBackup,
+  listBackups,
+  restoreBackup,
+  openBackupFolder,
+} from '../api/settings';
+import type { BackupFileInfo, UpdateInfo } from '../api/settings';
 import type { ThemeMode } from '../types';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
@@ -12,6 +27,9 @@ const LANGUAGES: { value: Locale; labelKey: 'langZhCN' | 'langEn' }[] = [
   { value: 'zh-CN', labelKey: 'langZhCN' },
   { value: 'en', labelKey: 'langEn' },
 ];
+
+// Backup/restore is kept behind a hidden flag until the backup format moves away from raw JSON.
+const SHOW_BACKUP_RESTORE = false;
 
 /** Convert a JS KeyboardEvent to a Tauri shortcut token */
 function keyToTauri(key: string, code: string): string {
@@ -56,6 +74,23 @@ function shortcutParts(modifiers: Set<string>, mainKey: string): string[] {
   return parts;
 }
 
+function formatBackupSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatBackupTime(value: string): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${month}/${day} ${hours}:${minutes}`;
+}
+
 interface SettingsButtonProps {
   onShortcutChange?: (shortcut: string) => void;
   onMemoEnabledChange?: (enabled: boolean) => void;
@@ -87,6 +122,11 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
   const [error, setError] = useState('');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'upToDate' | 'hasUpdate' | 'failed'>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [backups, setBackups] = useState<BackupFileInfo[]>([]);
+  const [selectedBackup, setSelectedBackup] = useState('');
+  const [backupStatus, setBackupStatus] = useState<'idle' | 'working' | 'success' | 'failed'>('idle');
+  const [backupMessage, setBackupMessage] = useState('');
+  const [restoreConfirming, setRestoreConfirming] = useState(false);
   const recorderRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const colorRef = useRef<HTMLDivElement>(null);
@@ -177,6 +217,15 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
         setMemoColor(v);
         setHexInput(v || '');
       }).catch(console.error);
+      if (SHOW_BACKUP_RESTORE) {
+        listBackups().then((items) => {
+          setBackups(items);
+          setSelectedBackup(items[0]?.fileName ?? '');
+        }).catch(console.error);
+      }
+      setBackupStatus('idle');
+      setBackupMessage('');
+      setRestoreConfirming(false);
       setShowColorPicker(false);
       getVersion().then(setAppVersion).catch(console.error);
     }
@@ -367,6 +416,64 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
     }
   }, [updateInfo]);
 
+  const refreshBackups = useCallback(async () => {
+    const items = await listBackups();
+    setBackups(items);
+    setSelectedBackup(prev => (prev && items.some(item => item.fileName === prev) ? prev : items[0]?.fileName ?? ''));
+    return items;
+  }, []);
+
+  const handleCreateBackup = useCallback(async () => {
+    setBackupStatus('working');
+    setBackupMessage('');
+    setRestoreConfirming(false);
+    try {
+      const backup = await createBackup();
+      const items = await refreshBackups();
+      setSelectedBackup(backup.fileName || items[0]?.fileName || '');
+      setBackupStatus('success');
+      setBackupMessage(`${t.backupCreated}: ${backup.fileName}`);
+    } catch (err) {
+      console.error('Failed to create backup:', err);
+      setBackupStatus('failed');
+      setBackupMessage(t.backupFailed);
+    }
+  }, [refreshBackups, t]);
+
+  const handleRestoreBackup = useCallback(async () => {
+    if (!selectedBackup) return;
+
+    if (!restoreConfirming) {
+      setRestoreConfirming(true);
+      setBackupStatus('idle');
+      setBackupMessage(t.restoreBackupConfirm);
+      return;
+    }
+
+    setBackupStatus('working');
+    setBackupMessage('');
+    try {
+      const summary = await restoreBackup(selectedBackup);
+      setBackupStatus('success');
+      setRestoreConfirming(false);
+      setBackupMessage(t.restoreBackupDone(summary.clipboardEntries, summary.memos, summary.settings));
+      setTimeout(() => window.location.reload(), 900);
+    } catch (err) {
+      console.error('Failed to restore backup:', err);
+      setBackupStatus('failed');
+      setRestoreConfirming(false);
+      setBackupMessage(t.backupFailed);
+    }
+  }, [restoreConfirming, selectedBackup, t]);
+
+  const handleOpenBackupFolder = useCallback(() => {
+    openBackupFolder().catch((err) => {
+      console.error('Failed to open backup folder:', err);
+      setBackupStatus('failed');
+      setBackupMessage(t.backupFailed);
+    });
+  }, [t]);
+
   return (
     <div style={styles.wrapper} ref={panelRef}>
       {/* Gear button */}
@@ -387,7 +494,7 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
 
       {/* Settings dropdown panel */}
       {open && (
-        <div style={{ ...styles.panel, width: '220px' }}>
+        <div style={{ ...styles.panel, width: '260px' }}>
           {/* Title row with version */}
           <div style={styles.panelTitle}>
             <span>{t.settings}</span>
@@ -550,6 +657,68 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
             </button>
           </div>
 
+          {SHOW_BACKUP_RESTORE && (
+            <div style={styles.backupPanel} title={t.backupRestoreDesc}>
+              <div style={styles.backupHeader}>
+                <span style={styles.rowLabel}>{t.backupRestore}</span>
+                <button style={styles.miniTextBtn} onClick={handleOpenBackupFolder}>
+                  {t.openBackupFolder}
+                </button>
+              </div>
+              <div style={styles.backupActions}>
+                <button
+                  style={styles.updateBtn}
+                  onClick={handleCreateBackup}
+                  disabled={backupStatus === 'working'}
+                >
+                  {backupStatus === 'working' ? t.creatingBackup : t.createBackup}
+                </button>
+              </div>
+              <div style={styles.backupRestoreRow}>
+                <select
+                  style={styles.backupSelect}
+                  value={selectedBackup}
+                  onChange={(e) => {
+                    setSelectedBackup(e.target.value);
+                    setRestoreConfirming(false);
+                    setBackupMessage('');
+                    setBackupStatus('idle');
+                  }}
+                  disabled={backups.length === 0}
+                >
+                  {backups.length === 0 ? (
+                    <option value="">{t.noBackups}</option>
+                  ) : (
+                    backups.map((backup) => (
+                      <option key={backup.fileName} value={backup.fileName}>
+                        {formatBackupTime(backup.createdAt)} · {formatBackupSize(backup.sizeBytes)}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <button
+                  style={{
+                    ...styles.restoreBtn,
+                    ...(restoreConfirming ? styles.restoreBtnConfirm : {}),
+                  }}
+                  onClick={handleRestoreBackup}
+                  disabled={!selectedBackup || backupStatus === 'working'}
+                >
+                  {backupStatus === 'working' ? t.restoringBackup : t.restoreBackup}
+                </button>
+              </div>
+              {backupMessage && (
+                <div style={{
+                  ...styles.backupMessage,
+                  ...(backupStatus === 'failed' ? styles.backupMessageError : {}),
+                  ...(backupStatus === 'success' ? styles.backupMessageSuccess : {}),
+                }}>
+                  {backupMessage}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Feature Settings header */}
           <div style={styles.sectionHeader}>{t.featureSettings}</div>
 
@@ -648,17 +817,35 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
               </button>
             )}
             {updateStatus === 'upToDate' && (
-              <div style={styles.updateResult}>
-                <span style={styles.updateOkIcon}>&#10003;</span>
-                <span style={styles.updateOkText}>{t.upToDate}</span>
+              <div style={styles.updateResultStack}>
+                <div style={styles.updateResultHeader}>
+                  <span style={styles.updateOkIcon}>&#10003;</span>
+                  <span style={styles.updateOkText}>{t.upToDate}</span>
+                </div>
+                {updateInfo && (
+                  <div style={styles.updateMeta}>
+                    {t.updateCurrent(updateInfo.currentVersion)} · {t.updateLatest(updateInfo.latestVersion)}
+                  </div>
+                )}
               </div>
             )}
             {updateStatus === 'hasUpdate' && updateInfo && (
-              <div style={styles.updateResult}>
-                <span style={styles.updateNewText}>{t.hasUpdate(updateInfo.latestVersion)}</span>
-                <button style={styles.updateDownloadBtn} onClick={handleDownload}>
-                  {t.downloadUpdate}
-                </button>
+              <div style={styles.updateResultStack}>
+                <div style={styles.updateResultHeader}>
+                  <span style={styles.updateNewText}>{t.hasUpdate(updateInfo.latestVersion)}</span>
+                  <button style={styles.updateDownloadBtn} onClick={handleDownload}>
+                    {t.downloadUpdate}
+                  </button>
+                </div>
+                <div style={styles.updateMeta}>
+                  {t.updateCurrent(updateInfo.currentVersion)} · {updateInfo.releaseName || t.updateLatest(updateInfo.latestVersion)}
+                </div>
+                <div style={styles.releaseNotesBox}>
+                  <div style={styles.releaseNotesTitle}>{t.releaseNotes}</div>
+                  <pre style={styles.releaseNotesText}>
+                    {updateInfo.releaseNotes || t.noReleaseNotes}
+                  </pre>
+                </div>
               </div>
             )}
             {updateStatus === 'failed' && (
@@ -922,6 +1109,45 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     gap: '8px',
   },
+  updateResultStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  updateResultHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+  },
+  updateMeta: {
+    fontSize: '10px',
+    color: 'var(--text-muted)',
+    lineHeight: 1.35,
+  },
+  releaseNotesBox: {
+    padding: '6px',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    background: 'var(--bg)',
+  },
+  releaseNotesTitle: {
+    fontSize: '10px',
+    fontWeight: 600,
+    color: 'var(--text-secondary)',
+    marginBottom: '4px',
+  },
+  releaseNotesText: {
+    margin: 0,
+    maxHeight: '96px',
+    overflowY: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    fontFamily: 'inherit',
+    fontSize: '10px',
+    lineHeight: 1.45,
+    color: 'var(--text-secondary)',
+  },
   updateOkIcon: {
     color: 'var(--success)',
     fontSize: '14px',
@@ -961,6 +1187,80 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     cursor: 'pointer',
     flexShrink: 0,
+  },
+  backupPanel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '6px 0',
+    borderTop: '1px solid var(--border)',
+    borderBottom: '1px solid var(--border)',
+    margin: '4px 0',
+  },
+  backupHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+  },
+  backupActions: {
+    display: 'flex',
+    gap: '6px',
+  },
+  backupRestoreRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  backupSelect: {
+    flex: 1,
+    minWidth: 0,
+    padding: '5px 6px',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    background: 'var(--surface)',
+    color: 'var(--text-primary)',
+    fontSize: '10px',
+    outline: 'none',
+  },
+  miniTextBtn: {
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--accent)',
+    fontSize: '10px',
+    fontWeight: 500,
+    cursor: 'pointer',
+    padding: 0,
+    whiteSpace: 'nowrap',
+  },
+  restoreBtn: {
+    padding: '5px 8px',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'var(--text-primary)',
+    fontSize: '10px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  restoreBtnConfirm: {
+    border: '1px solid #f59e0b',
+    color: '#f59e0b',
+    background: 'rgba(245, 158, 11, 0.08)',
+  },
+  backupMessage: {
+    fontSize: '10px',
+    color: 'var(--text-muted)',
+    lineHeight: 1.4,
+    wordBreak: 'break-word',
+  },
+  backupMessageError: {
+    color: '#ef4444',
+  },
+  backupMessageSuccess: {
+    color: 'var(--success)',
   },
   memoColorBtn: {
     display: 'flex',

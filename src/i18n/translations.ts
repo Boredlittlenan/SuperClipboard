@@ -116,6 +116,22 @@ export interface Translations {
   hasUpdate: (version: string) => string;
   updateFailed: string;
   downloadUpdate: string;
+  updateCurrent: (version: string) => string;
+  updateLatest: (version: string) => string;
+  releaseNotes: string;
+  noReleaseNotes: string;
+  backupRestore: string;
+  backupRestoreDesc: string;
+  createBackup: string;
+  creatingBackup: string;
+  backupCreated: string;
+  openBackupFolder: string;
+  restoreBackup: string;
+  restoringBackup: string;
+  noBackups: string;
+  restoreBackupConfirm: string;
+  restoreBackupDone: (clipboard: number, memos: number, settings: number) => string;
+  backupFailed: string;
   systemSettings: string;
   featureSettings: string;
 }
@@ -227,6 +243,22 @@ export const zhCN: Translations = {
   hasUpdate: (v) => `发现新版本 ${v}`,
   updateFailed: '检查失败，请稍后重试',
   downloadUpdate: '前往下载',
+  updateCurrent: (v) => `当前 ${v}`,
+  updateLatest: (v) => `最新 ${v}`,
+  releaseNotes: '更新日志',
+  noReleaseNotes: '暂无更新说明',
+  backupRestore: '备份/恢复',
+  backupRestoreDesc: '导出或恢复本地剪贴板、备忘录和设置',
+  createBackup: '创建备份',
+  creatingBackup: '备份中...',
+  backupCreated: '备份已创建',
+  openBackupFolder: '打开目录',
+  restoreBackup: '恢复备份',
+  restoringBackup: '恢复中...',
+  noBackups: '暂无备份',
+  restoreBackupConfirm: '恢复会覆盖当前剪贴板、备忘录和设置。确定继续吗？',
+  restoreBackupDone: (clipboard, memos, settings) => `已恢复 ${clipboard} 条剪贴板、${memos} 条备忘录、${settings} 项设置`,
+  backupFailed: '操作失败',
   systemSettings: '系统设置',
   featureSettings: '功能设置',
 };
@@ -338,6 +370,22 @@ export const en: Translations = {
   hasUpdate: (v) => `New version ${v} available`,
   updateFailed: 'Check failed, try again later',
   downloadUpdate: 'Download',
+  updateCurrent: (v) => `Current ${v}`,
+  updateLatest: (v) => `Latest ${v}`,
+  releaseNotes: 'Release notes',
+  noReleaseNotes: 'No release notes',
+  backupRestore: 'Backup / Restore',
+  backupRestoreDesc: 'Export or restore local clipboard, memos, and settings',
+  createBackup: 'Create Backup',
+  creatingBackup: 'Backing up...',
+  backupCreated: 'Backup created',
+  openBackupFolder: 'Open Folder',
+  restoreBackup: 'Restore Backup',
+  restoringBackup: 'Restoring...',
+  noBackups: 'No backups yet',
+  restoreBackupConfirm: 'Restoring will replace current clipboard entries, memos, and settings. Continue?',
+  restoreBackupDone: (clipboard, memos, settings) => `Restored ${clipboard} clipboard, ${memos} memo, ${settings} setting items`,
+  backupFailed: 'Operation failed',
   systemSettings: 'System Settings',
   featureSettings: 'Feature Settings',
 };

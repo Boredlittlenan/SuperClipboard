@@ -40,6 +40,22 @@ export interface UpdateInfo {
   latestVersion: string;
   downloadUrl: string;
   hasUpdate: boolean;
+  releaseName: string;
+  releaseNotes: string;
+  publishedAt: string;
+}
+
+export interface BackupFileInfo {
+  fileName: string;
+  createdAt: string;
+  sizeBytes: number;
+  displayPath: string;
+}
+
+export interface RestoreSummary {
+  clipboardEntries: number;
+  memos: number;
+  settings: number;
 }
 
 /** Check for updates from GitHub Releases */
@@ -49,6 +65,9 @@ export async function checkUpdate(): Promise<UpdateInfo> {
     latest_version?: string;
     download_url?: string;
     has_update?: boolean;
+    release_name?: string;
+    release_notes?: string;
+    published_at?: string;
   }>('check_update');
 
   return {
@@ -56,6 +75,9 @@ export async function checkUpdate(): Promise<UpdateInfo> {
     latestVersion: info.latestVersion ?? info.latest_version ?? '',
     downloadUrl: info.downloadUrl ?? info.download_url ?? '',
     hasUpdate: info.hasUpdate ?? info.has_update ?? false,
+    releaseName: info.releaseName ?? info.release_name ?? '',
+    releaseNotes: info.releaseNotes ?? info.release_notes ?? '',
+    publishedAt: info.publishedAt ?? info.published_at ?? '',
   };
 }
 
@@ -72,4 +94,20 @@ export async function setAlwaysOnTop(enabled: boolean): Promise<void> {
 /** Copy entry to clipboard, hide window, and paste (Ctrl+V) to the active window */
 export async function pasteToActiveWindow(id: number): Promise<boolean> {
   return invoke('paste_to_active_window', { id });
+}
+
+export async function createBackup(): Promise<BackupFileInfo> {
+  return invoke('create_backup');
+}
+
+export async function listBackups(): Promise<BackupFileInfo[]> {
+  return invoke('list_backups');
+}
+
+export async function restoreBackup(fileName: string): Promise<RestoreSummary> {
+  return invoke('restore_backup', { fileName });
+}
+
+export async function openBackupFolder(): Promise<void> {
+  return invoke('open_backup_folder');
 }

@@ -7,10 +7,10 @@ mod window_position;
 use clipboard::ClipboardMonitor;
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage};
+use storage::{BackupData, ClipboardEntry, Memo, MemoFilter, QueryFilter, RestoreSummary, Storage};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Emitter;
 use tauri::Manager;
@@ -31,6 +31,18 @@ pub struct UpdateInfo {
     pub latest_version: String,
     pub download_url: String,
     pub has_update: bool,
+    pub release_name: String,
+    pub release_notes: String,
+    pub published_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupFileInfo {
+    pub file_name: String,
+    pub created_at: String,
+    pub size_bytes: u64,
+    pub display_path: String,
 }
 
 /// Tauri-managed application state
@@ -213,6 +225,54 @@ fn show_window(
     }
 
     let _ = app.emit("window-shown", source);
+}
+
+fn backups_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?
+        .join("backups");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create backup directory: {}", e))?;
+    Ok(dir)
+}
+
+fn backup_file_info(path: PathBuf) -> Result<BackupFileInfo, String> {
+    let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "Invalid backup file name".to_string())?
+        .to_string();
+    let created_at = metadata
+        .modified()
+        .ok()
+        .map(chrono::DateTime::<chrono::Utc>::from)
+        .map(|date| date.to_rfc3339())
+        .unwrap_or_default();
+
+    Ok(BackupFileInfo {
+        file_name,
+        created_at,
+        size_bytes: metadata.len(),
+        display_path: path.display().to_string(),
+    })
+}
+
+fn resolve_backup_path(app: &tauri::AppHandle, file_name: &str) -> Result<PathBuf, String> {
+    if file_name.contains(['/', '\\']) {
+        return Err("Invalid backup file name".to_string());
+    }
+
+    let path = backups_dir(app)?.join(file_name);
+    if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+        return Err("Backup file must be a JSON file".to_string());
+    }
+    if !path.exists() {
+        return Err("Backup file not found".to_string());
+    }
+    Ok(path)
 }
 
 // ─── Shortcut Helpers ────────────────────────────────────────────────
@@ -571,6 +631,115 @@ fn set_always_on_top(app: tauri::AppHandle, enabled: bool) -> Result<(), String>
     Ok(())
 }
 
+#[tauri::command]
+fn create_backup(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<BackupFileInfo, String> {
+    let data = state
+        .storage
+        .export_backup_data(APP_VERSION)
+        .map_err(|e| e.to_string())?;
+    let file_name = format!(
+        "SuperClipboard-backup-{}.json",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let path = backups_dir(&app)?.join(file_name);
+    let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("Failed to write backup: {}", e))?;
+    backup_file_info(path)
+}
+
+#[tauri::command]
+fn list_backups(app: tauri::AppHandle) -> Result<Vec<BackupFileInfo>, String> {
+    let dir = backups_dir(&app)?;
+    let mut backups = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .filter_map(|path| backup_file_info(path).ok())
+        .collect::<Vec<_>>();
+
+    backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(backups)
+}
+
+#[tauri::command]
+fn restore_backup(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    file_name: String,
+) -> Result<RestoreSummary, String> {
+    let path = resolve_backup_path(&app, &file_name)?;
+    let raw =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read backup: {}", e))?;
+    let data: BackupData =
+        serde_json::from_str(&raw).map_err(|e| format!("Invalid backup file: {}", e))?;
+    if data.app != "SuperClipboard" {
+        return Err("This backup does not belong to SuperClipboard".to_string());
+    }
+    let summary = state
+        .storage
+        .restore_backup_data(&data)
+        .map_err(|e| e.to_string())?;
+
+    let restored_setting = |key: &str| {
+        data.settings
+            .iter()
+            .find(|setting| setting.key == key)
+            .map(|setting| setting.value.as_str())
+    };
+
+    if let Some(language) = restored_setting("language") {
+        update_tray_menu(&app, language).map_err(|e| e.to_string())?;
+    }
+
+    if let Some(shortcut) = restored_setting("shortcut") {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let old_shortcut = state.current_shortcut.lock().unwrap().clone();
+        let new_shortcut = normalize_shortcut(shortcut);
+        state.shortcut_recording.store(false, Ordering::SeqCst);
+        let _ = app.global_shortcut().unregister(old_shortcut.as_str());
+        if register_toggle_shortcut(
+            &app,
+            new_shortcut.as_str(),
+            state.shortcut_recording.clone(),
+        )
+        .is_ok()
+        {
+            *state.current_shortcut.lock().unwrap() = new_shortcut;
+        } else if !old_shortcut.is_empty() {
+            let _ = register_toggle_shortcut(
+                &app,
+                old_shortcut.as_str(),
+                state.shortcut_recording.clone(),
+            );
+        }
+    }
+
+    if let Some(always_on_top) = restored_setting("always_on_top") {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.set_always_on_top(always_on_top == "true");
+        }
+    }
+
+    if let Some(autostart) = restored_setting("autostart") {
+        let _ = if autostart == "true" {
+            autostart::enable()
+        } else {
+            autostart::disable()
+        };
+    }
+
+    Ok(summary)
+}
+
+#[tauri::command]
+fn open_backup_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = backups_dir(&app)?;
+    open::that(dir).map_err(|e| format!("Failed to open backup folder: {}", e))
+}
+
 // ─── Paste Commands ─────────────────────────────────────────
 
 #[tauri::command]
@@ -846,12 +1015,34 @@ async fn check_update() -> Result<UpdateInfo, String> {
             GITHUB_REPO
         ))
         .to_string();
+    let release_name = resp
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or(tag)
+        .to_string();
+    let published_at = resp
+        .get("published_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let release_notes = resp
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("\n");
 
     Ok(UpdateInfo {
         current_version: current.to_string(),
         latest_version: latest.to_string(),
         download_url,
         has_update,
+        release_name,
+        release_notes,
+        published_at,
     })
 }
 
@@ -1024,6 +1215,10 @@ pub fn run() {
             permanent_delete_memo,
             purge_old_memo_archives,
             set_always_on_top,
+            create_backup,
+            list_backups,
+            restore_backup,
+            open_backup_folder,
             paste_to_active_window,
             check_update,
             open_url,

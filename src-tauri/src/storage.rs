@@ -20,6 +20,31 @@ pub enum StorageError {
     Serialization(#[from] serde_json::Error),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingEntry {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupData {
+    pub app: String,
+    pub backup_version: u32,
+    pub app_version: String,
+    pub created_at: DateTime<Utc>,
+    pub clipboard_entries: Vec<ClipboardEntry>,
+    pub memos: Vec<Memo>,
+    pub settings: Vec<SettingEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreSummary {
+    pub clipboard_entries: usize,
+    pub memos: usize,
+    pub settings: usize,
+}
+
 /// A single clipboard entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardEntry {
@@ -103,6 +128,21 @@ fn map_row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry>
         original_content,
         updated_at,
         archived_at,
+    })
+}
+
+fn map_row_to_memo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memo> {
+    let pinned_int: i32 = row.get(4)?;
+    Ok(Memo {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        body: row.get(2)?,
+        tags: row.get(3)?,
+        pinned: pinned_int != 0,
+        sort_order: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+        archived_at: row.get(8)?,
     })
 }
 
@@ -287,6 +327,125 @@ impl Storage {
         let entry = stmt.query_row(params![id], map_row_to_entry).ok();
 
         Ok(entry)
+    }
+
+    pub fn export_backup_data(&self, app_version: &str) -> Result<BackupData, StorageError> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut entry_stmt = conn.prepare(
+            "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
+             FROM clipboard_entries ORDER BY id ASC",
+        )?;
+        let clipboard_entries = entry_stmt
+            .query_map([], map_row_to_entry)?
+            .collect::<SqlResult<Vec<_>>>()?;
+
+        let mut memo_stmt = conn.prepare(
+            "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at
+             FROM memos ORDER BY id ASC",
+        )?;
+        let memos = memo_stmt
+            .query_map([], map_row_to_memo)?
+            .collect::<SqlResult<Vec<_>>>()?;
+
+        let mut settings_stmt = conn.prepare("SELECT key, value FROM settings ORDER BY key ASC")?;
+        let settings = settings_stmt
+            .query_map([], |row| {
+                Ok(SettingEntry {
+                    key: row.get(0)?,
+                    value: row.get(1)?,
+                })
+            })?
+            .collect::<SqlResult<Vec<_>>>()?;
+
+        Ok(BackupData {
+            app: "SuperClipboard".to_string(),
+            backup_version: 1,
+            app_version: app_version.to_string(),
+            created_at: Utc::now(),
+            clipboard_entries,
+            memos,
+            settings,
+        })
+    }
+
+    pub fn restore_backup_data(&self, backup: &BackupData) -> Result<RestoreSummary, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+
+        tx.execute("DELETE FROM clipboard_entries", [])?;
+        tx.execute("DELETE FROM memos", [])?;
+        tx.execute("DELETE FROM settings", [])?;
+
+        for entry in &backup.clipboard_entries {
+            tx.execute(
+                "INSERT INTO clipboard_entries
+                 (id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    entry.id,
+                    entry.category.to_string(),
+                    entry.content_type,
+                    entry.content,
+                    entry.preview,
+                    entry.hash,
+                    entry.pinned as i32,
+                    entry.created_at.to_rfc3339(),
+                    entry.original_content,
+                    entry.updated_at,
+                    entry.archived_at,
+                ],
+            )?;
+        }
+
+        for memo in &backup.memos {
+            tx.execute(
+                "INSERT INTO memos
+                 (id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    memo.id,
+                    memo.title,
+                    memo.body,
+                    memo.tags,
+                    memo.pinned as i32,
+                    memo.sort_order,
+                    memo.created_at,
+                    memo.updated_at,
+                    memo.archived_at,
+                ],
+            )?;
+        }
+
+        for setting in &backup.settings {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                params![setting.key, setting.value],
+            )?;
+        }
+
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![SCHEMA_VERSION],
+        )?;
+
+        tx.execute(
+            "UPDATE sqlite_sequence SET seq = COALESCE((SELECT MAX(id) FROM clipboard_entries), 0) WHERE name = 'clipboard_entries'",
+            [],
+        )?;
+        tx.execute(
+            "UPDATE sqlite_sequence SET seq = COALESCE((SELECT MAX(id) FROM memos), 0) WHERE name = 'memos'",
+            [],
+        )?;
+
+        tx.commit()?;
+
+        Ok(RestoreSummary {
+            clipboard_entries: backup.clipboard_entries.len(),
+            memos: backup.memos.len(),
+            settings: backup.settings.len(),
+        })
     }
 
     /// Delete an entry by ID
@@ -539,20 +698,7 @@ impl Storage {
 
         let mut stmt = conn.prepare(&sql)?;
         let memos = stmt
-            .query_map(params_refs.as_slice(), |row| {
-                let pinned_int: i32 = row.get(4)?;
-                Ok(Memo {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    body: row.get(2)?,
-                    tags: row.get(3)?,
-                    pinned: pinned_int != 0,
-                    sort_order: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
-                    archived_at: row.get(8)?,
-                })
-            })?
+            .query_map(params_refs.as_slice(), map_row_to_memo)?
             .collect::<SqlResult<Vec<_>>>()?;
 
         Ok(memos)
@@ -569,20 +715,7 @@ impl Storage {
         let memo = conn.query_row(
             "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at FROM memos WHERE id = ?1",
             params![id],
-            |row| {
-                let pinned_int: i32 = row.get(4)?;
-                Ok(Memo {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    body: row.get(2)?,
-                    tags: row.get(3)?,
-                    pinned: pinned_int != 0,
-                    sort_order: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
-                    archived_at: row.get(8)?,
-                })
-            },
+            map_row_to_memo,
         )?;
         Ok(memo)
     }
@@ -711,20 +844,7 @@ impl Storage {
 
         let mut stmt = conn.prepare(&sql)?;
         let memos = stmt
-            .query_map(params_refs.as_slice(), |row| {
-                let pinned_int: i32 = row.get(4)?;
-                Ok(Memo {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    body: row.get(2)?,
-                    tags: row.get(3)?,
-                    pinned: pinned_int != 0,
-                    sort_order: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
-                    archived_at: row.get(8)?,
-                })
-            })?
+            .query_map(params_refs.as_slice(), map_row_to_memo)?
             .collect::<SqlResult<Vec<_>>>()?;
 
         Ok(memos)
