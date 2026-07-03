@@ -1,6 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Memo, MemoFilter } from '../types';
 
+export type MemoAutoTagType = 'image' | 'email' | 'path' | 'link' | 'code';
+
+export async function inferMemoTagTypes(title: string, body: string): Promise<MemoAutoTagType[]> {
+  return invoke('infer_memo_tag_types', { title, body });
+}
+
 export async function getMemos(filter?: MemoFilter): Promise<Memo[]> {
   return invoke('get_memos', { filter });
 }

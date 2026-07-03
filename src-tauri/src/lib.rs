@@ -640,6 +640,37 @@ fn paste_to_active_window(
 
 // ─── Memo Commands ──────────────────────────────────────────────
 
+fn memo_body_has_image(body: &str) -> bool {
+    body.contains("![image](data:image/")
+        || body.contains("![image](http://")
+        || body.contains("![image](https://")
+        || body.contains("data:image/")
+}
+
+#[tauri::command]
+fn infer_memo_tag_types(title: String, body: String) -> Vec<String> {
+    let content = format!("{}\n{}", title, body);
+    let mut tags = Vec::new();
+
+    if memo_body_has_image(&body) {
+        tags.push("image".to_string());
+    }
+    if classifier::contains_email(&content) {
+        tags.push("email".to_string());
+    }
+    if classifier::contains_file_path(&content) {
+        tags.push("path".to_string());
+    }
+    if classifier::contains_link(&content) {
+        tags.push("link".to_string());
+    }
+    if classifier::contains_code(&content) {
+        tags.push("code".to_string());
+    }
+
+    tags
+}
+
 #[tauri::command]
 fn get_memos(
     state: tauri::State<'_, AppState>,
@@ -978,6 +1009,7 @@ pub fn run() {
             get_shortcut,
             set_shortcut,
             set_shortcut_recording,
+            infer_memo_tag_types,
             get_memos,
             create_memo,
             update_memo,

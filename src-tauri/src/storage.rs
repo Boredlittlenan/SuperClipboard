@@ -7,6 +7,11 @@ use std::path::Path;
 use std::sync::Mutex;
 use thiserror::Error;
 
+const CLIPBOARD_QUERY_LIMIT: i64 = 50;
+const MEMO_QUERY_LIMIT: i64 = 100;
+const MAX_QUERY_LIMIT: i64 = 500;
+const SCHEMA_VERSION: &str = "2";
+
 #[derive(Error, Debug)]
 pub enum StorageError {
     #[error("Database error: {0}")]
@@ -101,6 +106,14 @@ fn map_row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry>
     })
 }
 
+fn normalize_limit(limit: Option<i64>, default: i64) -> i64 {
+    limit.unwrap_or(default).clamp(1, MAX_QUERY_LIMIT)
+}
+
+fn normalize_offset(offset: Option<i64>) -> i64 {
+    offset.unwrap_or(0).max(0)
+}
+
 pub struct Storage {
     conn: Mutex<Connection>,
 }
@@ -155,7 +168,7 @@ impl Storage {
             ",
         )?;
 
-        // Migration: add columns to existing databases (ignore error if already present)
+        // Legacy migrations for databases created before explicit schema versioning.
         let _ =
             conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN original_content TEXT");
         let _ = conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN updated_at TEXT");
@@ -178,6 +191,12 @@ impl Storage {
         // Migration: add archived_at column to memos
         let _ = conn.execute_batch("ALTER TABLE memos ADD COLUMN archived_at TEXT");
 
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![SCHEMA_VERSION],
+        )?;
+
         Ok(())
     }
 
@@ -185,6 +204,13 @@ impl Storage {
     pub fn hash_content(content: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(content.as_bytes());
+        hex::encode(hasher.finalize())
+    }
+
+    /// Compute SHA-256 hash of raw bytes for binary clipboard data.
+    pub fn hash_bytes(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
         hex::encode(hasher.finalize())
     }
 
@@ -229,11 +255,14 @@ impl Storage {
 
         sql.push_str(" ORDER BY pinned DESC, created_at DESC");
 
-        let limit = filter.limit.unwrap_or(50);
-        sql.push_str(&format!(" LIMIT {}", limit));
+        let limit = normalize_limit(filter.limit, CLIPBOARD_QUERY_LIMIT);
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(limit));
 
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        let offset = normalize_offset(filter.offset);
+        if offset > 0 {
+            sql.push_str(" OFFSET ?");
+            param_values.push(Box::new(offset));
         }
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -428,11 +457,14 @@ impl Storage {
 
         sql.push_str(" ORDER BY archived_at DESC");
 
-        let limit = filter.limit.unwrap_or(50);
-        sql.push_str(&format!(" LIMIT {}", limit));
+        let limit = normalize_limit(filter.limit, CLIPBOARD_QUERY_LIMIT);
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(limit));
 
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        let offset = normalize_offset(filter.offset);
+        if offset > 0 {
+            sql.push_str(" OFFSET ?");
+            param_values.push(Box::new(offset));
         }
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -492,11 +524,14 @@ impl Storage {
 
         sql.push_str(" ORDER BY pinned DESC, sort_order DESC");
 
-        let limit = filter.limit.unwrap_or(100);
-        sql.push_str(&format!(" LIMIT {}", limit));
+        let limit = normalize_limit(filter.limit, MEMO_QUERY_LIMIT);
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(limit));
 
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        let offset = normalize_offset(filter.offset);
+        if offset > 0 {
+            sql.push_str(" OFFSET ?");
+            param_values.push(Box::new(offset));
         }
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
@@ -661,11 +696,14 @@ impl Storage {
 
         sql.push_str(" ORDER BY archived_at DESC");
 
-        let limit = filter.limit.unwrap_or(100);
-        sql.push_str(&format!(" LIMIT {}", limit));
+        let limit = normalize_limit(filter.limit, MEMO_QUERY_LIMIT);
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(limit));
 
-        if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+        let offset = normalize_offset(filter.offset);
+        if offset > 0 {
+            sql.push_str(" OFFSET ?");
+            param_values.push(Box::new(offset));
         }
 
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =

@@ -40,8 +40,8 @@ impl ClipboardMonitor {
                     }
                 };
 
-                // Track last seen content to avoid re-processing
-                let mut last_text_hash = String::new();
+                // Track last seen clipboard payload to avoid re-processing.
+                let mut last_clipboard_hash = String::new();
 
                 // Poll interval: 300ms — responsive enough for UX, low CPU usage
                 let poll_interval = Duration::from_millis(300);
@@ -52,15 +52,10 @@ impl ClipboardMonitor {
                     // Try to read image first
                     if let Ok(img) = clipboard.get_image() {
                         if img.width > 0 && img.height > 0 {
-                            let hash = Storage::hash_content(&format!(
-                                "img_{}x{}_{}",
-                                img.width,
-                                img.height,
-                                img.bytes.len()
-                            ));
+                            let image_hash = hash_image_payload(&img);
 
-                            if hash != last_text_hash {
-                                last_text_hash = hash.clone();
+                            if image_hash != last_clipboard_hash {
+                                last_clipboard_hash = image_hash.clone();
 
                                 // Encode image as PNG base64
                                 let img_data = encode_image_to_base64(&img);
@@ -73,7 +68,10 @@ impl ClipboardMonitor {
                                         content_type: "image/png".to_string(),
                                         content: data,
                                         preview,
-                                        hash: Storage::hash_content(&format!("img_bytes_{}", hash)),
+                                        hash: Storage::hash_content(&format!(
+                                            "image:{}",
+                                            image_hash
+                                        )),
                                         pinned: false,
                                         created_at: Utc::now(),
                                         original_content: None,
@@ -104,10 +102,10 @@ impl ClipboardMonitor {
                         }
 
                         let hash = Storage::hash_content(&text);
-                        if hash == last_text_hash {
+                        if hash == last_clipboard_hash {
                             continue;
                         }
-                        last_text_hash = hash.clone();
+                        last_clipboard_hash = hash.clone();
 
                         let category = classify_text(&text);
                         let preview = generate_preview(&text, &category);
@@ -189,6 +187,15 @@ fn generate_preview(text: &str, category: &Category) -> String {
             }
         }
     }
+}
+
+fn hash_image_payload(img: &arboard::ImageData) -> String {
+    let mut bytes = Vec::with_capacity(img.bytes.len() + 32);
+    bytes.extend_from_slice(b"image/png-raw");
+    bytes.extend_from_slice(&(img.width as u64).to_le_bytes());
+    bytes.extend_from_slice(&(img.height as u64).to_le_bytes());
+    bytes.extend_from_slice(&img.bytes);
+    Storage::hash_bytes(&bytes)
 }
 
 /// Encode arboard image data to base64 PNG

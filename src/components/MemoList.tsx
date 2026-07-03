@@ -1,9 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type React from 'react';
 import type { Memo } from '../types';
-import { getMemos, createMemo, updateMemo, deleteMemo, toggleMemoPin, reorderMemos, archiveMemo, memoArchiveCount } from '../api/memos';
+import {
+  getMemos,
+  createMemo,
+  updateMemo,
+  deleteMemo,
+  toggleMemoPin,
+  reorderMemos,
+  archiveMemo,
+  memoArchiveCount,
+  inferMemoTagTypes,
+  type MemoAutoTagType,
+} from '../api/memos';
 import { useI18n } from '../i18n';
-import { formatRelativeTime } from '../utils';
+import { formatRelativeTime, getCategoryColor } from '../utils';
 import { TrashIcon } from './icons/TrashIcon';
 import MemoRichEditor from './MemoRichEditor';
 import {
@@ -15,36 +26,45 @@ import {
 const MEMO_COLLAPSE_TEXT_LIMIT = 300;
 const MEMO_COLLAPSE_LINE_LIMIT = 5;
 
-/**
- * Semantic tag→color mapping matching clipboard category badge colors
- * (src/utils.ts CATEGORY_COLORS). Auto-detected memo tags use these labels.
- */
-const TAG_COLOR_MAP: Record<string, string> = {
-  // English labels
-  'image': '#8b5cf6',
-  'email': '#f59e0b',
-  'path': '#ef4444',
-  'link': '#3b82f6',
-  'code': '#10b981',
-  // Chinese labels (zhCN)
-  '图片': '#8b5cf6',
-  '邮箱': '#f59e0b',
-  '路径': '#ef4444',
-  '链接': '#3b82f6',
-  '代码': '#10b981',
+type MemoTagLabels = Record<MemoAutoTagType, string>;
+
+const AUTO_TAG_ALIASES: Record<MemoAutoTagType, string[]> = {
+  image: ['image', '图片'],
+  email: ['email', '邮箱'],
+  path: ['path', '路径'],
+  link: ['link', '链接'],
+  code: ['code', '代码'],
 };
 
-const TAG_FALLBACK_COLORS = ['#6b7280', '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444'];
+const AUTO_TAG_CATEGORY: Record<MemoAutoTagType, Parameters<typeof getCategoryColor>[0]> = {
+  image: 'image',
+  email: 'email',
+  path: 'file_path',
+  link: 'link',
+  code: 'code',
+};
 
-function getTagColor(tag: string): string {
-  const key = tag.trim().toLocaleLowerCase();
-  if (TAG_COLOR_MAP[key]) return TAG_COLOR_MAP[key];
-  // Hash-based fallback for user-defined tags
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) {
-    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+function normalizeTag(tag: string): string {
+  return tag.trim().toLocaleLowerCase();
+}
+
+function getMemoTagLabels(t: ReturnType<typeof useI18n>['t']): MemoTagLabels {
+  return {
+    image: t.tabImage,
+    email: t.tabEmail,
+    path: t.tabPath,
+    link: t.tabLink,
+    code: t.tabCode,
+  };
+}
+
+function getAutoMemoTagType(tag: string, detectedTypes: MemoAutoTagType[], labels: MemoTagLabels): MemoAutoTagType | null {
+  const key = normalizeTag(tag);
+  for (const type of detectedTypes) {
+    const knownLabels = [...AUTO_TAG_ALIASES[type], labels[type]];
+    if (knownLabels.some(label => normalizeTag(label) === key)) return type;
   }
-  return TAG_FALLBACK_COLORS[Math.abs(hash) % TAG_FALLBACK_COLORS.length];
+  return null;
 }
 
 function isMemoBodyCollapsible(body: string): boolean {
@@ -84,15 +104,8 @@ function mergeTags(manualTags: string, autoTags: string[]): string {
   return merged.join(',');
 }
 
-function inferMemoTags(title: string, body: string, labels: { image: string; email: string; path: string; link: string; code: string }): string[] {
-  const content = `${title}\n${body}`;
-  const tags: string[] = [];
-  if (hasMemoImage(body)) tags.push(labels.image);
-  if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(content)) tags.push(labels.email);
-  if (/(?:[A-Za-z]:\\|\\\\[\w.-]+\\|\/(?:Users|home|var|etc|tmp|mnt|Volumes)\/|\.\/|\.\.\/)[^\s]+/.test(content)) tags.push(labels.path);
-  if (/https?:\/\/[^\s]+|www\.[^\s]+/i.test(content)) tags.push(labels.link);
-  if (/(?:function\s+\w+|const\s+\w+\s*=|let\s+\w+\s*=|class\s+\w+|import\s+.+from|```|<\/?[a-z][\s\S]*>)/i.test(content)) tags.push(labels.code);
-  return tags;
+function inferMemoTags(types: MemoAutoTagType[], labels: MemoTagLabels): string[] {
+  return types.map(type => labels[type]);
 }
 
 interface Props {
@@ -111,6 +124,7 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
   const [expandedMemoIds, setExpandedMemoIds] = useState<Set<number>>(() => new Set());
+  const [autoTagTypesByMemoId, setAutoTagTypesByMemoId] = useState<Record<number, MemoAutoTagType[]>>({});
 
   const editingItemRef = useRef<HTMLDivElement>(null);
   const editingIdRef = useRef<number | null>(null);
@@ -128,6 +142,17 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
       const data = await getMemos(filter);
       setMemos(data);
       onCountChange?.(data.length);
+      const tagTypeEntries = await Promise.all(
+        data.map(async (memo) => {
+          try {
+            return [memo.id, await inferMemoTagTypes(memo.title, memo.body)] as const;
+          } catch (err) {
+            console.error('Failed to infer memo tags:', err);
+            return [memo.id, []] as const;
+          }
+        })
+      );
+      setAutoTagTypesByMemoId(Object.fromEntries(tagTypeEntries));
     } catch (err) {
       console.error('Failed to fetch memos:', err);
     }
@@ -172,26 +197,27 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
 
     setSavingMemo(true);
     try {
+      const autoTagTypes = await inferMemoTagTypes(editDraft.title, editDraft.body);
       const finalTags = mergeTags(
         editDraft.tags,
-        inferMemoTags(editDraft.title, editDraft.body, {
-          image: t.tabImage,
-          email: t.tabEmail,
-          path: t.tabPath,
-          link: t.tabLink,
-          code: t.tabCode,
-        })
+        inferMemoTags(autoTagTypes, getMemoTagLabels(t))
       );
       const hasContent = editDraft.title.trim() || editDraft.body.trim() || editDraft.tags.trim();
       if (!hasContent && newMemoIdRef.current === id) {
         await deleteMemo(id);
         setMemos(prev => prev.filter(m => m.id !== id));
+        setAutoTagTypesByMemoId(prev => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
         onCountChange?.(Math.max(0, memos.length - 1));
       } else {
         await updateMemo(id, editDraft.title, editDraft.body, finalTags);
         setMemos(prev => prev.map(m =>
           m.id === id ? { ...m, title: editDraft.title, body: editDraft.body, tags: finalTags } : m
         ));
+        setAutoTagTypesByMemoId(prev => ({ ...prev, [id]: autoTagTypes }));
       }
       stopEditing();
     } catch (err) {
@@ -404,6 +430,8 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
     const isExpanded = expandedMemoIds.has(memo.id);
     const hasImages = hasMemoImage(memo.body);
     const canExpand = !isEditing && isMemoBodyCollapsible(memo.body);
+    const memoTagLabels = getMemoTagLabels(t);
+    const detectedAutoTagTypes = autoTagTypesByMemoId[memo.id] ?? [];
 
     return (
       <div
@@ -568,12 +596,19 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
               {memo.tags && (
                 <div style={styles.tags}>
                   {memo.tags.split(',').filter(Boolean).map((tag, i) => {
-                    const color = getTagColor(tag);
+                    const autoTagType = getAutoMemoTagType(
+                      tag,
+                      detectedAutoTagTypes,
+                      memoTagLabels
+                    );
+                    const color = autoTagType ? getCategoryColor(AUTO_TAG_CATEGORY[autoTagType]) : null;
                     return (
                       <span key={i} style={{
                         ...styles.tag,
-                        background: `${color}20`,
-                        color,
+                        ...(color ? {
+                          background: `${color}20`,
+                          color,
+                        } : styles.manualTag),
                       }}>{tag.trim()}</span>
                     );
                   })}
@@ -862,6 +897,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     textTransform: 'uppercase' as const,
     letterSpacing: '0.5px',
+  },
+  manualTag: {
+    background: 'var(--memo-contrast-bg)',
+    color: 'var(--memo-contrast)',
   },
   timestampRow: {
     display: 'flex',

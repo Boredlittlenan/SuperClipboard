@@ -18,14 +18,14 @@ import {
 } from './api/clipboard';
 import { getShortcut, getSetting, checkUpdate, pasteToActiveWindow } from './api/settings';
 import { memoCount, getArchivedMemos, memoArchiveCount, unarchiveMemo, permanentDeleteMemo, purgeOldMemoArchives } from './api/memos';
-import { formatRelativeTime, formatShortcutLabel, getArchiveDaysRemaining, getArchiveTone } from './utils';
+import { formatShortcutLabel } from './utils';
 import { I18nProvider, useI18n } from './i18n';
 import CategoryTabs from './components/CategoryTabs';
 import ClipboardList from './components/ClipboardList';
 import SettingsButton from './components/SettingsButton';
 import MemoList from './components/MemoList';
-import { renderMemoBody } from './components/MemoBody';
-import { TrashIcon } from './components/icons/TrashIcon';
+import ArchivedMemoItem from './components/ArchivedMemoItem';
+import ConfirmDialog, { type ConfirmDialogState } from './components/ConfirmDialog';
 import type { ThemeMode } from './types';
 import './App.css';
 
@@ -34,55 +34,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-function ArchivedMemoItem({ memo, onRestore, onPermanentDelete }: { memo: Memo; onRestore: () => void; onPermanentDelete: () => void }) {
-  const { t } = useI18n();
-  const archiveDaysRemaining = memo.archived_at ? getArchiveDaysRemaining(memo.archived_at) : null;
-  const archiveTone = getArchiveTone(archiveDaysRemaining ?? 0);
-  const archiveTimerStyle = {
-    warning: { color: '#f59e0b', background: 'rgba(245,158,11,0.1)' },
-    danger: { color: '#ef4444', background: 'rgba(239,68,68,0.1)' },
-  }[archiveTone];
-
-  return (
-    <div className="memo-entry" style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'var(--memo-contrast-bg)', padding: '4px 6px', borderRadius: '4px', margin: '-2px -4px 2px -4px' }}>
-          <span className="memo-selectable" style={{ fontSize: '13px', fontWeight: 600, color: '#1a1a1a', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {memo.title || '(untitled)'}
-          </span>
-          <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-            <button style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', borderRadius: 4, background: 'var(--surface)', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer' }} onClick={onRestore} title={t.restore}>
-              {'\u21A9'}
-            </button>
-            <button style={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', borderRadius: 4, background: 'var(--surface)', color: '#ef4444', fontSize: 11, cursor: 'pointer' }} onClick={onPermanentDelete} title={t.permanentDelete}>
-              <TrashIcon />
-            </button>
-          </div>
-        </div>
-        <div className="memo-selectable memo-preview" style={{ fontSize: '13px', color: '#525252', margin: 0, lineHeight: 1.4, maxHeight: 64, overflow: 'hidden' }}>
-          {renderMemoBody(memo.body, 100, 96)}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-          <span className="memo-time" style={{ fontSize: '11px', color: '#999999' }}>{formatRelativeTime(memo.created_at, t)}</span>
-          {archiveDaysRemaining !== null && (
-            <span style={{ fontSize: '10px', ...archiveTimerStyle, padding: '1px 6px', borderRadius: '8px', fontWeight: 500 }}>
-              {t.daysRemaining(archiveDaysRemaining)}
-            </span>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface ConfirmDialogState {
-  title: string;
-  message: string;
-  confirmLabel: string;
-  tone?: 'danger' | 'normal';
-  resolve: (confirmed: boolean) => void;
 }
 
 function AppContent() {
@@ -108,6 +59,7 @@ function AppContent() {
     window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   );
   const searchRef = useRef<HTMLInputElement>(null);
+  const searchQueryRef = useRef('');
   const [archiveSubTab, setArchiveSubTab] = useState<'clipboard' | 'memos'>('clipboard');
   const [archivedMemos, setArchivedMemos] = useState<Memo[]>([]);
   const [memoArchiveCountState, setMemoArchiveCountState] = useState<number>(0);
@@ -558,13 +510,18 @@ function AppContent() {
   // Debounced search
   const [searchInput, setSearchInput] = useState('');
   useEffect(() => {
+    searchQueryRef.current = searchQuery;
+  }, [searchQuery]);
+
+  useEffect(() => {
     const timer = setTimeout(() => {
-      setSearchQuery(searchInput);
-      setLoading(true);
-      fetchEntries().finally(() => setLoading(false));
+      if (searchQueryRef.current !== searchInput) {
+        setLoading(true);
+        setSearchQuery(searchInput);
+      }
     }, 250);
     return () => clearTimeout(timer);
-  }, [searchInput, fetchEntries]);
+  }, [searchInput]);
 
   return (
     <div className="app-root" data-theme={resolvedTheme} data-accent={themeAccent} data-memo-color={memoColor || undefined}>
@@ -739,38 +696,7 @@ function AppContent() {
       )}
 
       {confirmDialog && (
-        <div
-          className="dialog-backdrop"
-          onMouseDown={() => {
-            confirmDialog.resolve(false);
-            setConfirmDialog(null);
-          }}
-        >
-          <div className="confirm-dialog" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="confirm-dialog-title">{confirmDialog.title}</div>
-            <div className="confirm-dialog-message">{confirmDialog.message}</div>
-            <div className="confirm-dialog-actions">
-              <button
-                className="dialog-btn"
-                onClick={() => {
-                  confirmDialog.resolve(false);
-                  setConfirmDialog(null);
-                }}
-              >
-                {t.cancel}
-              </button>
-              <button
-                className={`dialog-btn dialog-btn-primary ${confirmDialog.tone === 'danger' ? 'dialog-btn-danger' : ''}`}
-                onClick={() => {
-                  confirmDialog.resolve(true);
-                  setConfirmDialog(null);
-                }}
-              >
-                {confirmDialog.confirmLabel}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
       )}
     </div>
   );

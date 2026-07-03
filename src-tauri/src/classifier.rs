@@ -44,6 +44,19 @@ static UNIX_PATH_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(/[^/\x00]
 static DOMAIN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^(www\.)?([a-zA-Z0-9\-]+\.)+[a-zA-Z]{2,}(/[^\s]*)?$").unwrap());
 
+static EMBEDDED_EMAIL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b").unwrap());
+
+static EMBEDDED_WINDOWS_PATH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"[A-Za-z]:\\[^\r\n<>|"]+"#).unwrap());
+
+static EMBEDDED_UNIX_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)(?:^|\s)(/(?:Users|home|var|etc|tmp|mnt|Volumes)/[^\s]+)").unwrap()
+});
+
+static URL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(?:https?|ftp)://[^\s]+").unwrap());
+
 // ─── Code detection patterns (used for scoring) ─────────────────────
 
 /// Keywords that strongly indicate code (weight: 3 each)
@@ -106,6 +119,60 @@ static JSON_KEY_RE: LazyLock<Regex> =
 
 // Threshold to classify as code
 const CODE_SCORE_THRESHOLD: i32 = 5;
+
+fn trim_token_punctuation(token: &str) -> &str {
+    token.trim_matches(|c: char| {
+        matches!(
+            c,
+            '"' | '\'' | '`' | '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
+        )
+    })
+}
+
+fn is_link_token(token: &str) -> bool {
+    let trimmed = trim_token_punctuation(token);
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let has_scheme = Url::parse(trimmed).is_ok()
+        && (trimmed.starts_with("http://")
+            || trimmed.starts_with("https://")
+            || trimmed.starts_with("ftp://"));
+    let is_bare_domain = !trimmed.contains(' ') && DOMAIN_RE.is_match(trimmed);
+    has_scheme || is_bare_domain
+}
+
+fn looks_like_json_code(trimmed: &str) -> bool {
+    if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+    {
+        return JSON_KEY_RE.is_match(trimmed) || (trimmed.contains(',') && trimmed.contains(':'));
+    }
+    false
+}
+
+pub fn contains_email(text: &str) -> bool {
+    EMBEDDED_EMAIL_RE.is_match(text)
+}
+
+pub fn contains_link(text: &str) -> bool {
+    URL_RE.is_match(text) || text.split_whitespace().any(is_link_token)
+}
+
+pub fn contains_file_path(text: &str) -> bool {
+    EMBEDDED_WINDOWS_PATH_RE.is_match(text)
+        || EMBEDDED_UNIX_PATH_RE.is_match(text)
+        || text.split_whitespace().any(|token| {
+            let trimmed = trim_token_punctuation(token);
+            WINDOWS_PATH_RE.is_match(trimmed) || UNIX_PATH_RE.is_match(trimmed)
+        })
+}
+
+pub fn contains_code(text: &str) -> bool {
+    let trimmed = text.trim();
+    looks_like_json_code(trimmed) || score_code(trimmed) >= CODE_SCORE_THRESHOLD
+}
 
 /// Score the content for code-likeness and classify
 fn score_code(text: &str) -> i32 {
@@ -200,16 +267,7 @@ pub fn classify_text(text: &str) -> Category {
     // Check for URL/Link (must be a single URL, not embedded in other text)
     if trimmed.lines().count() <= 2 {
         // Standard scheme-based detection
-        let has_scheme = Url::parse(trimmed).is_ok()
-            && (trimmed.starts_with("http://")
-                || trimmed.starts_with("https://")
-                || trimmed.starts_with("ftp://"));
-
-        // Bare domain detection: www.example.com or example.com with common TLDs
-        let is_bare_domain =
-            trimmed.lines().count() == 1 && !trimmed.contains(' ') && DOMAIN_RE.is_match(trimmed);
-
-        if has_scheme || is_bare_domain {
+        if is_link_token(trimmed) {
             return Category::Link;
         }
     }
@@ -227,16 +285,12 @@ pub fn classify_text(text: &str) -> Category {
     }
 
     // Check for JSON-like content (stricter: require quoted key)
-    if (trimmed.starts_with('{') && trimmed.ends_with('}'))
-        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
-    {
-        if JSON_KEY_RE.is_match(trimmed) || (trimmed.contains(',') && trimmed.contains(':')) {
-            return Category::Code;
-        }
+    if looks_like_json_code(trimmed) {
+        return Category::Code;
     }
 
     // Score-based code detection
-    if score_code(trimmed) >= CODE_SCORE_THRESHOLD {
+    if contains_code(trimmed) {
         return Category::Code;
     }
 
@@ -380,5 +434,17 @@ mod tests {
             Category::Code,
             "Regex literal should be code"
         );
+    }
+
+    #[test]
+    fn test_embedded_content_signals() {
+        assert!(contains_email("Contact me at user@example.com tomorrow"));
+        assert!(contains_link("Docs: https://example.com/guide"));
+        assert!(contains_link("Open www.example.com for details"));
+        assert!(contains_file_path(r"Saved at C:\Users\test\file.txt"));
+        assert!(contains_file_path(
+            "Config lives in /Users/test/app/config.json"
+        ));
+        assert!(contains_code("const value = items.map(item => item.id);"));
     }
 }

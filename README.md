@@ -12,8 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_2.0.2_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_2.0.2_x64_en-US.msi`: MSI package
+- `SuperClipboard_2.1.0_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_2.1.0_x64_en-US.msi`: MSI package
 
 ## Highlights
 
@@ -29,7 +29,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 
 ## Default Behavior
 
-- Version: `2.0.2`
+- Version: `2.1.0`
 - Default shortcut: `Alt+X`
 - Startup: shows the main window on the desktop and keeps the tray icon available
 - Theme mode: follows system
@@ -47,6 +47,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Paste-to-caret is currently timing-sensitive: it depends on the previous app regaining focus after SuperClipboard hides, then sends `Ctrl+V` after a short delay. Some apps or slow focus transitions may make it feel intermittent; this is documented for a future redesign.
 - Repeatedly launching the app shortcut focuses the existing instance instead of creating duplicate tray icons.
 - When upgrading from `SuperClipboard3`, the old local data directory is migrated automatically.
+- Since v2.1.0, image clipboard deduplication uses real image bytes instead of only dimensions, and memo auto tags are inferred by the backend classifier.
 
 ## Privacy
 
@@ -96,5 +97,7 @@ src/
 ## Roadmap
 
 - Improve paste-to-caret reliability by tracking the previously active window and confirming focus before sending `Ctrl+V`.
+- Move memo images from inline data URLs to dedicated image storage/cache.
 - Add virtual scrolling for very large clipboard histories.
+- Add end-to-end coverage for shortcut recording, tray behavior, update checks, and memo image sorting.
 - Revisit caret follow mode and saved window position after the interaction model is stable.
