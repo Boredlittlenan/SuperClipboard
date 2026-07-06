@@ -27,6 +27,7 @@ const translations = {
     privacyBody: 'SuperClipboard 不上传剪贴板内容。只有启用检查更新时，软件会访问 GitHub Releases 获取版本信息。',
     downloadEyebrow: '当前版本',
     downloadBody: '推荐下载 Windows x64 安装器，也可以选择 MSI 包。',
+    siteVersion: '官网 v1.0',
     footerRepo: 'GitHub 仓库',
   },
   en: {
@@ -57,6 +58,7 @@ const translations = {
     privacyBody: 'SuperClipboard does not upload clipboard content. When update checks are enabled, it only contacts GitHub Releases for version information.',
     downloadEyebrow: 'Current version',
     downloadBody: 'The Windows x64 setup installer is recommended. An MSI package is also available.',
+    siteVersion: 'Website v1.0',
     footerRepo: 'GitHub repository',
   },
 };

@@ -348,9 +348,20 @@ h3 {
   color: var(--muted);
 }
 
+.footer-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
 .site-footer span {
   color: var(--ink);
   font-weight: 700;
+}
+
+.site-footer small {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 @media (max-width: 900px) {
