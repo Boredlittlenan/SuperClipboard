@@ -8,13 +8,52 @@
       name="description"
       content="SuperClipboard is a lightweight Windows clipboard manager with local history, smart categorization, memos, recycle bin recovery, themes, and tray controls."
     />
+    <meta
+      name="keywords"
+      content="SuperClipboard, 超级剪贴板, clipboard manager, Windows clipboard manager, clipboard history, clipboard tool, local clipboard, Tauri app, Rust clipboard, 剪贴板管理器, 剪贴板历史, 本地剪贴板, 备忘录, 回收站"
+    />
+    <meta name="robots" content="index,follow" />
     <meta name="website-version" content="1.0" />
+    <meta name="theme-color" content="#2f6fdb" />
+    <link rel="canonical" href="https://boredlittlenan.github.io/SuperClipboard/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SuperClipboard" />
+    <meta property="og:title" content="SuperClipboard | 超级剪贴板" />
+    <meta
+      property="og:description"
+      content="A lightweight Windows clipboard manager with local history, smart categorization, memos, recycle bin recovery, themes, and tray controls."
+    />
+    <meta property="og:url" content="https://boredlittlenan.github.io/SuperClipboard/" />
+    <meta property="og:image" content="https://boredlittlenan.github.io/SuperClipboard/assets/icon.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="SuperClipboard | 超级剪贴板" />
+    <meta
+      name="twitter:description"
+      content="Local Windows clipboard history, smart categorization, memos, recycle bin recovery, themes, and tray controls."
+    />
+    <meta name="twitter:image" content="https://boredlittlenan.github.io/SuperClipboard/assets/icon.png" />
     <link rel="icon" href="./assets/icon.png" />
     <link rel="stylesheet" href="./styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "SuperClipboard",
+        "alternateName": "超级剪贴板",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "Windows",
+        "softwareVersion": "2.1.5",
+        "url": "https://boredlittlenan.github.io/SuperClipboard/",
+        "downloadUrl": "https://github.com/Boredlittlenan/SuperClipboard/releases/latest",
+        "codeRepository": "https://github.com/Boredlittlenan/SuperClipboard",
+        "description": "A lightweight Windows clipboard manager with local history, smart categorization, memos, recycle bin recovery, themes, and tray controls."
+      }
+    </script>
   </head>
   <body>
+    <a class="skip-link" href="#main-content" data-i18n="skipLink">跳到主要内容</a>
     <header class="site-header">
-      <a class="brand" href="#top" aria-label="SuperClipboard">
+      <a class="brand" href="#main-content" aria-label="SuperClipboard">
         <img src="./assets/icon.png" alt="" />
         <span>SuperClipboard</span>
       </a>
@@ -24,12 +63,12 @@
         <a href="#download" data-i18n="navDownload">下载</a>
       </nav>
       <div class="lang-switch" aria-label="Language">
-        <button type="button" data-lang="zh-CN" class="active">中文</button>
-        <button type="button" data-lang="en">EN</button>
+        <button type="button" data-lang="zh-CN" class="active" aria-pressed="true">中文</button>
+        <button type="button" data-lang="en" aria-pressed="false">EN</button>
       </div>
     </header>
 
-    <main id="top">
+    <main id="main-content" tabindex="-1">
       <section class="hero">
         <div class="hero-copy">
           <p class="eyebrow" data-i18n="eyebrow">Windows 剪贴板管理器</p>

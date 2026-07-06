@@ -1,5 +1,6 @@
 const translations = {
   'zh-CN': {
+    skipLink: '跳到主要内容',
     navFeatures: '功能',
     navPrivacy: '隐私',
     navDownload: '下载',
@@ -31,6 +32,7 @@ const translations = {
     footerRepo: 'GitHub 仓库',
   },
   en: {
+    skipLink: 'Skip to main content',
     navFeatures: 'Features',
     navPrivacy: 'Privacy',
     navDownload: 'Download',
@@ -77,7 +79,9 @@ const applyLanguage = (lang) => {
     if (key && dict[key]) node.textContent = dict[key];
   });
   document.querySelectorAll('[data-lang]').forEach((button) => {
-    button.classList.toggle('active', button.getAttribute('data-lang') === lang);
+    const active = button.getAttribute('data-lang') === lang;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
   });
   window.localStorage.setItem('site-language', lang);
 };
