@@ -1,0 +1,90 @@
+const translations = {
+  'zh-CN': {
+    navFeatures: '功能',
+    navPrivacy: '隐私',
+    navDownload: '下载',
+    eyebrow: 'Windows 剪贴板管理器',
+    heroTitle: 'SuperClipboard',
+    heroLead: '本地保存剪贴板历史，自动识别内容类型，并提供备忘录、回收站、主题和托盘快捷操作。',
+    downloadLatest: '下载最新版',
+    viewGithub: '查看源码',
+    visualSearch: '搜索剪贴板',
+    visualItemOneTitle: '项目路径',
+    visualItemTwoTitle: '备忘录',
+    visualItemTwoBody: '图片、标签和正文都保存在本地。',
+    featuresEyebrow: '核心能力',
+    featuresTitle: '为每天高频复制粘贴而做',
+    featureLocalTitle: '本地历史',
+    featureLocalBody: '剪贴板条目、备忘录和设置保存在本机 SQLite 数据库中。',
+    featureClassifyTitle: '智能分类',
+    featureClassifyBody: '自动识别文本、链接、图片、代码、邮箱和文件路径。',
+    featureMemoTitle: '备忘录',
+    featureMemoBody: '可选启用标题、正文、图片预览、标签和拖拽排序。',
+    featureTrayTitle: '托盘和快捷键',
+    featureTrayBody: '全局快捷键、托盘菜单、单实例启动和开机自启。',
+    privacyEyebrow: '隐私',
+    privacyTitle: '内容默认留在你的电脑上',
+    privacyBody: 'SuperClipboard 不上传剪贴板内容。只有启用检查更新时，软件会访问 GitHub Releases 获取版本信息。',
+    downloadEyebrow: '当前版本',
+    downloadBody: '推荐下载 Windows x64 安装器，也可以选择 MSI 包。',
+    footerRepo: 'GitHub 仓库',
+  },
+  en: {
+    navFeatures: 'Features',
+    navPrivacy: 'Privacy',
+    navDownload: 'Download',
+    eyebrow: 'Clipboard manager for Windows',
+    heroTitle: 'SuperClipboard',
+    heroLead: 'Keep clipboard history local, classify content automatically, and work faster with memos, recycle bin recovery, themes, and tray shortcuts.',
+    downloadLatest: 'Download latest',
+    viewGithub: 'View source',
+    visualSearch: 'Search clipboard',
+    visualItemOneTitle: 'Project path',
+    visualItemTwoTitle: 'Memo',
+    visualItemTwoBody: 'Images, tags, and rich text stay local.',
+    featuresEyebrow: 'Core features',
+    featuresTitle: 'Built for high-frequency copy and paste',
+    featureLocalTitle: 'Local history',
+    featureLocalBody: 'Clipboard entries, memos, and settings are stored in a local SQLite database.',
+    featureClassifyTitle: 'Smart categories',
+    featureClassifyBody: 'Detect text, links, images, code snippets, emails, and file paths automatically.',
+    featureMemoTitle: 'Memos',
+    featureMemoBody: 'Enable titles, rich body content, image previews, tags, pinning, and drag sorting.',
+    featureTrayTitle: 'Tray and shortcut',
+    featureTrayBody: 'Use a global shortcut, tray menu, single-instance launch, and auto-start support.',
+    privacyEyebrow: 'Privacy',
+    privacyTitle: 'Your clipboard stays on your PC',
+    privacyBody: 'SuperClipboard does not upload clipboard content. When update checks are enabled, it only contacts GitHub Releases for version information.',
+    downloadEyebrow: 'Current version',
+    downloadBody: 'The Windows x64 setup installer is recommended. An MSI package is also available.',
+    footerRepo: 'GitHub repository',
+  },
+};
+
+const preferredLanguage = () => {
+  const saved = window.localStorage.getItem('site-language');
+  if (saved === 'zh-CN' || saved === 'en') return saved;
+  return navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
+};
+
+const applyLanguage = (lang) => {
+  const dict = translations[lang] ?? translations['zh-CN'];
+  document.documentElement.lang = lang;
+  document.querySelectorAll('[data-i18n]').forEach((node) => {
+    const key = node.getAttribute('data-i18n');
+    if (key && dict[key]) node.textContent = dict[key];
+  });
+  document.querySelectorAll('[data-lang]').forEach((button) => {
+    button.classList.toggle('active', button.getAttribute('data-lang') === lang);
+  });
+  window.localStorage.setItem('site-language', lang);
+};
+
+document.querySelectorAll('[data-lang]').forEach((button) => {
+  button.addEventListener('click', () => {
+    const lang = button.getAttribute('data-lang');
+    if (lang) applyLanguage(lang);
+  });
+});
+
+applyLanguage(preferredLanguage());

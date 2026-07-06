@@ -19,13 +19,14 @@
         "decorations": false,
         "transparent": false,
         "alwaysOnTop": false,
-        "visible": true
+        "visible": false
       }
     ],
     "trayIcon": {
       "iconPath": "icons/icon.png",
       "iconAsTemplate": true,
-      "id": "main-tray"
+      "id": "main-tray",
+      "tooltip": "SuperClipboard"
     },
     "security": {
       "csp": null

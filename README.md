@@ -6,7 +6,7 @@ SuperClipboard is a lightweight Windows clipboard manager built with Rust, Tauri
 
 Chinese display name: `超级剪贴板`.
 
-[Latest Release](https://github.com/Boredlittlenan/SuperClipboard/releases/latest) · [Version Notes](VERSIONS.md) · [Changelog](CHANGELOG.md)
+[Website](https://boredlittlenan.github.io/SuperClipboard/) · [Latest Release](https://github.com/Boredlittlenan/SuperClipboard/releases/latest) · [Version Notes](VERSIONS.md) · [Changelog](CHANGELOG.md)
 
 ## Download
 
@@ -31,7 +31,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 
 - Version: `2.1.5`
 - Default shortcut: `Alt+X`
-- Startup: shows the main window on the desktop and keeps the tray icon available
+- Startup: positions the main window before showing it and keeps the tray icon available
 - Theme mode: follows system
 - Theme accent: blue
 - Auto-start: enabled
@@ -46,6 +46,8 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - If the window was opened by the global shortcut, clicking a clipboard item also hides the window and simulates `Ctrl+V` into the previously active app.
 - Paste-to-caret is currently timing-sensitive: it depends on the previous app regaining focus after SuperClipboard hides, then sends `Ctrl+V` after a short delay. Some apps or slow focus transitions may make it feel intermittent; this is documented for a future redesign.
 - Repeatedly launching the app shortcut focuses the existing instance instead of creating duplicate tray icons.
+- When the window is visible but covered by another app, pressing the global shortcut brings it back to the front; pressing the shortcut only hides it when it is already the foreground window.
+- Hovering the tray icon shows the localized app name.
 - When upgrading from `SuperClipboard3`, the old local data directory is migrated automatically.
 - Since v2.1.0, image clipboard deduplication uses real image bytes instead of only dimensions, and memo auto tags are inferred by the backend classifier.
 - Since v2.1.5, update checks show release notes before opening GitHub.

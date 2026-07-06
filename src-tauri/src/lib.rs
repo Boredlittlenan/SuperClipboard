@@ -60,6 +60,13 @@ fn tray_menu_labels(language: &str) -> (&'static str, &'static str) {
     }
 }
 
+fn tray_tooltip_label(language: &str) -> &'static str {
+    match language {
+        "zh-CN" => "超级剪贴板",
+        _ => "SuperClipboard",
+    }
+}
+
 fn normalize_locale(locale: &str) -> &'static str {
     if locale.to_ascii_lowercase().starts_with("zh") {
         "zh-CN"
@@ -146,6 +153,7 @@ fn update_tray_menu(app: &tauri::AppHandle, language: &str) -> tauri::Result<()>
             .item(&quit_item)
             .build()?;
         tray.set_menu(Some(menu))?;
+        tray.set_tooltip(Some(tray_tooltip_label(language)))?;
     }
     Ok(())
 }
@@ -198,6 +206,38 @@ fn apply_window_position(window: &tauri::WebviewWindow, point: WindowPoint) {
     let _ = window.set_position(tauri::PhysicalPosition::new(point.x, point.y));
 }
 
+#[cfg(windows)]
+fn is_window_foreground(window: &tauri::WebviewWindow) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    let Ok(hwnd) = window.hwnd() else {
+        return window.is_focused().unwrap_or(false);
+    };
+
+    let foreground = unsafe { GetForegroundWindow() };
+    foreground.0 as isize == hwnd.0 as isize
+}
+
+#[cfg(not(windows))]
+fn is_window_foreground(window: &tauri::WebviewWindow) -> bool {
+    window.is_focused().unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn focus_window_native(window: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            let _ = SetForegroundWindow(HWND(hwnd.0));
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn focus_window_native(_window: &tauri::WebviewWindow) {}
+
 fn move_window_to_default_position(window: &tauri::WebviewWindow, source: &'static str) {
     let point = WindowPositionService::default_position(current_window_size(window));
     info!(
@@ -217,14 +257,24 @@ fn show_window(
         move_window_to_default_position(window, source);
     }
 
+    let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+    focus_window_native(window);
 
     if reset_to_default_position {
         move_window_to_default_position(window, source);
     }
 
     let _ = app.emit("window-shown", source);
+}
+
+fn toggle_window(app: &tauri::AppHandle, window: &tauri::WebviewWindow, source: &'static str) {
+    if window.is_visible().unwrap_or(false) && is_window_foreground(window) {
+        let _ = window.hide();
+    } else {
+        show_window(app, window, source, false);
+    }
 }
 
 fn backups_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -318,11 +368,7 @@ fn register_toggle_shortcut(
                 let app_for_main = app.clone();
                 let _ = app.run_on_main_thread(move || {
                     if let Some(window) = app_for_main.get_webview_window("main") {
-                        if window.is_visible().unwrap_or(false) {
-                            let _ = window.hide();
-                        } else {
-                            show_window(&app_for_main, &window, "shortcut", false);
-                        }
+                        toggle_window(&app_for_main, &window, "shortcut");
                     }
                 });
             }
@@ -1133,9 +1179,7 @@ pub fn run() {
             // Apply always-on-top setting.
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_always_on_top(always_on_top);
-                move_window_to_default_position(&window, "startup");
-                let _ = window.show();
-                let _ = window.set_focus();
+                show_window(&app.handle(), &window, "startup", true);
             }
 
             // Set up system tray menu and click handler
@@ -1167,11 +1211,7 @@ pub fn run() {
                     } = event
                     {
                         if let Some(window) = handle2.get_webview_window("main") {
-                            if window.is_visible().unwrap_or(false) {
-                                let _ = window.hide();
-                            } else {
-                                show_window(&handle2, &window, "tray", false);
-                            }
+                            toggle_window(&handle2, &window, "tray");
                         }
                     }
                 });
