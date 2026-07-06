@@ -27,6 +27,11 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - First launch follows the system language, with Chinese and English UI available
 - Built-in update check through GitHub Releases with release notes preview
 
+## System Support
+
+- Windows x64: supported now, with NSIS setup and MSI packages.
+- macOS: planned. Development, testing, and packaging will start once dedicated Mac hardware is available.
+
 ## Default Behavior
 
 - Version: `2.15.1`
@@ -105,3 +110,4 @@ src/
 - Add virtual scrolling for very large clipboard histories.
 - Add end-to-end coverage for shortcut recording, tray behavior, update checks, and memo image sorting.
 - Revisit caret follow mode and saved window position after the interaction model is stable.
+- Start macOS adaptation after a Mac development device is available.
