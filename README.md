@@ -12,8 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_2.1.5_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_2.1.5_x64_en-US.msi`: MSI package
+- `SuperClipboard_2.15.1_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_2.15.1_x64_en-US.msi`: MSI package
 
 ## Highlights
 
@@ -29,7 +29,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 
 ## Default Behavior
 
-- Version: `2.1.5`
+- Version: `2.15.1`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - Theme mode: follows system
@@ -50,7 +50,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Hovering the tray icon shows the localized app name.
 - When upgrading from `SuperClipboard3`, the old local data directory is migrated automatically.
 - Since v2.1.0, image clipboard deduplication uses real image bytes instead of only dimensions, and memo auto tags are inferred by the backend classifier.
-- Since v2.1.5, update checks show release notes before opening GitHub.
+- Since v2.15.1, update checks show release notes before opening GitHub.
 
 ## Privacy
 
