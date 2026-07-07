@@ -51,6 +51,7 @@ function AppContent() {
   const [memoListCount, setMemoListCount] = useState<number>(0);
   const [memoColor, setMemoColor] = useState<string | null>(null);
   const [archiveEnabled, setArchiveEnabled] = useState(false);
+  const [storageSettingsEnabled, setStorageSettingsEnabled] = useState(false);
   const [archiveCountState, setArchiveCountState] = useState<number | null>(null);
   const [rawPreview, setRawPreview] = useState(false);
   const [themeAccent, setThemeAccent] = useState('default');
@@ -75,7 +76,7 @@ function AppContent() {
   const displayTitle = titleVariant === 'xiaonan'
     ? '小楠の剪贴板'
     : titleVariant === 'yingnan'
-      ? '瑛楠の剪贴板'
+      ? '瑛楠的剪贴板'
       : t.appTitle;
 
   useEffect(() => {
@@ -116,6 +117,13 @@ function AppContent() {
   // Load archive_enabled setting on mount
   useEffect(() => {
     getSetting('archive_enabled').then((v) => setArchiveEnabled(v === 'true')).catch(console.error);
+  }, []);
+
+  // Load storage settings beta gate on mount
+  useEffect(() => {
+    getSetting('storage_settings_beta')
+      .then((v) => setStorageSettingsEnabled(v === 'true'))
+      .catch(console.error);
   }, []);
 
   // Load theme accent setting on mount
@@ -553,7 +561,9 @@ function AppContent() {
           <span className="title-text">{displayTitle}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span className="shortcut-hint">{formatShortcutLabel(currentShortcut)}</span>
-            <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
+            {storageSettingsEnabled && (
+              <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
+            )}
             <SettingsButton
               onShortcutChange={setCurrentShortcut}
               onMemoEnabledChange={setMemoEnabled}
@@ -563,6 +573,7 @@ function AppContent() {
               onThemeAccentChange={setThemeAccent}
               onArchiveEnabledChange={setArchiveEnabled}
               onVersionTitleTrigger={handleVersionTitleTrigger}
+              onStorageSettingsEnabledChange={setStorageSettingsEnabled}
             />
           </div>
         </div>

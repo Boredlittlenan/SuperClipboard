@@ -12,8 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_2.15.1_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_2.15.1_x64_en-US.msi`: MSI package
+- `SuperClipboard_2.2.0_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_2.2.0_x64_en-US.msi`: MSI package
 
 ## Highlights
 
@@ -24,17 +24,17 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Optional recycle bin with separate Clipboard and Memos views and 30-day cleanup
 - Global shortcut, tray controls, single-instance launch, and auto-start support
 - Theme mode switcher with System / Light / Dark and independent accent colors
+- Beta storage settings with Local / External PostgreSQL modes and backup/restore tools
 - First launch follows the system language, with Chinese and English UI available
 - Built-in update check through GitHub Releases with release notes preview
 
 ## System Support
 
-- Windows x64: supported now, with NSIS setup and MSI packages.
-- macOS: planned. Development, testing, and packaging will start once dedicated Mac hardware is available.
+Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `2.15.1`
+- Version: `2.2.0`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - Theme mode: follows system
@@ -56,10 +56,15 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - When upgrading from `SuperClipboard3`, the old local data directory is migrated automatically.
 - Since v2.1.0, image clipboard deduplication uses real image bytes instead of only dimensions, and memo auto tags are inferred by the backend classifier.
 - Since v2.15.1, update checks show release notes before opening GitHub.
+- Since v2.2.0, Storage Settings (Beta) can expose Local / External storage mode configuration and local backup/restore tools.
 
 ## Privacy
 
-SuperClipboard stores clipboard entries, memos, and settings locally in SQLite under the app data directory. Clipboard content is not uploaded by the app. Update checks contact GitHub Releases when enabled.
+By default, SuperClipboard stores clipboard entries, memos, and settings locally in SQLite under the app data directory. When Storage Settings (Beta) is enabled and External mode is selected, clipboard and memo bodies are written to the user-configured PostgreSQL database instead. Update checks contact GitHub Releases when enabled.
+
+## License
+
+SuperClipboard is source-available for non-commercial use only. Commercial use is not permitted without explicit written permission from the copyright holder. See [LICENSE.md](LICENSE.md).
 
 ## Tech Stack
 
@@ -91,6 +96,7 @@ src-tauri/
     clipboard.rs        # Clipboard monitoring service
     classifier.rs       # Content type classification
     storage.rs          # SQLite storage layer
+    remote_storage.rs   # External PostgreSQL storage layer
     autostart.rs        # Windows auto-start registry integration
     window_position.rs  # Default window positioning and work-area clamping
     lib.rs              # Tauri commands and app setup
@@ -101,12 +107,3 @@ src/
   i18n/                 # Translations and i18n context
   types/                # TypeScript types
 ```
-
-## Roadmap
-
-- Rework backup/restore around SQLite or compressed archives before exposing it in Settings.
-- Move memo images from inline data URLs to dedicated image storage/cache.
-- Add virtual scrolling for very large clipboard histories.
-- Add end-to-end coverage for shortcut recording, tray behavior, update checks, and memo image sorting.
-- Revisit caret follow mode and saved window position after the interaction model is stable.
-- Start macOS adaptation after a Mac development device is available.

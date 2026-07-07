@@ -105,6 +105,8 @@ export interface Translations {
   followModeDesc: string;
   autoUpdate: string;
   autoUpdateDesc: string;
+  storageSettingsBeta: string;
+  storageSettingsBetaDesc: string;
   version: string;
   shortcut: string;
   shortcutDesc: string;
@@ -260,6 +262,8 @@ export const zhCN: Translations = {
   followModeDesc: '快捷键唤起时窗口跟随插入符位置',
   autoUpdate: '自动检查更新',
   autoUpdateDesc: '每次启动时自动检查更新',
+  storageSettingsBeta: '存储设置(测试版)',
+  storageSettingsBetaDesc: '显示存储模式与备份/恢复配置入口',
   version: '版本号',
   shortcut: '快捷键',
   shortcutDesc: '唤起/隐藏窗口',
@@ -289,13 +293,13 @@ export const zhCN: Translations = {
   backupFailed: '操作失败',
   systemSettings: '系统设置',
   featureSettings: '功能设置',
-  remoteStorage: '远程存储',
+  remoteStorage: '存储设置',
   storageMode: '存储模式',
   storageModeLocal: '本地',
-  storageModeRemote: '远程',
+  storageModeRemote: '外部',
   localModeHint: '默认模式。剪贴板和备忘录只保存在本机 SQLite 数据库中。',
-  remoteModeHint: '远程模式规划为只读写外部 PostgreSQL，本机不保存剪贴板和备忘录正文。',
-  remoteStoragePending: '远程模式会把剪贴板和备忘录保存到外部 PostgreSQL。只有测试连接并初始化成功后才会正式启用。',
+  remoteModeHint: '连接外部 PostgreSQL，剪贴板和备忘录正文只写入外部数据库。',
+  remoteStoragePending: '保存时会自动测试连接并初始化远端表。',
   connectionMode: '连接方式',
   connectionUrl: '连接 URL',
   connectionManual: '手动填写',
@@ -315,7 +319,7 @@ export const zhCN: Translations = {
   saveAndUseLocal: '保存并切回本地',
   saveAndUseRemote: '保存并切到远程',
   savingStorageConfig: '保存中...',
-  storageConfigSaved: '远程存储配置已保存',
+  storageConfigSaved: '存储设置已保存',
   storageConfigFailed: '保存失败',
 };
 
@@ -415,6 +419,8 @@ export const en: Translations = {
   followModeDesc: 'Window follows caret position when shown via shortcut',
   autoUpdate: 'Auto Update',
   autoUpdateDesc: 'Check for updates on startup',
+  storageSettingsBeta: 'Storage Settings (Beta)',
+  storageSettingsBetaDesc: 'Show the storage mode and backup/restore entry',
   version: 'Version',
   shortcut: 'Shortcut',
   shortcutDesc: 'Show/hide window',
@@ -444,13 +450,13 @@ export const en: Translations = {
   backupFailed: 'Operation failed',
   systemSettings: 'System Settings',
   featureSettings: 'Feature Settings',
-  remoteStorage: 'Remote Storage',
+  remoteStorage: 'Storage Settings',
   storageMode: 'Storage Mode',
   storageModeLocal: 'Local',
-  storageModeRemote: 'Remote',
+  storageModeRemote: 'External',
   localModeHint: 'Default mode. Clipboard entries and memos stay in the local SQLite database.',
-  remoteModeHint: 'Remote mode is planned to read and write external PostgreSQL only, without storing clipboard or memo bodies locally.',
-  remoteStoragePending: 'Remote mode stores clipboard entries and memos in external PostgreSQL. It only becomes active after the connection test and remote table initialization succeed.',
+  remoteModeHint: 'Use external PostgreSQL. Clipboard and memo bodies are written only to the external database.',
+  remoteStoragePending: 'Saving will test the connection and initialize remote tables automatically.',
   connectionMode: 'Connection',
   connectionUrl: 'URL',
   connectionManual: 'Manual',
@@ -470,7 +476,7 @@ export const en: Translations = {
   saveAndUseLocal: 'Save and use local',
   saveAndUseRemote: 'Save and use remote',
   savingStorageConfig: 'Saving...',
-  storageConfigSaved: 'Remote storage settings saved',
+  storageConfigSaved: 'Storage settings saved',
   storageConfigFailed: 'Save failed',
 };
 

@@ -1,7 +1,8 @@
 {
   "name": "superclipboard",
   "private": true,
-  "version": "2.15.1",
+  "version": "2.2.0",
+  "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "scripts": {
     "dev": "vite",

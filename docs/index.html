@@ -13,6 +13,7 @@
       content="SuperClipboard, 超级剪贴板, clipboard manager, Windows clipboard manager, clipboard history, clipboard tool, local clipboard, Tauri app, Rust clipboard, 剪贴板管理器, 剪贴板历史, 本地剪贴板, 备忘录, 回收站"
     />
     <meta name="robots" content="index,follow" />
+    <meta name="google-site-verification" content="29ShAjmmaG4pmkyDGCIA2fjfF2tjT10nyUg_dp_t8xU" />
     <meta name="website-version" content="1.0.1" />
     <meta name="theme-color" content="#2f6fdb" />
     <link rel="canonical" href="https://boredlittlenan.github.io/SuperClipboard/" />
@@ -42,7 +43,7 @@
         "alternateName": "超级剪贴板",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows",
-        "softwareVersion": "2.15.1",
+        "softwareVersion": "2.2.0",
         "url": "https://boredlittlenan.github.io/SuperClipboard/",
         "downloadUrl": "https://github.com/Boredlittlenan/SuperClipboard/releases/latest",
         "codeRepository": "https://github.com/Boredlittlenan/SuperClipboard",
@@ -75,7 +76,7 @@
           <p class="eyebrow" data-i18n="eyebrow">Windows 剪贴板管理器</p>
           <h1 data-i18n="heroTitle">SuperClipboard</h1>
           <p class="lead" data-i18n="heroLead">
-            本地保存剪贴板历史，自动识别内容类型，并提供备忘录、回收站、主题和托盘快捷操作。
+            默认本地保存剪贴板历史，自动识别内容类型，并提供备忘录、回收站、主题和托盘快捷操作。
           </p>
           <div class="hero-actions">
             <a class="primary-action" href="https://github.com/Boredlittlenan/SuperClipboard/releases/latest" data-i18n="downloadLatest">
@@ -105,7 +106,7 @@
             </div>
             <div class="visual-item">
               <strong data-i18n="visualItemTwoTitle">备忘录</strong>
-              <p data-i18n="visualItemTwoBody">图片、标签和正文都保存在本地。</p>
+              <p data-i18n="visualItemTwoBody">图片、标签和正文默认保存在本地。</p>
             </div>
             <div class="visual-item">
               <strong>JSON</strong>
@@ -123,7 +124,7 @@
         <div class="feature-grid">
           <article>
             <h3 data-i18n="featureLocalTitle">本地历史</h3>
-            <p data-i18n="featureLocalBody">剪贴板条目、备忘录和设置保存在本机 SQLite 数据库中。</p>
+            <p data-i18n="featureLocalBody">默认保存在本机 SQLite，也可在测试版存储设置中切换外部 PostgreSQL。</p>
           </article>
           <article>
             <h3 data-i18n="featureClassifyTitle">智能分类</h3>
@@ -143,18 +144,13 @@
       <section id="support" class="section support-section">
         <div class="section-heading">
           <p class="eyebrow" data-i18n="supportEyebrow">系统支持</p>
-          <h2 data-i18n="supportTitle">先把 Windows 做稳，macOS 已在计划里</h2>
+          <h2 data-i18n="supportTitle">Windows x64 当前正式支持</h2>
         </div>
         <div class="support-grid">
           <article>
             <span class="support-status current" data-i18n="supportWindowsStatus">当前支持</span>
             <h3>Windows</h3>
             <p data-i18n="supportWindowsBody">当前正式支持 Windows x64，安装包包括 NSIS 安装器和 MSI 包。</p>
-          </article>
-          <article>
-            <span class="support-status planned" data-i18n="supportMacStatus">计划支持</span>
-            <h3>macOS</h3>
-            <p data-i18n="supportMacBody">macOS 版本会在有 Mac 开发设备后开始适配、测试和打包。</p>
           </article>
         </div>
       </section>
@@ -165,14 +161,14 @@
           <h2 data-i18n="privacyTitle">内容默认留在你的电脑上</h2>
         </div>
         <p data-i18n="privacyBody">
-          SuperClipboard 不上传剪贴板内容。只有启用检查更新时，软件会访问 GitHub Releases 获取版本信息。
+          SuperClipboard 默认不上传剪贴板内容。切换外部存储时，数据写入用户自己配置的 PostgreSQL。只有启用检查更新时，软件会访问 GitHub Releases 获取版本信息。
         </p>
       </section>
 
       <section id="download" class="download-band">
         <div>
           <p class="eyebrow" data-i18n="downloadEyebrow">当前版本</p>
-          <h2>SuperClipboard 2.15.1</h2>
+          <h2>SuperClipboard 2.2.0</h2>
           <p data-i18n="downloadBody">推荐下载 Windows x64 安装器，也可以选择 MSI 包。</p>
         </div>
         <a class="primary-action" href="https://github.com/Boredlittlenan/SuperClipboard/releases/latest" data-i18n="downloadLatest">
