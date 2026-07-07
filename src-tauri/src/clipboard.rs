@@ -1,4 +1,5 @@
 use crate::classifier::{classify_image, classify_text, Category};
+use crate::remote_storage;
 use crate::storage::{ClipboardEntry, Storage};
 use arboard::Clipboard;
 use base64::Engine;
@@ -79,7 +80,14 @@ impl ClipboardMonitor {
                                         archived_at: None,
                                     };
 
-                                    match storage.insert(&entry) {
+                                    let insert_result = if remote_storage::is_remote_mode(&storage)
+                                    {
+                                        remote_storage::insert_clipboard(&storage, &entry)
+                                            .map_err(|e| e.to_string())
+                                    } else {
+                                        storage.insert(&entry).map_err(|e| e.to_string())
+                                    };
+                                    match insert_result {
                                         Ok(true) => {
                                             debug!("Captured image: {}x{}", img.width, img.height);
                                             let _ = app_handle.emit("clipboard-changed", &entry);
@@ -124,7 +132,13 @@ impl ClipboardMonitor {
                             archived_at: None,
                         };
 
-                        match storage.insert(&entry) {
+                        let insert_result = if remote_storage::is_remote_mode(&storage) {
+                            remote_storage::insert_clipboard(&storage, &entry)
+                                .map_err(|e| e.to_string())
+                        } else {
+                            storage.insert(&entry).map_err(|e| e.to_string())
+                        };
+                        match insert_result {
                             Ok(true) => {
                                 debug!("Captured {}: {:?}", category, entry.preview);
                                 let _ = app_handle.emit("clipboard-changed", &entry);

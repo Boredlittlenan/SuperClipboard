@@ -86,6 +86,14 @@ export async function openUrl(url: string): Promise<void> {
   return invoke('open_url', { url });
 }
 
+export async function testRemoteStorage(): Promise<string> {
+  return invoke('test_remote_storage');
+}
+
+export async function initializeRemoteStorage(): Promise<void> {
+  return invoke('initialize_remote_storage');
+}
+
 /** Set window always-on-top */
 export async function setAlwaysOnTop(enabled: boolean): Promise<void> {
   return invoke('set_always_on_top', { enabled });

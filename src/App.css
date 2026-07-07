@@ -182,6 +182,10 @@
   -webkit-app-region: no-drag;
 }
 
+.remote-storage-btn {
+  -webkit-app-region: no-drag;
+}
+
 /* ─── Footer Bar ─── */
 .footer-bar {
   display: flex;
@@ -266,6 +270,9 @@
   line-height: 1.5;
   color: var(--text-secondary);
   margin-bottom: 14px;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-line;
 }
 
 .confirm-dialog-actions {

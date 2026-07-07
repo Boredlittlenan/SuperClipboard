@@ -111,11 +111,12 @@ function inferMemoTags(types: MemoAutoTagType[], labels: MemoTagLabels): string[
 interface Props {
   searchQuery: string;
   archiveEnabled?: boolean;
+  refreshKey?: number;
   onCountChange?: (count: number) => void;
   onArchiveCountChange?: (count: number) => void;
 }
 
-export default function MemoList({ searchQuery, archiveEnabled, onCountChange, onArchiveCountChange }: Props) {
+export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, onCountChange, onArchiveCountChange }: Props) {
   const { t } = useI18n();
   const [memos, setMemos] = useState<Memo[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -125,10 +126,14 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
   const [dragOverId, setDragOverId] = useState<number | null>(null);
   const [expandedMemoIds, setExpandedMemoIds] = useState<Set<number>>(() => new Set());
   const [autoTagTypesByMemoId, setAutoTagTypesByMemoId] = useState<Record<number, MemoAutoTagType[]>>({});
+  const [fetchNonce, setFetchNonce] = useState(0);
 
   const editingItemRef = useRef<HTMLDivElement>(null);
   const editingIdRef = useRef<number | null>(null);
   const newMemoIdRef = useRef<number | null>(null);
+  const fetchRequestRef = useRef(0);
+  const fetchInFlightRef = useRef(false);
+  const fetchPendingRef = useRef(false);
 
   // Keep editingIdRef in sync with editingId state
   useEffect(() => {
@@ -137,9 +142,16 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
 
   // ─── Fetch memos ──────────────────────────────────────────
   const fetchMemos = useCallback(async () => {
+    if (fetchInFlightRef.current) {
+      fetchPendingRef.current = true;
+      return;
+    }
+    fetchInFlightRef.current = true;
+    const requestId = ++fetchRequestRef.current;
     try {
       const filter = searchQuery.trim() ? { search: searchQuery.trim(), limit: 100 } : { limit: 100 };
       const data = await getMemos(filter);
+      if (fetchRequestRef.current !== requestId) return;
       setMemos(data);
       onCountChange?.(data.length);
       const tagTypeEntries = await Promise.all(
@@ -152,15 +164,22 @@ export default function MemoList({ searchQuery, archiveEnabled, onCountChange, o
           }
         })
       );
+      if (fetchRequestRef.current !== requestId) return;
       setAutoTagTypesByMemoId(Object.fromEntries(tagTypeEntries));
     } catch (err) {
       console.error('Failed to fetch memos:', err);
+    } finally {
+      fetchInFlightRef.current = false;
+      if (fetchPendingRef.current) {
+        fetchPendingRef.current = false;
+        setFetchNonce((value) => value + 1);
+      }
     }
   }, [searchQuery, onCountChange]);
 
   useEffect(() => {
     fetchMemos();
-  }, [fetchMemos]);
+  }, [fetchMemos, refreshKey, fetchNonce]);
 
   // ─── Auto-scroll editing item into view ───────────────────
   useEffect(() => {

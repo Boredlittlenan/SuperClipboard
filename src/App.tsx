@@ -11,18 +11,18 @@ import {
   updateEntry,
   onClipboardChanged,
   getArchivedEntries,
-  archiveCount,
   unarchiveEntry,
   permanentDelete,
   purgeOldArchives,
 } from './api/clipboard';
-import { getShortcut, getSetting, checkUpdate, pasteToActiveWindow } from './api/settings';
-import { memoCount, getArchivedMemos, memoArchiveCount, unarchiveMemo, permanentDeleteMemo, purgeOldMemoArchives } from './api/memos';
+import { getShortcut, getSetting, checkUpdate, openUrl, pasteToActiveWindow } from './api/settings';
+import { getArchivedMemos, unarchiveMemo, permanentDeleteMemo, purgeOldMemoArchives } from './api/memos';
 import { formatShortcutLabel } from './utils';
 import { I18nProvider, useI18n } from './i18n';
 import CategoryTabs from './components/CategoryTabs';
 import ClipboardList from './components/ClipboardList';
 import SettingsButton from './components/SettingsButton';
+import RemoteStorageButton from './components/RemoteStorageButton';
 import MemoList from './components/MemoList';
 import ArchivedMemoItem from './components/ArchivedMemoItem';
 import ConfirmDialog, { type ConfirmDialogState } from './components/ConfirmDialog';
@@ -65,6 +65,12 @@ function AppContent() {
   const [memoArchiveCountState, setMemoArchiveCountState] = useState<number>(0);
   const [openedViaShortcut, setOpenedViaShortcut] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [storageRevision, setStorageRevision] = useState(0);
+  const [entriesRefreshNonce, setEntriesRefreshNonce] = useState(0);
+  const fetchEntriesRequestRef = useRef(0);
+  const fetchEntriesInFlightRef = useRef(false);
+  const fetchEntriesPendingRef = useRef(false);
+  const autoUpdateCheckedRef = useRef(false);
   // Hidden title variants triggered from the Settings version badge.
   const displayTitle = titleVariant === 'xiaonan'
     ? '小楠の剪贴板'
@@ -173,12 +179,40 @@ function AppContent() {
 
   // Auto-check for updates on startup if enabled
   useEffect(() => {
-    getSetting('auto_update').then((v) => {
-      if (v === null || v === 'true') {
-        checkUpdate().catch(() => {}); // silent check
-      }
-    }).catch(console.error);
-  }, []);
+    if (autoUpdateCheckedRef.current) return;
+    autoUpdateCheckedRef.current = true;
+
+    let cancelled = false;
+
+    getSetting('auto_update')
+      .then(async (v) => {
+        if (v !== null && v !== 'true') return;
+
+        const info = await checkUpdate();
+        if (cancelled || !info.hasUpdate) return;
+
+        const releaseNotes = info.releaseNotes
+          ? `\n\n${t.releaseNotes}\n${info.releaseNotes}`
+          : '';
+        setConfirmDialog({
+          title: t.hasUpdate(info.latestVersion),
+          message: `${t.updateCurrent(info.currentVersion)} · ${t.updateLatest(info.latestVersion)}${releaseNotes}`,
+          confirmLabel: t.downloadUpdate,
+          resolve: (confirmed) => {
+            if (confirmed && info.downloadUrl) {
+              openUrl(info.downloadUrl).catch(console.error);
+            }
+          },
+        });
+      })
+      .catch((err) => {
+        console.error('Failed to auto-check update:', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [t]);
 
   // Listen for window-shown events to track how the window was opened
   useEffect(() => {
@@ -192,8 +226,19 @@ function AppContent() {
 
   // Fetch entries based on current filter
   const fetchEntries = useCallback(async () => {
+    if (fetchEntriesInFlightRef.current) {
+      fetchEntriesPendingRef.current = true;
+      return;
+    }
+    fetchEntriesInFlightRef.current = true;
+    const requestId = ++fetchEntriesRequestRef.current;
+    if (activeTab === 'memo') {
+      setLoading(false);
+      fetchEntriesInFlightRef.current = false;
+      return;
+    }
     const filter: QueryFilter = { limit: 100 };
-    if (activeTab !== 'all' && activeTab !== 'memo' && activeTab !== 'archive') {
+    if (activeTab !== 'all' && activeTab !== 'archive') {
       filter.category = activeTab;
     }
     if (searchQuery.trim()) {
@@ -202,13 +247,26 @@ function AppContent() {
     try {
       if (activeTab === 'archive') {
         const data = await getArchivedEntries(filter);
-        setEntries(data);
+        if (fetchEntriesRequestRef.current === requestId) {
+          setEntries(data);
+        }
       } else {
         const data = await getEntries(filter);
-        setEntries(data);
+        if (fetchEntriesRequestRef.current === requestId) {
+          setEntries(data);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch entries:', err);
+    } finally {
+      if (fetchEntriesRequestRef.current === requestId) {
+        setLoading(false);
+      }
+      fetchEntriesInFlightRef.current = false;
+      if (fetchEntriesPendingRef.current) {
+        fetchEntriesPendingRef.current = false;
+        setEntriesRefreshNonce((value) => value + 1);
+      }
     }
   }, [activeTab, searchQuery]);
 
@@ -217,43 +275,13 @@ function AppContent() {
     try {
       const s = await getStats();
       setStats(s);
+      setArchiveCountState(s.archive);
+      setMemoCountState(s.memoCount);
+      setMemoArchiveCountState(s.memoArchive);
     } catch (err) {
       console.error('Failed to fetch stats:', err);
     }
   }, []);
-
-  // Fetch memo count
-  const fetchMemoCount = useCallback(async () => {
-    if (!memoEnabled) return;
-    try {
-      const count = await memoCount();
-      setMemoCountState(count);
-    } catch (err) {
-      console.error('Failed to fetch memo count:', err);
-    }
-  }, [memoEnabled]);
-
-  // Fetch archive count
-  const fetchArchiveCount = useCallback(async () => {
-    if (!archiveEnabled) return;
-    try {
-      const count = await archiveCount();
-      setArchiveCountState(count);
-    } catch (err) {
-      console.error('Failed to fetch archive count:', err);
-    }
-  }, [archiveEnabled]);
-
-  // Fetch memo archive count
-  const fetchMemoArchiveCount = useCallback(async () => {
-    if (!archiveEnabled) return;
-    try {
-      const count = await memoArchiveCount();
-      setMemoArchiveCountState(count);
-    } catch (err) {
-      console.error('Failed to fetch memo archive count:', err);
-    }
-  }, [archiveEnabled]);
 
   // Fetch archived memos
   const fetchArchivedMemos = useCallback(async () => {
@@ -266,31 +294,21 @@ function AppContent() {
     }
   }, [archiveEnabled]);
 
-  // Initial load
+  // Fetch visible list when the active filter changes.
   useEffect(() => {
-    let cancelled = false;
+    void fetchEntries();
+  }, [fetchEntries, storageRevision, entriesRefreshNonce]);
 
-    const load = async () => {
-      try {
-        await Promise.all([fetchEntries(), fetchStats(), fetchMemoCount(), fetchArchiveCount(), fetchMemoArchiveCount()]);
-        // Purge archives older than 30 days on startup
-        if (archiveEnabled) {
-          purgeOldArchives(30).catch(() => {});
-          purgeOldMemoArchives(30).catch(() => {});
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
+  // Stats are independent of the selected category; keep them off the tab-switch path.
+  useEffect(() => {
+    void fetchStats();
+  }, [fetchStats, storageRevision]);
 
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchEntries, fetchStats, fetchMemoCount, fetchArchiveCount, fetchMemoArchiveCount, archiveEnabled]);
+  useEffect(() => {
+    if (!archiveEnabled) return;
+    purgeOldArchives(30).catch(() => {});
+    purgeOldMemoArchives(30).catch(() => {});
+  }, [archiveEnabled]);
 
   // Listen for real-time clipboard events
   useEffect(() => {
@@ -300,9 +318,6 @@ function AppContent() {
       // Refresh from backend so order and dedup are correct
       fetchEntries();
       fetchStats();
-      fetchMemoCount();
-      fetchArchiveCount();
-      fetchMemoArchiveCount();
     }).then((fn) => {
       unlisten = fn;
     });
@@ -310,7 +325,7 @@ function AppContent() {
     return () => {
       unlisten?.();
     };
-  }, [fetchEntries, fetchStats, fetchMemoCount, fetchArchiveCount, fetchMemoArchiveCount]);
+  }, [fetchEntries, fetchStats]);
 
   // Keyboard shortcut: focus search with Ctrl+F
   useEffect(() => {
@@ -369,12 +384,11 @@ function AppContent() {
         await deleteEntry(id, archiveEnabled || undefined);
         setEntries((prev) => prev.filter((e) => e.id !== id));
         fetchStats();
-        fetchArchiveCount();
       } catch (err) {
         console.error('Failed to delete:', err);
       }
     },
-    [fetchStats, fetchArchiveCount, archiveEnabled]
+    [fetchStats, archiveEnabled]
   );
 
   const handleTogglePin = useCallback(
@@ -410,12 +424,11 @@ function AppContent() {
         await unarchiveEntry(id);
         setEntries((prev) => prev.filter((e) => e.id !== id));
         fetchStats();
-        fetchArchiveCount();
       } catch (err) {
         console.error('Failed to restore:', err);
       }
     },
-    [fetchStats, fetchArchiveCount]
+    [fetchStats]
   );
 
   const handlePermanentDelete = useCallback(
@@ -431,12 +444,11 @@ function AppContent() {
         await permanentDelete(id);
         setEntries((prev) => prev.filter((e) => e.id !== id));
         fetchStats();
-        fetchArchiveCount();
       } catch (err) {
         console.error('Failed to permanently delete:', err);
       }
     },
-    [fetchStats, fetchArchiveCount, requestConfirm, t]
+    [fetchStats, requestConfirm, t]
   );
 
   const handleMemoRestore = useCallback(
@@ -444,13 +456,12 @@ function AppContent() {
       try {
         await unarchiveMemo(id);
         setArchivedMemos((prev) => prev.filter((m) => m.id !== id));
-        fetchMemoCount();
-        fetchMemoArchiveCount();
+        fetchStats();
       } catch (err) {
         console.error('Failed to restore memo:', err);
       }
     },
-    [fetchMemoCount, fetchMemoArchiveCount]
+    [fetchStats]
   );
 
   const handleMemoPermanentDelete = useCallback(
@@ -465,12 +476,12 @@ function AppContent() {
       try {
         await permanentDeleteMemo(id);
         setArchivedMemos((prev) => prev.filter((m) => m.id !== id));
-        fetchMemoArchiveCount();
+        fetchStats();
       } catch (err) {
         console.error('Failed to permanently delete memo:', err);
       }
     },
-    [fetchMemoArchiveCount, requestConfirm, t]
+    [fetchStats, requestConfirm, t]
   );
 
   const handleClear = useCallback(async () => {
@@ -485,27 +496,38 @@ function AppContent() {
       await clearUnpinned(archiveEnabled || undefined);
       fetchEntries();
       fetchStats();
-      fetchArchiveCount();
     } catch (err) {
       console.error('Failed to clear:', err);
     }
-  }, [fetchEntries, fetchStats, fetchArchiveCount, archiveEnabled, requestConfirm, t]);
+  }, [fetchEntries, fetchStats, archiveEnabled, requestConfirm, t]);
 
   // Fetch archived memos when archive tab is active
   useEffect(() => {
     if (activeTab === 'archive' && archiveEnabled) {
       fetchArchivedMemos();
     }
-  }, [activeTab, archiveEnabled, fetchArchivedMemos]);
+  }, [activeTab, archiveEnabled, fetchArchivedMemos, storageRevision]);
 
   // Handle tab change
   const handleTabChange = useCallback((tab: FilterTab) => {
+    if (tab !== 'memo') {
+      setLoading(true);
+    }
     setActiveTab(tab);
   }, []);
 
   const handleMemoCountChange = useCallback((count: number) => {
     setMemoListCount(count);
   }, []);
+
+  const handleStorageModeChange = useCallback(() => {
+    if (activeTab !== 'memo') {
+      setLoading(true);
+    }
+    setEntries([]);
+    setArchivedMemos([]);
+    setStorageRevision((value) => value + 1);
+  }, [activeTab]);
 
   // Debounced search
   const [searchInput, setSearchInput] = useState('');
@@ -531,6 +553,7 @@ function AppContent() {
           <span className="title-text">{displayTitle}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span className="shortcut-hint">{formatShortcutLabel(currentShortcut)}</span>
+            <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
             <SettingsButton
               onShortcutChange={setCurrentShortcut}
               onMemoEnabledChange={setMemoEnabled}
@@ -580,7 +603,7 @@ function AppContent() {
 
       {/* Main content: memo list or clipboard list */}
       {activeTab === 'memo' ? (
-        <MemoList searchQuery={searchQuery} archiveEnabled={archiveEnabled} onCountChange={handleMemoCountChange} onArchiveCountChange={setMemoArchiveCountState} />
+        <MemoList searchQuery={searchQuery} archiveEnabled={archiveEnabled} refreshKey={storageRevision} onCountChange={handleMemoCountChange} onArchiveCountChange={setMemoArchiveCountState} />
       ) : activeTab === 'archive' ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* Archive sub-tabs */}

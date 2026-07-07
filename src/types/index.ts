@@ -33,6 +33,8 @@ export interface Stats {
   clipboardSize: number;
   memoSize: number;
   archive: number;
+  memoCount: number;
+  memoArchive: number;
 }
 
 export interface Memo {

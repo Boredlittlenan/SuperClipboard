@@ -134,6 +134,34 @@ export interface Translations {
   backupFailed: string;
   systemSettings: string;
   featureSettings: string;
+  remoteStorage: string;
+  storageMode: string;
+  storageModeLocal: string;
+  storageModeRemote: string;
+  localModeHint: string;
+  remoteModeHint: string;
+  remoteStoragePending: string;
+  connectionMode: string;
+  connectionUrl: string;
+  connectionManual: string;
+  databaseUrl: string;
+  databaseHost: string;
+  databasePort: string;
+  databaseName: string;
+  databaseUser: string;
+  databasePassword: string;
+  databaseSsl: string;
+  testConnection: string;
+  testConnectionPending: string;
+  testingConnection: string;
+  storageConnectionReady: string;
+  storageConnectionFailed: string;
+  saveStorageConfig: string;
+  saveAndUseLocal: string;
+  saveAndUseRemote: string;
+  savingStorageConfig: string;
+  storageConfigSaved: string;
+  storageConfigFailed: string;
 }
 
 export const zhCN: Translations = {
@@ -261,6 +289,34 @@ export const zhCN: Translations = {
   backupFailed: '操作失败',
   systemSettings: '系统设置',
   featureSettings: '功能设置',
+  remoteStorage: '远程存储',
+  storageMode: '存储模式',
+  storageModeLocal: '本地',
+  storageModeRemote: '远程',
+  localModeHint: '默认模式。剪贴板和备忘录只保存在本机 SQLite 数据库中。',
+  remoteModeHint: '远程模式规划为只读写外部 PostgreSQL，本机不保存剪贴板和备忘录正文。',
+  remoteStoragePending: '远程模式会把剪贴板和备忘录保存到外部 PostgreSQL。只有测试连接并初始化成功后才会正式启用。',
+  connectionMode: '连接方式',
+  connectionUrl: '连接 URL',
+  connectionManual: '手动填写',
+  databaseUrl: '数据库 URL',
+  databaseHost: '地址',
+  databasePort: '端口',
+  databaseName: '数据库',
+  databaseUser: '账号',
+  databasePassword: '密码',
+  databaseSsl: 'SSL',
+  testConnection: '测试连接',
+  testConnectionPending: '切换到远程模式后可测试连接',
+  testingConnection: '测试中...',
+  storageConnectionReady: '连接成功，远端表已就绪',
+  storageConnectionFailed: '连接失败',
+  saveStorageConfig: '保存配置',
+  saveAndUseLocal: '保存并切回本地',
+  saveAndUseRemote: '保存并切到远程',
+  savingStorageConfig: '保存中...',
+  storageConfigSaved: '远程存储配置已保存',
+  storageConfigFailed: '保存失败',
 };
 
 export const en: Translations = {
@@ -388,6 +444,34 @@ export const en: Translations = {
   backupFailed: 'Operation failed',
   systemSettings: 'System Settings',
   featureSettings: 'Feature Settings',
+  remoteStorage: 'Remote Storage',
+  storageMode: 'Storage Mode',
+  storageModeLocal: 'Local',
+  storageModeRemote: 'Remote',
+  localModeHint: 'Default mode. Clipboard entries and memos stay in the local SQLite database.',
+  remoteModeHint: 'Remote mode is planned to read and write external PostgreSQL only, without storing clipboard or memo bodies locally.',
+  remoteStoragePending: 'Remote mode stores clipboard entries and memos in external PostgreSQL. It only becomes active after the connection test and remote table initialization succeed.',
+  connectionMode: 'Connection',
+  connectionUrl: 'URL',
+  connectionManual: 'Manual',
+  databaseUrl: 'Database URL',
+  databaseHost: 'Host',
+  databasePort: 'Port',
+  databaseName: 'Database',
+  databaseUser: 'User',
+  databasePassword: 'Password',
+  databaseSsl: 'SSL',
+  testConnection: 'Test',
+  testConnectionPending: 'Switch to remote mode to test the connection',
+  testingConnection: 'Testing...',
+  storageConnectionReady: 'Connected and schema ready',
+  storageConnectionFailed: 'Connection failed',
+  saveStorageConfig: 'Save',
+  saveAndUseLocal: 'Save and use local',
+  saveAndUseRemote: 'Save and use remote',
+  savingStorageConfig: 'Saving...',
+  storageConfigSaved: 'Remote storage settings saved',
+  storageConfigFailed: 'Save failed',
 };
 
 export const translationsMap: Record<Locale, Translations> = {

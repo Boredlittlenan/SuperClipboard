@@ -104,7 +104,6 @@ src/
 
 ## Roadmap
 
-- Improve paste-to-caret reliability by tracking the previously active window and confirming focus before sending `Ctrl+V`.
 - Rework backup/restore around SQLite or compressed archives before exposing it in Settings.
 - Move memo images from inline data URLs to dedicated image storage/cache.
 - Add virtual scrolling for very large clipboard histories.
