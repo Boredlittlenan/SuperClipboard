@@ -72,6 +72,8 @@ function AppContent() {
   const fetchEntriesInFlightRef = useRef(false);
   const fetchEntriesPendingRef = useRef(false);
   const autoUpdateCheckedRef = useRef(false);
+  const resumeRefreshRef = useRef(0);
+  const resumeRefreshTimersRef = useRef<number[]>([]);
   // Hidden title variants triggered from the Settings version badge.
   const displayTitle = titleVariant === 'xiaonan'
     ? '小楠の剪贴板'
@@ -222,16 +224,6 @@ function AppContent() {
     };
   }, [t]);
 
-  // Listen for window-shown events to track how the window was opened
-  useEffect(() => {
-    const unlisten = listen<string>('window-shown', (event) => {
-      const source = event.payload;
-      setOpenedViaShortcut(source === 'shortcut');
-      // Follow mode positioning is handled in Rust before window.show()
-    });
-    return () => { unlisten.then(fn => fn()); };
-  }, []);
-
   // Fetch entries based on current filter
   const fetchEntries = useCallback(async () => {
     if (fetchEntriesInFlightRef.current) {
@@ -291,6 +283,63 @@ function AppContent() {
     }
   }, []);
 
+  const scheduleDataRefresh = useCallback((force = false) => {
+    const now = Date.now();
+    if (!force && now - resumeRefreshRef.current < 1000) {
+      return;
+    }
+    resumeRefreshRef.current = now;
+
+    const refresh = () => {
+      if (activeTab !== 'memo') {
+        setLoading(true);
+      }
+      setStorageRevision((value) => value + 1);
+    };
+
+    refresh();
+    resumeRefreshTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    resumeRefreshTimersRef.current = [
+      window.setTimeout(refresh, 1500),
+      window.setTimeout(refresh, 5000),
+    ];
+  }, [activeTab]);
+
+  // Listen for window-shown events to track how the window was opened and refresh remote data.
+  useEffect(() => {
+    const unlisten = listen<string>('window-shown', (event) => {
+      const source = event.payload;
+      setOpenedViaShortcut(source === 'shortcut');
+      scheduleDataRefresh(true);
+      // Follow mode positioning is handled in Rust before window.show()
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, [scheduleDataRefresh]);
+
+  // Refresh again when the webview regains focus after sleep/resume or network recovery.
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        scheduleDataRefresh();
+      }
+    };
+    const refreshOnFocus = () => scheduleDataRefresh();
+
+    window.addEventListener('focus', refreshOnFocus);
+    window.addEventListener('online', refreshOnFocus);
+    window.addEventListener('pageshow', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus);
+      window.removeEventListener('online', refreshOnFocus);
+      window.removeEventListener('pageshow', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      resumeRefreshTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      resumeRefreshTimersRef.current = [];
+    };
+  }, [scheduleDataRefresh]);
+
   // Fetch archived memos
   const fetchArchivedMemos = useCallback(async () => {
     if (!archiveEnabled) return;
@@ -307,7 +356,7 @@ function AppContent() {
     void fetchEntries();
   }, [fetchEntries, storageRevision, entriesRefreshNonce]);
 
-  // Stats are independent of the selected category; keep them off the tab-switch path.
+  // Refresh counts when storage changes; tab clicks also trigger a direct stats refresh.
   useEffect(() => {
     void fetchStats();
   }, [fetchStats, storageRevision]);
@@ -522,7 +571,8 @@ function AppContent() {
       setLoading(true);
     }
     setActiveTab(tab);
-  }, []);
+    void fetchStats();
+  }, [fetchStats]);
 
   const handleMemoCountChange = useCallback((count: number) => {
     setMemoListCount(count);
