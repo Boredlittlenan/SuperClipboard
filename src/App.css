@@ -105,6 +105,13 @@
   overflow: hidden;
 }
 
+.app-root.is-window-dragging *,
+.app-root.is-window-dragging *::before,
+.app-root.is-window-dragging *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
 /* ─── Title Bar ─── */
 .title-bar {
   height: 36px;
@@ -395,6 +402,9 @@
 .clipboard-entry {
   background: #ffffff;
   transition: background 0.12s ease;
+  contain: layout paint style;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 86px;
 }
 .clipboard-entry:hover {
   background: var(--hover-bg);
@@ -416,6 +426,9 @@
 .memo-entry {
   background: #ffffff;
   transition: background 0.15s ease;
+  contain: layout paint style;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 110px;
 }
 .memo-entry:hover {
   background: var(--memo-item-hover-bg);

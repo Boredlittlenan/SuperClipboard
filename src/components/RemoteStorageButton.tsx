@@ -306,6 +306,14 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
     });
   }, [t.backupFailed]);
 
+  const headerStorageMode: StorageMode = storageStatus?.mode === 'remote' || activeStorageMode === 'remote'
+    ? 'remote'
+    : 'local';
+  const headerStorageHealth = storageStatus?.health ?? (headerStorageMode === 'remote' ? 'notReady' : 'local');
+  const headerStorageLabel = headerStorageMode === 'remote'
+    ? t.storageStatusConnected
+    : t.storageStatusLocal;
+
   return (
     <div style={styles.wrapper} ref={panelRef}>
       <button
@@ -331,29 +339,16 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
         <div style={styles.panel}>
           <div style={styles.panelTitle}>
             <span>{t.remoteStorage}</span>
-            <span style={activeStorageMode === 'remote' ? styles.remoteBadge : styles.localBadge}>
-              {activeStorageMode === 'remote' ? t.storageModeRemote : t.storageModeLocal}
-            </span>
-          </div>
-          {storageStatus && (
-            <div style={styles.storageStatus}>
+            <span style={styles.headerStatus}>
               <span style={{
                 ...styles.statusDot,
-                ...(storageStatus.health === 'connected' ? styles.statusDotOk : {}),
-                ...(storageStatus.health === 'failed' ? styles.statusDotError : {}),
-                ...(storageStatus.health === 'notReady' ? styles.statusDotWarn : {}),
+                ...(headerStorageHealth === 'connected' ? styles.statusDotOk : {}),
+                ...(headerStorageHealth === 'failed' ? styles.statusDotError : {}),
+                ...(headerStorageHealth === 'notReady' ? styles.statusDotWarn : {}),
               }} />
-              <span>
-                {storageStatus.health === 'connected'
-                  ? t.storageStatusConnected
-                  : storageStatus.health === 'failed'
-                  ? t.storageStatusFailed
-                  : storageStatus.health === 'notReady'
-                  ? t.storageStatusNotReady
-                  : t.storageStatusLocal}
-              </span>
-            </div>
-          )}
+              {headerStorageLabel}
+            </span>
+          </div>
 
           <div style={styles.section}>
             <span style={styles.label}>{t.storageMode}</span>
@@ -610,24 +605,13 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: '8px',
     borderBottom: '1px solid var(--border)',
   },
-  localBadge: {
-    fontSize: '10px',
-    color: 'var(--text-muted)',
-    fontWeight: 600,
-  },
-  remoteBadge: {
-    fontSize: '10px',
-    color: 'var(--accent)',
-    fontWeight: 700,
-  },
-  storageStatus: {
+  headerStatus: {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
-    margin: '-2px 0 10px',
     color: 'var(--text-muted)',
-    fontSize: '10px',
-    lineHeight: 1.4,
+    fontSize: '11px',
+    fontWeight: 600,
   },
   statusDot: {
     width: '6px',

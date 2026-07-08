@@ -107,6 +107,8 @@ export interface Translations {
   autoUpdateDesc: string;
   storageSettingsBeta: string;
   storageSettingsBetaDesc: string;
+  categoryTabSorting: string;
+  categoryTabSortingDesc: string;
   version: string;
   shortcut: string;
   shortcutDesc: string;
@@ -269,6 +271,8 @@ export const zhCN: Translations = {
   autoUpdateDesc: '每次启动时自动检查更新',
   storageSettingsBeta: '存储设置(测试版)',
   storageSettingsBetaDesc: '显示存储模式与备份/恢复配置入口',
+  categoryTabSorting: '标签排序',
+  categoryTabSortingDesc: '允许直接拖动剪贴板分类标签调整顺序',
   version: '版本号',
   shortcut: '快捷键',
   shortcutDesc: '唤起/隐藏窗口',
@@ -306,10 +310,10 @@ export const zhCN: Translations = {
   storageMode: '存储模式',
   storageModeLocal: '本地',
   storageModeRemote: '外部',
-  storageStatusLocal: '当前使用本地存储',
-  storageStatusConnected: '外部存储已连接',
-  storageStatusFailed: '外部存储连接失败',
-  storageStatusNotReady: '外部存储未就绪',
+  storageStatusLocal: '本地存储',
+  storageStatusConnected: '外部存储',
+  storageStatusFailed: '外部存储',
+  storageStatusNotReady: '外部存储',
   localModeHint: '默认模式。剪贴板和备忘录只保存在本机 SQLite 数据库中。',
   remoteModeHint: '连接外部 PostgreSQL，剪贴板和备忘录正文只写入外部数据库。',
   remoteStoragePending: '保存时会自动测试连接并初始化远端表',
@@ -431,6 +435,8 @@ export const en: Translations = {
   autoUpdateDesc: 'Check for updates on startup',
   storageSettingsBeta: 'Storage Settings (Beta)',
   storageSettingsBetaDesc: 'Show the storage mode and backup/restore entry',
+  categoryTabSorting: 'Tab Sorting',
+  categoryTabSortingDesc: 'Allow dragging clipboard category tabs to reorder them',
   version: 'Version',
   shortcut: 'Shortcut',
   shortcutDesc: 'Show/hide window',
@@ -468,10 +474,10 @@ export const en: Translations = {
   storageMode: 'Storage Mode',
   storageModeLocal: 'Local',
   storageModeRemote: 'External',
-  storageStatusLocal: 'Using local storage',
-  storageStatusConnected: 'External storage connected',
-  storageStatusFailed: 'External storage connection failed',
-  storageStatusNotReady: 'External storage not ready',
+  storageStatusLocal: 'Local Storage',
+  storageStatusConnected: 'External Storage',
+  storageStatusFailed: 'External Storage',
+  storageStatusNotReady: 'External Storage',
   localModeHint: 'Default mode. Clipboard entries and memos stay in the local SQLite database.',
   remoteModeHint: 'Use external PostgreSQL. Clipboard and memo bodies are written only to the external database.',
   remoteStoragePending: 'Saving will test the connection and initialize remote tables automatically',

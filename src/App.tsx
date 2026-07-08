@@ -53,6 +53,7 @@ function AppContent() {
   const [memoColor, setMemoColor] = useState<string | null>(null);
   const [archiveEnabled, setArchiveEnabled] = useState(false);
   const [storageSettingsEnabled, setStorageSettingsEnabled] = useState(false);
+  const [categoryTabSortingEnabled, setCategoryTabSortingEnabled] = useState(true);
   const [archiveCountState, setArchiveCountState] = useState<number | null>(null);
   const [rawPreview, setRawPreview] = useState(false);
   const [themeAccent, setThemeAccent] = useState('default');
@@ -69,11 +70,13 @@ function AppContent() {
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [storageRevision, setStorageRevision] = useState(0);
   const [entriesRefreshNonce, setEntriesRefreshNonce] = useState(0);
+  const [isWindowDragging, setIsWindowDragging] = useState(false);
   const fetchEntriesRequestRef = useRef(0);
   const fetchEntriesInFlightRef = useRef(false);
   const fetchEntriesPendingRef = useRef(false);
   const autoUpdateCheckedRef = useRef(false);
   const resumeRefreshRef = useRef(0);
+  const lastWakeCheckRef = useRef(Date.now());
   const resumeRefreshTimersRef = useRef<number[]>([]);
   // Hidden title variants triggered from the Settings version badge.
   const displayTitle = titleVariant === 'xiaonan'
@@ -81,6 +84,16 @@ function AppContent() {
     : titleVariant === 'yingnan'
       ? '瑛楠的剪贴板'
       : t.appTitle;
+
+  const handleTitleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    setIsWindowDragging(true);
+
+    const stopDragging = () => setIsWindowDragging(false);
+    window.addEventListener('pointerup', stopDragging, { once: true });
+    window.addEventListener('blur', stopDragging, { once: true });
+    window.setTimeout(stopDragging, 1800);
+  }, []);
 
   useEffect(() => {
     document.title = displayTitle;
@@ -126,6 +139,9 @@ function AppContent() {
   useEffect(() => {
     getSetting('storage_settings_beta')
       .then((v) => setStorageSettingsEnabled(v === 'true'))
+      .catch(console.error);
+    getSetting('category_tab_sorting_enabled')
+      .then((v) => setCategoryTabSortingEnabled(v === null ? true : v === 'true'))
       .catch(console.error);
   }, []);
 
@@ -332,24 +348,34 @@ function AppContent() {
     return () => { unlisten.then(fn => fn()); };
   }, []);
 
-  // Refresh again when the webview regains focus after sleep/resume or network recovery.
+  // Refresh again after sleep/resume or network recovery.
+  // Do not refresh on every focus: clicking the draggable title bar focuses the
+  // WebView before window movement, and a synchronous list refresh makes drag
+  // feel sticky.
   useEffect(() => {
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') {
+    const checkForWake = () => {
+      const now = Date.now();
+      const elapsed = now - lastWakeCheckRef.current;
+      lastWakeCheckRef.current = now;
+      if (elapsed > 60_000) {
         emitAppEvent('app:resume');
       }
     };
-    const refreshOnFocus = () => emitAppEvent('app:resume');
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        checkForWake();
+      }
+    };
 
-    window.addEventListener('focus', refreshOnFocus);
-    window.addEventListener('online', refreshOnFocus);
-    window.addEventListener('pageshow', refreshOnFocus);
+    const wakeTimer = window.setInterval(checkForWake, 30_000);
+    window.addEventListener('online', checkForWake);
+    window.addEventListener('pageshow', checkForWake);
     document.addEventListener('visibilitychange', refreshWhenVisible);
 
     return () => {
-      window.removeEventListener('focus', refreshOnFocus);
-      window.removeEventListener('online', refreshOnFocus);
-      window.removeEventListener('pageshow', refreshOnFocus);
+      window.clearInterval(wakeTimer);
+      window.removeEventListener('online', checkForWake);
+      window.removeEventListener('pageshow', checkForWake);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       resumeRefreshTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       resumeRefreshTimersRef.current = [];
@@ -613,9 +639,14 @@ function AppContent() {
   }, [searchInput]);
 
   return (
-    <div className="app-root" data-theme={resolvedTheme} data-accent={themeAccent} data-memo-color={memoColor || undefined}>
+    <div
+      className={`app-root${isWindowDragging ? ' is-window-dragging' : ''}`}
+      data-theme={resolvedTheme}
+      data-accent={themeAccent}
+      data-memo-color={memoColor || undefined}
+    >
       {/* Title bar (draggable, frameless window) */}
-      <div data-tauri-drag-region className="title-bar">
+      <div data-tauri-drag-region className="title-bar" onPointerDown={handleTitleDragStart}>
         <div data-tauri-drag-region className="title-content">
           <span className="title-text">{displayTitle}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -633,6 +664,7 @@ function AppContent() {
               onArchiveEnabledChange={setArchiveEnabled}
               onVersionTitleTrigger={handleVersionTitleTrigger}
               onStorageSettingsEnabledChange={setStorageSettingsEnabled}
+              onCategoryTabSortingEnabledChange={setCategoryTabSortingEnabled}
             />
           </div>
         </div>
@@ -666,10 +698,11 @@ function AppContent() {
         onTabChange={handleTabChange}
         stats={stats}
         memoEnabled={memoEnabled}
-        memoCount={memoCountState}
-        archiveEnabled={archiveEnabled}
-        archiveCount={archiveCountState}
-      />
+          memoCount={memoCountState}
+          archiveEnabled={archiveEnabled}
+          archiveCount={archiveCountState}
+          categorySortingEnabled={categoryTabSortingEnabled}
+        />
 
       {/* Main content: memo list or clipboard list */}
       {activeTab === 'memo' ? (

@@ -967,7 +967,7 @@ mod tests {
             .unwrap();
         source.set_setting("language", "zh-CN").unwrap();
 
-        let data = source.export_backup_data("2.3.0").unwrap();
+        let data = source.export_backup_data("2.3.2").unwrap();
         let summary = target.restore_backup_data(&data).unwrap();
 
         assert_eq!(summary.clipboard_entries, 1);

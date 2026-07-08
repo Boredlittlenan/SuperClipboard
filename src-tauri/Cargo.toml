@@ -1,6 +1,6 @@
 [package]
 name = "superclipboard"
-version = "2.3.0"
+version = "2.3.2"
 description = "A lightweight clipboard manager with smart categorization"
 authors = [""]
 edition = "2021"

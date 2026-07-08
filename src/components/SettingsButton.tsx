@@ -77,9 +77,21 @@ interface SettingsButtonProps {
   onArchiveEnabledChange?: (enabled: boolean) => void;
   onVersionTitleTrigger?: (clickCount: number) => void;
   onStorageSettingsEnabledChange?: (enabled: boolean) => void;
+  onCategoryTabSortingEnabledChange?: (enabled: boolean) => void;
 }
 
-export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, onMemoColorChange, onRawPreviewChange, onThemeModeChange, onThemeAccentChange, onArchiveEnabledChange, onVersionTitleTrigger, onStorageSettingsEnabledChange }: SettingsButtonProps) {
+export default function SettingsButton({
+  onShortcutChange,
+  onMemoEnabledChange,
+  onMemoColorChange,
+  onRawPreviewChange,
+  onThemeModeChange,
+  onThemeAccentChange,
+  onArchiveEnabledChange,
+  onVersionTitleTrigger,
+  onStorageSettingsEnabledChange,
+  onCategoryTabSortingEnabledChange,
+}: SettingsButtonProps) {
   const { t, locale, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
   const [autostart, setAutostart] = useState(false);
@@ -90,6 +102,7 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
   const [themeAccent, setThemeAccentState] = useState('default');
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [storageSettingsEnabled, setStorageSettingsEnabled] = useState(false);
+  const [categoryTabSortingEnabled, setCategoryTabSortingEnabled] = useState(true);
   const [archiveEnabled, setArchiveEnabledState] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [memoColor, setMemoColor] = useState<string | null>(null);
@@ -187,6 +200,11 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
         setStorageSettingsEnabled(enabled);
         onStorageSettingsEnabledChange?.(enabled);
       }).catch(console.error);
+      getSetting('category_tab_sorting_enabled').then((v) => {
+        const enabled = v === null ? true : v === 'true';
+        setCategoryTabSortingEnabled(enabled);
+        onCategoryTabSortingEnabledChange?.(enabled);
+      }).catch(console.error);
       getSetting('archive_enabled').then((v) => {
         setArchiveEnabledState(v === 'true');
         onArchiveEnabledChange?.(v === 'true');
@@ -198,7 +216,16 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
       setShowColorPicker(false);
       getVersion().then(setAppVersion).catch(console.error);
     }
-  }, [open, onMemoEnabledChange, onShortcutChange, onThemeModeChange, onThemeAccentChange, onArchiveEnabledChange, onStorageSettingsEnabledChange]);
+  }, [
+    open,
+    onMemoEnabledChange,
+    onShortcutChange,
+    onThemeModeChange,
+    onThemeAccentChange,
+    onArchiveEnabledChange,
+    onStorageSettingsEnabledChange,
+    onCategoryTabSortingEnabledChange,
+  ]);
 
   // Close panel when clicking outside
   useEffect(() => {
@@ -373,6 +400,13 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
     setArchiveEnabledState(newValue);
     onArchiveEnabledChange?.(newValue);
   }, [archiveEnabled, onArchiveEnabledChange]);
+
+  const handleCategoryTabSortingToggle = useCallback(async () => {
+    const newValue = !categoryTabSortingEnabled;
+    await setSetting('category_tab_sorting_enabled', newValue ? 'true' : 'false');
+    setCategoryTabSortingEnabled(newValue);
+    onCategoryTabSortingEnabledChange?.(newValue);
+  }, [categoryTabSortingEnabled, onCategoryTabSortingEnabledChange]);
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateStatus('checking');
@@ -588,6 +622,17 @@ export default function SettingsButton({ onShortcutChange, onMemoEnabledChange, 
 
           {/* Feature Settings header */}
           <div style={styles.sectionHeader}>{t.featureSettings}</div>
+
+          {/* Category tab sorting */}
+          <div style={styles.compactRow} title={t.categoryTabSortingDesc}>
+            <span style={styles.rowLabel}>{t.categoryTabSorting}</span>
+            <button
+              style={{ ...styles.toggle, ...(categoryTabSortingEnabled ? styles.toggleOn : {}) }}
+              onClick={handleCategoryTabSortingToggle}
+            >
+              <div style={{ ...styles.toggleKnob, ...(categoryTabSortingEnabled ? styles.toggleKnobOn : {}) }} />
+            </button>
+          </div>
 
           {/* Memo */}
           <div style={styles.compactRow} title={t.memoSettingDesc}>
