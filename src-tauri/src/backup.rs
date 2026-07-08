@@ -165,7 +165,7 @@ mod tests {
         BackupData {
             app: "SuperClipboard".to_string(),
             backup_version: 1,
-            app_version: "2.3.0".to_string(),
+            app_version: "2.30.0".to_string(),
             created_at: Utc::now(),
             clipboard_entries: Vec::new(),
             memos: Vec::new(),
@@ -194,9 +194,9 @@ mod tests {
         let metadata = read_backup_metadata(&path).unwrap();
 
         assert_eq!(restored.app, "SuperClipboard");
-        assert_eq!(restored.app_version, "2.3.0");
+        assert_eq!(restored.app_version, "2.30.0");
         assert_eq!(restored.settings.len(), 1);
-        assert_eq!(metadata.app_version, "2.3.0");
+        assert_eq!(metadata.app_version, "2.30.0");
         assert_eq!(metadata.backup_version, 1);
 
         let file = File::open(&path).unwrap();

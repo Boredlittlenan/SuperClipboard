@@ -1220,15 +1220,31 @@ async fn check_update() -> Result<UpdateInfo, String> {
     })
 }
 
-/// Compare two semver strings: returns true if `latest` > `current`
+/// Compare two app version strings: returns true if `latest` > `current`.
+///
+/// Historical SuperClipboard releases used decimal-style minor numbers:
+/// `2.20.0` was followed by the user-facing `2.3.0`. Normalize a single-digit
+/// minor segment to its two-digit decimal form so future checks do not regress.
 fn compare_versions(latest: &str, current: &str) -> bool {
-    let parse =
-        |s: &str| -> Vec<u64> { s.split('.').filter_map(|p| p.parse::<u64>().ok()).collect() };
+    let parse = |s: &str| -> Vec<u64> {
+        let parts = s.split('.').collect::<Vec<_>>();
+        (0..3)
+            .map(|index| {
+                let raw = parts.get(index).copied().unwrap_or("0");
+                let value = raw.parse::<u64>().unwrap_or(0);
+                if index == 1 && raw.len() == 1 && value > 0 {
+                    value * 10
+                } else {
+                    value
+                }
+            })
+            .collect()
+    };
     let a = parse(latest);
     let b = parse(current);
     for i in 0..3 {
-        let va = a.get(i).copied().unwrap_or(0);
-        let vb = b.get(i).copied().unwrap_or(0);
+        let va = a[i];
+        let vb = b[i];
         if va > vb {
             return true;
         }
@@ -1237,6 +1253,25 @@ fn compare_versions(latest: &str, current: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::compare_versions;
+
+    #[test]
+    fn compares_decimal_style_minor_versions() {
+        assert!(compare_versions("2.3.0", "2.20.0"));
+        assert!(compare_versions("2.30.0", "2.20.0"));
+        assert!(!compare_versions("2.30.0", "2.3.0"));
+        assert!(!compare_versions("2.3.0", "2.30.0"));
+    }
+
+    #[test]
+    fn keeps_patch_comparison_after_minor_normalization() {
+        assert!(compare_versions("2.3.1", "2.3.0"));
+        assert!(!compare_versions("2.3.0", "2.3.1"));
+    }
 }
 
 // ─── App Setup ───────────────────────────────────────────────────────

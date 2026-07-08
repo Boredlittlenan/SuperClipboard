@@ -232,9 +232,13 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
         });
         onCountChange?.(Math.max(0, memos.length - 1));
       } else {
-        await updateMemo(id, editDraft.title, editDraft.body, finalTags);
+        const updated = await updateMemo(id, editDraft.title, editDraft.body, finalTags);
+        if (!updated) throw new Error('Memo update failed');
+        const updatedAt = new Date().toISOString();
         setMemos(prev => prev.map(m =>
-          m.id === id ? { ...m, title: editDraft.title, body: editDraft.body, tags: finalTags } : m
+          m.id === id
+            ? { ...m, title: editDraft.title, body: editDraft.body, tags: finalTags, updated_at: updatedAt }
+            : m
         ));
         setAutoTagTypesByMemoId(prev => ({ ...prev, [id]: autoTagTypes }));
       }
