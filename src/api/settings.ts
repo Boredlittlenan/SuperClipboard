@@ -50,12 +50,20 @@ export interface BackupFileInfo {
   createdAt: string;
   sizeBytes: number;
   displayPath: string;
+  appVersion: string;
+  backupVersion: number;
 }
 
 export interface RestoreSummary {
   clipboardEntries: number;
   memos: number;
   settings: number;
+}
+
+export interface StorageStatusInfo {
+  mode: 'local' | 'remote';
+  health: 'local' | 'connected' | 'failed' | 'notReady';
+  message: string;
 }
 
 /** Check for updates from GitHub Releases */
@@ -92,6 +100,10 @@ export async function testRemoteStorage(): Promise<string> {
 
 export async function initializeRemoteStorage(): Promise<void> {
   return invoke('initialize_remote_storage');
+}
+
+export async function getStorageStatus(): Promise<StorageStatusInfo> {
+  return invoke('get_storage_status');
 }
 
 /** Set window always-on-top */

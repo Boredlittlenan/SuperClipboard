@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
 import {
   createBackup,
   getSetting,
+  getStorageStatus,
   initializeRemoteStorage,
   listBackups,
   openBackupFolder,
@@ -9,11 +11,12 @@ import {
   setSetting,
   testRemoteStorage,
 } from '../api/settings';
-import type { BackupFileInfo } from '../api/settings';
+import type { BackupFileInfo, StorageStatusInfo } from '../api/settings';
 import { useI18n } from '../i18n';
 
 type StorageMode = 'local' | 'remote';
 type ConnectionMode = 'url' | 'manual';
+type BackupAction = 'idle' | 'creating' | 'restoring';
 
 const SETTING_KEYS = {
   storageMode: 'storage_mode',
@@ -64,12 +67,15 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [sslMode, setSslMode] = useState('prefer');
+  const [storageStatus, setStorageStatus] = useState<StorageStatusInfo | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ready' | 'failed'>('idle');
   const [testMessage, setTestMessage] = useState('');
   const [backups, setBackups] = useState<BackupFileInfo[]>([]);
   const [selectedBackup, setSelectedBackup] = useState('');
-  const [backupStatus, setBackupStatus] = useState<'idle' | 'working' | 'success' | 'failed'>('idle');
+  const [appVersion, setAppVersion] = useState('');
+  const [backupAction, setBackupAction] = useState<BackupAction>('idle');
+  const [backupStatus, setBackupStatus] = useState<'idle' | 'success' | 'failed'>('idle');
   const [backupMessage, setBackupMessage] = useState('');
   const [restoreConfirming, setRestoreConfirming] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -88,6 +94,14 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
         : items[0]?.fileName ?? ''
     ));
     return items;
+  }, []);
+
+  const selectedBackupInfo = backups.find((backup) => backup.fileName === selectedBackup);
+
+  const refreshStorageStatus = useCallback(async () => {
+    const status = await getStorageStatus();
+    setStorageStatus(status);
+    return status;
   }, []);
 
   const buildSettingsPayload = useCallback((ready: boolean): StoredSettingsPayload => ({
@@ -171,10 +185,13 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       setBackupStatus('failed');
       setBackupMessage(t.backupFailed);
     });
+    getVersion().then(setAppVersion).catch(console.error);
+    refreshStorageStatus().catch(console.error);
+    setBackupAction('idle');
     setBackupStatus('idle');
     setBackupMessage('');
     setRestoreConfirming(false);
-  }, [open, loadSettings, refreshBackups, t.backupFailed]);
+  }, [open, loadSettings, refreshBackups, refreshStorageStatus, t.backupFailed]);
 
   useEffect(() => {
     if (!open) return;
@@ -198,6 +215,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
         persistedSettingsRef.current = localPayload;
         setActiveStorageMode('local');
         setSaveState('saved');
+        await refreshStorageStatus();
         setOpen(false);
         onStorageModeChange?.('local');
         return;
@@ -214,6 +232,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       setActiveStorageMode('remote');
       setTestState('ready');
       setSaveState('saved');
+      await refreshStorageStatus();
       setOpen(false);
       onStorageModeChange?.('remote');
     } catch (err) {
@@ -228,10 +247,11 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       setTestState(storageMode === 'remote' ? 'failed' : 'idle');
       setTestMessage(String(err));
     }
-  }, [buildSettingsPayload, getPayloadActiveMode, onStorageModeChange, storageMode, writeSettings]);
+  }, [buildSettingsPayload, getPayloadActiveMode, onStorageModeChange, refreshStorageStatus, storageMode, writeSettings]);
 
   const handleCreateBackup = useCallback(async () => {
-    setBackupStatus('working');
+    setBackupAction('creating');
+    setBackupStatus('idle');
     setBackupMessage('');
     setRestoreConfirming(false);
     try {
@@ -244,6 +264,8 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       console.error('Failed to create backup:', err);
       setBackupStatus('failed');
       setBackupMessage(t.backupFailed);
+    } finally {
+      setBackupAction('idle');
     }
   }, [refreshBackups, t.backupCreated, t.backupFailed]);
 
@@ -257,7 +279,8 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       return;
     }
 
-    setBackupStatus('working');
+    setBackupAction('restoring');
+    setBackupStatus('idle');
     setBackupMessage('');
     try {
       const summary = await restoreBackup(selectedBackup);
@@ -270,6 +293,8 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       setBackupStatus('failed');
       setRestoreConfirming(false);
       setBackupMessage(t.backupFailed);
+    } finally {
+      setBackupAction('idle');
     }
   }, [restoreConfirming, selectedBackup, t]);
 
@@ -310,6 +335,25 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
               {activeStorageMode === 'remote' ? t.storageModeRemote : t.storageModeLocal}
             </span>
           </div>
+          {storageStatus && (
+            <div style={styles.storageStatus}>
+              <span style={{
+                ...styles.statusDot,
+                ...(storageStatus.health === 'connected' ? styles.statusDotOk : {}),
+                ...(storageStatus.health === 'failed' ? styles.statusDotError : {}),
+                ...(storageStatus.health === 'notReady' ? styles.statusDotWarn : {}),
+              }} />
+              <span>
+                {storageStatus.health === 'connected'
+                  ? t.storageStatusConnected
+                  : storageStatus.health === 'failed'
+                  ? t.storageStatusFailed
+                  : storageStatus.health === 'notReady'
+                  ? t.storageStatusNotReady
+                  : t.storageStatusLocal}
+              </span>
+            </div>
+          )}
 
           <div style={styles.section}>
             <span style={styles.label}>{t.storageMode}</span>
@@ -340,8 +384,6 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
 
           {storageMode === 'remote' && (
             <>
-              <div style={styles.notice}>{t.remoteStoragePending}</div>
-
               <div style={styles.section}>
                 <span style={styles.label}>{t.connectionMode}</span>
                 <div style={styles.segmented}>
@@ -428,6 +470,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
               style={styles.primaryBtn}
               disabled={saveState === 'saving' || testState === 'testing'}
               onClick={handleSave}
+              title={storageMode === 'remote' ? t.remoteStoragePending : undefined}
             >
               {saveState === 'saving' || testState === 'testing'
                 ? t.savingStorageConfig
@@ -442,65 +485,78 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
           {testState === 'ready' && <div style={styles.successText}>{t.storageConnectionReady}: {testMessage}</div>}
           {testState === 'failed' && <div style={styles.errorText}>{t.storageConnectionFailed}: {testMessage}</div>}
 
-          <div style={styles.divider} />
+          {storageMode === 'local' && (
+            <>
+              <div style={styles.divider} />
 
-          <div style={styles.backupPanel} title={t.backupRestoreDesc}>
-            <div style={styles.backupHeader}>
-              <span style={styles.sectionTitle}>{t.backupRestore}</span>
-              <button style={styles.miniTextBtn} onClick={handleOpenBackupFolder}>
-                {t.openBackupFolder}
-              </button>
-            </div>
-            <button
-              style={styles.secondaryActionBtn}
-              onClick={handleCreateBackup}
-              disabled={backupStatus === 'working'}
-            >
-              {backupStatus === 'working' ? t.creatingBackup : t.createBackup}
-            </button>
-            <div style={styles.backupRestoreRow}>
-              <select
-                style={styles.backupSelect}
-                value={selectedBackup}
-                onChange={(event) => {
-                  setSelectedBackup(event.target.value);
-                  setRestoreConfirming(false);
-                  setBackupMessage('');
-                  setBackupStatus('idle');
-                }}
-                disabled={backups.length === 0}
-              >
-                {backups.length === 0 ? (
-                  <option value="">{t.noBackups}</option>
-                ) : (
-                  backups.map((backup) => (
-                    <option key={backup.fileName} value={backup.fileName}>
-                      {formatBackupTime(backup.createdAt)} · {formatBackupSize(backup.sizeBytes)}
-                    </option>
-                  ))
+              <div style={styles.backupPanel} title={t.backupRestoreDesc}>
+                <div style={styles.backupHeader}>
+                  <div style={styles.backupTitleGroup}>
+                    <span style={styles.sectionTitle}>{t.backupRestore}</span>
+                    <span style={styles.betaBadge}>{t.backupBeta}</span>
+                  </div>
+                  <button style={styles.miniTextBtn} onClick={handleOpenBackupFolder}>
+                    {t.openBackupFolder}
+                  </button>
+                </div>
+                <div style={styles.backupNotice}>{t.backupCompatibilityNotice}</div>
+                <button
+                  style={styles.secondaryActionBtn}
+                  onClick={handleCreateBackup}
+                  disabled={backupAction !== 'idle'}
+                >
+                  {backupAction === 'creating' ? t.creatingBackup : t.createBackup}
+                </button>
+                <div style={styles.backupRestoreRow}>
+                  <select
+                    style={styles.backupSelect}
+                    value={selectedBackup}
+                    onChange={(event) => {
+                      setSelectedBackup(event.target.value);
+                      setRestoreConfirming(false);
+                      setBackupMessage('');
+                      setBackupStatus('idle');
+                    }}
+                    disabled={backups.length === 0 || backupAction !== 'idle'}
+                  >
+                    {backups.length === 0 ? (
+                      <option value="">{t.noBackups}</option>
+                    ) : (
+                      backups.map((backup) => (
+                        <option key={backup.fileName} value={backup.fileName}>
+                          {formatBackupTime(backup.createdAt)} · v{backup.appVersion || t.unknownVersion} · {formatBackupSize(backup.sizeBytes)}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <button
+                    style={{
+                      ...styles.restoreBtn,
+                      ...(restoreConfirming ? styles.restoreBtnConfirm : {}),
+                    }}
+                    onClick={handleRestoreBackup}
+                    disabled={!selectedBackup || backupAction !== 'idle'}
+                  >
+                    {backupAction === 'restoring' ? t.restoringBackup : t.restoreBackup}
+                  </button>
+                </div>
+                {selectedBackupInfo && (
+                  <div style={styles.backupVersionLine}>
+                    {t.backupVersionMeta(selectedBackupInfo.appVersion || t.unknownVersion, appVersion || t.unknownVersion)}
+                  </div>
                 )}
-              </select>
-              <button
-                style={{
-                  ...styles.restoreBtn,
-                  ...(restoreConfirming ? styles.restoreBtnConfirm : {}),
-                }}
-                onClick={handleRestoreBackup}
-                disabled={!selectedBackup || backupStatus === 'working'}
-              >
-                {backupStatus === 'working' ? t.restoringBackup : t.restoreBackup}
-              </button>
-            </div>
-            {backupMessage && (
-              <div style={{
-                ...styles.backupMessage,
-                ...(backupStatus === 'failed' ? styles.backupMessageError : {}),
-                ...(backupStatus === 'success' ? styles.backupMessageSuccess : {}),
-              }}>
-                {backupMessage}
+                {backupMessage && (
+                  <div style={{
+                    ...styles.backupMessage,
+                    ...(backupStatus === 'failed' ? styles.backupMessageError : {}),
+                    ...(backupStatus === 'success' ? styles.backupMessageSuccess : {}),
+                  }}>
+                    {backupMessage}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -564,6 +620,31 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--accent)',
     fontWeight: 700,
   },
+  storageStatus: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    margin: '-2px 0 10px',
+    color: 'var(--text-muted)',
+    fontSize: '10px',
+    lineHeight: 1.4,
+  },
+  statusDot: {
+    width: '6px',
+    height: '6px',
+    borderRadius: '999px',
+    background: 'var(--text-muted)',
+    flexShrink: 0,
+  },
+  statusDotOk: {
+    background: 'var(--success)',
+  },
+  statusDotError: {
+    background: 'var(--danger)',
+  },
+  statusDotWarn: {
+    background: '#f59e0b',
+  },
   section: {
     display: 'flex',
     flexDirection: 'column',
@@ -604,16 +685,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '10px',
     lineHeight: 1.45,
     color: 'var(--text-muted)',
-  },
-  notice: {
-    padding: '7px 8px',
-    marginBottom: '10px',
-    border: '1px solid var(--border)',
-    borderRadius: '6px',
-    background: 'var(--bg)',
-    color: 'var(--text-muted)',
-    fontSize: '10px',
-    lineHeight: 1.45,
   },
   grid: {
     display: 'grid',
@@ -691,10 +762,35 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     gap: '8px',
   },
+  backupTitleGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    minWidth: 0,
+  },
+  betaBadge: {
+    padding: '1px 5px',
+    borderRadius: '999px',
+    background: 'rgba(245, 158, 11, 0.12)',
+    color: '#b45309',
+    fontSize: '9px',
+    fontWeight: 700,
+    whiteSpace: 'nowrap',
+  },
+  backupNotice: {
+    color: 'var(--text-muted)',
+    fontSize: '10px',
+    lineHeight: 1.45,
+  },
   backupRestoreRow: {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
+  },
+  backupVersionLine: {
+    color: 'var(--text-muted)',
+    fontSize: '10px',
+    lineHeight: 1.4,
   },
   backupSelect: {
     flex: 1,

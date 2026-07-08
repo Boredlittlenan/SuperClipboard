@@ -78,6 +78,35 @@ fn setting(storage: &Storage, key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn search_tokens(search: &str) -> Vec<String> {
+    search
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .take(8)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn append_token_search(
+    sql: &mut String,
+    values: &mut Vec<Box<dyn ToSql + Sync>>,
+    search: &str,
+    columns: &[&str],
+) {
+    for token in search_tokens(search) {
+        let pattern = format!("%{}%", token);
+        let mut clauses = Vec::with_capacity(columns.len());
+        for column in columns {
+            values.push(Box::new(pattern.clone()));
+            clauses.push(format!("{column} ILIKE ${}", values.len()));
+        }
+        sql.push_str(" AND (");
+        sql.push_str(&clauses.join(" OR "));
+        sql.push(')');
+    }
+}
+
 fn remote_config(storage: &Storage) -> RemoteResult<RemoteDbConfig> {
     let mode = setting(storage, "remote_db_connection_mode").unwrap_or_else(|| "url".into());
     let ssl_mode =
@@ -371,11 +400,7 @@ pub fn query_clipboard(
         sql.push_str(&format!(" AND category = ${}", values.len()));
     }
     if let Some(search) = &filter.search {
-        let pattern = format!("%{}%", search);
-        values.push(Box::new(pattern.clone()));
-        sql.push_str(&format!(" AND (content LIKE ${}", values.len()));
-        values.push(Box::new(pattern));
-        sql.push_str(&format!(" OR preview LIKE ${})", values.len()));
+        append_token_search(&mut sql, &mut values, search, &["content", "preview"]);
     }
 
     sql.push_str(" ORDER BY pinned DESC, created_at DESC");
@@ -528,11 +553,7 @@ pub fn query_archived_clipboard(
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
     if let Some(search) = &filter.search {
-        let pattern = format!("%{}%", search);
-        values.push(Box::new(pattern.clone()));
-        sql.push_str(&format!(" AND (content LIKE ${}", values.len()));
-        values.push(Box::new(pattern));
-        sql.push_str(&format!(" OR preview LIKE ${})", values.len()));
+        append_token_search(&mut sql, &mut values, search, &["content", "preview"]);
     }
     sql.push_str(" ORDER BY archived_at DESC");
     let limit = filter.limit.unwrap_or(50).clamp(1, 500);
@@ -588,13 +609,7 @@ pub fn query_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<M
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
     if let Some(search) = &filter.search {
-        let pattern = format!("%{}%", search);
-        values.push(Box::new(pattern.clone()));
-        sql.push_str(&format!(" AND (title LIKE ${}", values.len()));
-        values.push(Box::new(pattern.clone()));
-        sql.push_str(&format!(" OR body LIKE ${}", values.len()));
-        values.push(Box::new(pattern));
-        sql.push_str(&format!(" OR tags LIKE ${})", values.len()));
+        append_token_search(&mut sql, &mut values, search, &["title", "body", "tags"]);
     }
     sql.push_str(" ORDER BY pinned DESC, sort_order DESC");
     let limit = filter.limit.unwrap_or(100).clamp(1, 500);
@@ -696,13 +711,7 @@ pub fn query_archived_memos(storage: &Storage, filter: &MemoFilter) -> RemoteRes
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
     if let Some(search) = &filter.search {
-        let pattern = format!("%{}%", search);
-        values.push(Box::new(pattern.clone()));
-        sql.push_str(&format!(" AND (title LIKE ${}", values.len()));
-        values.push(Box::new(pattern.clone()));
-        sql.push_str(&format!(" OR body LIKE ${}", values.len()));
-        values.push(Box::new(pattern));
-        sql.push_str(&format!(" OR tags LIKE ${})", values.len()));
+        append_token_search(&mut sql, &mut values, search, &["title", "body", "tags"]);
     }
     sql.push_str(" ORDER BY archived_at DESC");
     let limit = filter.limit.unwrap_or(100).clamp(1, 500);

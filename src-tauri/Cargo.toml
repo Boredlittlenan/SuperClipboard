@@ -1,6 +1,6 @@
 [package]
 name = "superclipboard"
-version = "2.20.0"
+version = "2.3.0"
 description = "A lightweight clipboard manager with smart categorization"
 authors = [""]
 edition = "2021"
@@ -31,6 +31,7 @@ hex = "0.4"
 log = "0.4"
 env_logger = "0.11"
 base64 = "0.22"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
 thiserror = "2"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 open = "5"

@@ -12,8 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_2.20.0_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_2.20.0_x64_en-US.msi`: MSI package
+- `SuperClipboard_2.3.0_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_2.3.0_x64_en-US.msi`: MSI package
 
 ## Highlights
 
@@ -24,7 +24,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Optional recycle bin with separate Clipboard and Memos views and 30-day cleanup
 - Global shortcut, tray controls, single-instance launch, and auto-start support
 - Theme mode switcher with System / Light / Dark and independent accent colors
-- Beta storage settings with Local / External PostgreSQL modes and backup/restore tools
+- Beta storage settings with Local / External PostgreSQL modes and `.scbackup` local backup/restore tools
 - First launch follows the system language, with Chinese and English UI available
 - Built-in update check through GitHub Releases with release notes preview
 
@@ -34,7 +34,7 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `2.20.0`
+- Version: `2.3.0`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - Theme mode: follows system
@@ -56,7 +56,8 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 - When upgrading from `SuperClipboard3`, the old local data directory is migrated automatically.
 - Since v2.1.0, image clipboard deduplication uses real image bytes instead of only dimensions, and memo auto tags are inferred by the backend classifier.
 - Since v2.15.1, update checks show release notes before opening GitHub.
-- Since v2.20.0, Storage Settings (Beta) can expose Local / External storage mode configuration and local backup/restore tools.
+- Since v2.20.0, Storage Settings (Beta) can expose Local / External storage mode configuration.
+- Since v2.3.0, local backup/restore uses the new `.scbackup` package format with manifest, data, and checksum metadata. Older gzip `.scbackup` and raw `.json` backups are no longer loaded.
 
 ## Privacy
 

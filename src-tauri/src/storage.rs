@@ -154,6 +154,38 @@ fn normalize_offset(offset: Option<i64>) -> i64 {
     offset.unwrap_or(0).max(0)
 }
 
+fn search_tokens(search: &str) -> Vec<String> {
+    search
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .take(8)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn append_token_search(
+    sql: &mut String,
+    param_values: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+    search: &str,
+    columns: &[&str],
+) {
+    for token in search_tokens(search) {
+        let conditions = columns
+            .iter()
+            .map(|column| format!("{column} LIKE ?"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        sql.push_str(" AND (");
+        sql.push_str(&conditions);
+        sql.push(')');
+        let pattern = format!("%{}%", token);
+        for _ in columns {
+            param_values.push(Box::new(pattern.clone()));
+        }
+    }
+}
+
 pub struct Storage {
     conn: Mutex<Connection>,
 }
@@ -287,10 +319,7 @@ impl Storage {
         }
 
         if let Some(ref search) = filter.search {
-            sql.push_str(" AND (content LIKE ? OR preview LIKE ?)");
-            let pattern = format!("%{}%", search);
-            param_values.push(Box::new(pattern.clone()));
-            param_values.push(Box::new(pattern));
+            append_token_search(&mut sql, &mut param_values, search, &["content", "preview"]);
         }
 
         sql.push_str(" ORDER BY pinned DESC, created_at DESC");
@@ -608,10 +637,7 @@ impl Storage {
         }
 
         if let Some(ref search) = filter.search {
-            sql.push_str(" AND (content LIKE ? OR preview LIKE ?)");
-            let pattern = format!("%{}%", search);
-            param_values.push(Box::new(pattern.clone()));
-            param_values.push(Box::new(pattern));
+            append_token_search(&mut sql, &mut param_values, search, &["content", "preview"]);
         }
 
         sql.push_str(" ORDER BY archived_at DESC");
@@ -674,11 +700,12 @@ impl Storage {
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref search) = filter.search {
-            sql.push_str(" AND (title LIKE ? OR body LIKE ? OR tags LIKE ?)");
-            let pattern = format!("%{}%", search);
-            param_values.push(Box::new(pattern.clone()));
-            param_values.push(Box::new(pattern.clone()));
-            param_values.push(Box::new(pattern));
+            append_token_search(
+                &mut sql,
+                &mut param_values,
+                search,
+                &["title", "body", "tags"],
+            );
         }
 
         sql.push_str(" ORDER BY pinned DESC, sort_order DESC");
@@ -820,11 +847,12 @@ impl Storage {
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref search) = filter.search {
-            sql.push_str(" AND (title LIKE ? OR body LIKE ? OR tags LIKE ?)");
-            let pattern = format!("%{}%", search);
-            param_values.push(Box::new(pattern.clone()));
-            param_values.push(Box::new(pattern.clone()));
-            param_values.push(Box::new(pattern));
+            append_token_search(
+                &mut sql,
+                &mut param_values,
+                search,
+                &["title", "body", "tags"],
+            );
         }
 
         sql.push_str(" ORDER BY archived_at DESC");
@@ -900,5 +928,77 @@ impl Storage {
             params![key, value],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn temp_db_path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("superclipboard-storage-{}.db", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn backup_data_round_trips_between_databases() {
+        let source_path = temp_db_path();
+        let target_path = temp_db_path();
+        let source = Storage::new(&source_path).unwrap();
+        let target = Storage::new(&target_path).unwrap();
+
+        let entry = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            content_type: "text".to_string(),
+            content: "alpha beta release note".to_string(),
+            preview: "alpha beta".to_string(),
+            hash: Storage::hash_content("alpha beta release note"),
+            pinned: true,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+        };
+
+        source.insert(&entry).unwrap();
+        source
+            .create_memo("Project note", "remember the backup package", "backup")
+            .unwrap();
+        source.set_setting("language", "zh-CN").unwrap();
+
+        let data = source.export_backup_data("2.3.0").unwrap();
+        let summary = target.restore_backup_data(&data).unwrap();
+
+        assert_eq!(summary.clipboard_entries, 1);
+        assert_eq!(summary.memos, 1);
+        assert!(summary.settings >= 1);
+        assert_eq!(
+            target
+                .query(&QueryFilter {
+                    search: Some("alpha release".to_string()),
+                    ..Default::default()
+                })
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            target
+                .get_memos(&MemoFilter {
+                    search: Some("backup package".to_string()),
+                    ..Default::default()
+                })
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            target.get_setting("language").unwrap(),
+            Some("zh-CN".to_string())
+        );
+
+        std::fs::remove_file(source_path).ok();
+        std::fs::remove_file(target_path).ok();
     }
 }

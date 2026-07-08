@@ -1,8 +1,10 @@
 mod autostart;
+mod backup;
 mod classifier;
 mod clipboard;
 mod remote_storage;
 mod storage;
+mod storage_backend;
 mod window_position;
 
 use clipboard::ClipboardMonitor;
@@ -11,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use storage::{BackupData, ClipboardEntry, Memo, MemoFilter, QueryFilter, RestoreSummary, Storage};
+use storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, RestoreSummary, Storage};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Emitter;
 use tauri::Manager;
@@ -44,6 +46,8 @@ pub struct BackupFileInfo {
     pub created_at: String,
     pub size_bytes: u64,
     pub display_path: String,
+    pub app_version: String,
+    pub backup_version: u32,
 }
 
 /// Tauri-managed application state
@@ -291,23 +295,20 @@ fn backups_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 fn backup_file_info(path: PathBuf) -> Result<BackupFileInfo, String> {
     let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let backup_metadata = backup::read_backup_metadata(&path)?;
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "Invalid backup file name".to_string())?
         .to_string();
-    let created_at = metadata
-        .modified()
-        .ok()
-        .map(chrono::DateTime::<chrono::Utc>::from)
-        .map(|date| date.to_rfc3339())
-        .unwrap_or_default();
 
     Ok(BackupFileInfo {
         file_name,
-        created_at,
+        created_at: backup_metadata.created_at,
         size_bytes: metadata.len(),
         display_path: path.display().to_string(),
+        app_version: backup_metadata.app_version,
+        backup_version: backup_metadata.backup_version,
     })
 }
 
@@ -317,8 +318,8 @@ fn resolve_backup_path(app: &tauri::AppHandle, file_name: &str) -> Result<PathBu
     }
 
     let path = backups_dir(app)?.join(file_name);
-    if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-        return Err("Backup file must be a JSON file".to_string());
+    if !backup::is_supported_backup_path(&path) {
+        return Err("Backup file must be a .scbackup file".to_string());
     }
     if !path.exists() {
         return Err("Backup file not found".to_string());
@@ -755,12 +756,11 @@ fn create_backup(
         .export_backup_data(APP_VERSION)
         .map_err(|e| e.to_string())?;
     let file_name = format!(
-        "SuperClipboard-backup-{}.json",
+        "SuperClipboard-backup-{}.scbackup",
         chrono::Utc::now().format("%Y%m%d-%H%M%S")
     );
     let path = backups_dir(&app)?.join(file_name);
-    let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| format!("Failed to write backup: {}", e))?;
+    backup::write_backup_data(&path, &data)?;
     backup_file_info(path)
 }
 
@@ -770,7 +770,7 @@ fn list_backups(app: tauri::AppHandle) -> Result<Vec<BackupFileInfo>, String> {
     let mut backups = std::fs::read_dir(dir)
         .map_err(|e| e.to_string())?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .filter(|path| backup::is_supported_backup_path(path))
         .filter_map(|path| backup_file_info(path).ok())
         .collect::<Vec<_>>();
 
@@ -785,10 +785,7 @@ fn restore_backup(
     file_name: String,
 ) -> Result<RestoreSummary, String> {
     let path = resolve_backup_path(&app, &file_name)?;
-    let raw =
-        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read backup: {}", e))?;
-    let data: BackupData =
-        serde_json::from_str(&raw).map_err(|e| format!("Invalid backup file: {}", e))?;
+    let data = backup::read_backup_data(&path)?;
     if data.app != "SuperClipboard" {
         return Err("This backup does not belong to SuperClipboard".to_string());
     }
@@ -1143,6 +1140,11 @@ fn initialize_remote_storage(state: tauri::State<'_, AppState>) -> Result<(), St
     remote_storage::ensure_schema(&state.storage).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_storage_status(state: tauri::State<'_, AppState>) -> storage_backend::StorageStatusInfo {
+    storage_backend::status(&state.storage)
+}
+
 /// Check for updates from GitHub Releases
 #[tauri::command]
 async fn check_update() -> Result<UpdateInfo, String> {
@@ -1300,12 +1302,12 @@ pub fn run() {
 
             // Register global shortcut to show/hide window
             let shortcut_recording = app.state::<AppState>().shortcut_recording.clone();
-            let _ = register_toggle_shortcut(&app.handle(), shortcut.as_str(), shortcut_recording);
+            let _ = register_toggle_shortcut(app.handle(), shortcut.as_str(), shortcut_recording);
 
             // Apply always-on-top setting.
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_always_on_top(always_on_top);
-                show_window(&app.handle(), &window, "startup", true);
+                show_window(app.handle(), &window, "startup", true);
             }
 
             // Set up system tray menu and click handler
@@ -1390,6 +1392,7 @@ pub fn run() {
             open_url,
             test_remote_storage,
             initialize_remote_storage,
+            get_storage_status,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running tauri application");

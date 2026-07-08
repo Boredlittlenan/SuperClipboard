@@ -1,6 +1,5 @@
 /// Auto-start on boot functionality for Windows
 /// Uses the Windows registry: HKCU\Software\Microsoft\Windows\CurrentVersion\Run
-
 const REG_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const APP_NAME: &str = "SuperClipboard";
 const LEGACY_APP_NAME: &str = "SuperClipboard3";

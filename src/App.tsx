@@ -27,6 +27,7 @@ import MemoList from './components/MemoList';
 import ArchivedMemoItem from './components/ArchivedMemoItem';
 import ConfirmDialog, { type ConfirmDialogState } from './components/ConfirmDialog';
 import type { ThemeMode } from './types';
+import { emitAppEvent, onAppEvent } from './events/appEvents';
 import './App.css';
 
 function formatBytes(bytes: number): string {
@@ -305,25 +306,40 @@ function AppContent() {
     ];
   }, [activeTab]);
 
+  useEffect(() => {
+    const offResume = onAppEvent('app:resume', () => scheduleDataRefresh(true));
+    const offClipboard = onAppEvent('clipboard:changed', () => scheduleDataRefresh(true));
+    const offStorage = onAppEvent('storage:changed', () => {
+      setEntries([]);
+      setArchivedMemos([]);
+      scheduleDataRefresh(true);
+    });
+    return () => {
+      offResume();
+      offClipboard();
+      offStorage();
+    };
+  }, [scheduleDataRefresh]);
+
   // Listen for window-shown events to track how the window was opened and refresh remote data.
   useEffect(() => {
     const unlisten = listen<string>('window-shown', (event) => {
       const source = event.payload;
       setOpenedViaShortcut(source === 'shortcut');
-      scheduleDataRefresh(true);
+      emitAppEvent('app:resume');
       // Follow mode positioning is handled in Rust before window.show()
     });
     return () => { unlisten.then(fn => fn()); };
-  }, [scheduleDataRefresh]);
+  }, []);
 
   // Refresh again when the webview regains focus after sleep/resume or network recovery.
   useEffect(() => {
     const refreshWhenVisible = () => {
       if (document.visibilityState === 'visible') {
-        scheduleDataRefresh();
+        emitAppEvent('app:resume');
       }
     };
-    const refreshOnFocus = () => scheduleDataRefresh();
+    const refreshOnFocus = () => emitAppEvent('app:resume');
 
     window.addEventListener('focus', refreshOnFocus);
     window.addEventListener('online', refreshOnFocus);
@@ -338,7 +354,7 @@ function AppContent() {
       resumeRefreshTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       resumeRefreshTimersRef.current = [];
     };
-  }, [scheduleDataRefresh]);
+  }, []);
 
   // Fetch archived memos
   const fetchArchivedMemos = useCallback(async () => {
@@ -372,9 +388,7 @@ function AppContent() {
     let unlisten: (() => void) | undefined;
 
     onClipboardChanged(() => {
-      // Refresh from backend so order and dedup are correct
-      fetchEntries();
-      fetchStats();
+      emitAppEvent('clipboard:changed');
     }).then((fn) => {
       unlisten = fn;
     });
@@ -382,7 +396,7 @@ function AppContent() {
     return () => {
       unlisten?.();
     };
-  }, [fetchEntries, fetchStats]);
+  }, []);
 
   // Keyboard shortcut: focus search with Ctrl+F
   useEffect(() => {
@@ -579,13 +593,8 @@ function AppContent() {
   }, []);
 
   const handleStorageModeChange = useCallback(() => {
-    if (activeTab !== 'memo') {
-      setLoading(true);
-    }
-    setEntries([]);
-    setArchivedMemos([]);
-    setStorageRevision((value) => value + 1);
-  }, [activeTab]);
+    emitAppEvent('storage:changed');
+  }, []);
 
   // Debounced search
   const [searchInput, setSearchInput] = useState('');

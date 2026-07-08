@@ -124,6 +124,10 @@ export interface Translations {
   noReleaseNotes: string;
   backupRestore: string;
   backupRestoreDesc: string;
+  backupBeta: string;
+  backupCompatibilityNotice: string;
+  backupVersionMeta: (backupVersion: string, currentVersion: string) => string;
+  unknownVersion: string;
   createBackup: string;
   creatingBackup: string;
   backupCreated: string;
@@ -140,6 +144,10 @@ export interface Translations {
   storageMode: string;
   storageModeLocal: string;
   storageModeRemote: string;
+  storageStatusLocal: string;
+  storageStatusConnected: string;
+  storageStatusFailed: string;
+  storageStatusNotReady: string;
   localModeHint: string;
   remoteModeHint: string;
   remoteStoragePending: string;
@@ -153,12 +161,9 @@ export interface Translations {
   databaseUser: string;
   databasePassword: string;
   databaseSsl: string;
-  testConnection: string;
-  testConnectionPending: string;
   testingConnection: string;
   storageConnectionReady: string;
   storageConnectionFailed: string;
-  saveStorageConfig: string;
   saveAndUseLocal: string;
   saveAndUseRemote: string;
   savingStorageConfig: string;
@@ -281,6 +286,10 @@ export const zhCN: Translations = {
   noReleaseNotes: '暂无更新说明',
   backupRestore: '备份/恢复',
   backupRestoreDesc: '导出或恢复本地剪贴板、备忘录和设置',
+  backupBeta: '测试版',
+  backupCompatibilityNotice: '备份文件为新版 .scbackup 包。恢复会记录备份创建版本和当前恢复版本，旧 gzip .scbackup / .json 不再读取，跨版本恢复不保证可恢复。',
+  backupVersionMeta: (backupVersion, currentVersion) => `备份版本 v${backupVersion} · 当前版本 v${currentVersion}`,
+  unknownVersion: '未知',
   createBackup: '创建备份',
   creatingBackup: '备份中...',
   backupCreated: '备份已创建',
@@ -297,9 +306,13 @@ export const zhCN: Translations = {
   storageMode: '存储模式',
   storageModeLocal: '本地',
   storageModeRemote: '外部',
+  storageStatusLocal: '当前使用本地存储',
+  storageStatusConnected: '外部存储已连接',
+  storageStatusFailed: '外部存储连接失败',
+  storageStatusNotReady: '外部存储未就绪',
   localModeHint: '默认模式。剪贴板和备忘录只保存在本机 SQLite 数据库中。',
   remoteModeHint: '连接外部 PostgreSQL，剪贴板和备忘录正文只写入外部数据库。',
-  remoteStoragePending: '保存时会自动测试连接并初始化远端表。',
+  remoteStoragePending: '保存时会自动测试连接并初始化远端表',
   connectionMode: '连接方式',
   connectionUrl: '连接 URL',
   connectionManual: '手动填写',
@@ -310,12 +323,9 @@ export const zhCN: Translations = {
   databaseUser: '账号',
   databasePassword: '密码',
   databaseSsl: 'SSL',
-  testConnection: '测试连接',
-  testConnectionPending: '切换到远程模式后可测试连接',
   testingConnection: '测试中...',
   storageConnectionReady: '连接成功，远端表已就绪',
   storageConnectionFailed: '连接失败',
-  saveStorageConfig: '保存配置',
   saveAndUseLocal: '保存并切回本地',
   saveAndUseRemote: '保存并切到远程',
   savingStorageConfig: '保存中...',
@@ -438,6 +448,10 @@ export const en: Translations = {
   noReleaseNotes: 'No release notes',
   backupRestore: 'Backup / Restore',
   backupRestoreDesc: 'Export or restore local clipboard, memos, and settings',
+  backupBeta: 'Beta',
+  backupCompatibilityNotice: 'New .scbackup package files record source and current app versions. Older gzip .scbackup / .json backups are no longer loaded. Cross-version restore is not guaranteed.',
+  backupVersionMeta: (backupVersion, currentVersion) => `Backup v${backupVersion} · Current v${currentVersion}`,
+  unknownVersion: 'Unknown',
   createBackup: 'Create Backup',
   creatingBackup: 'Backing up...',
   backupCreated: 'Backup created',
@@ -454,9 +468,13 @@ export const en: Translations = {
   storageMode: 'Storage Mode',
   storageModeLocal: 'Local',
   storageModeRemote: 'External',
+  storageStatusLocal: 'Using local storage',
+  storageStatusConnected: 'External storage connected',
+  storageStatusFailed: 'External storage connection failed',
+  storageStatusNotReady: 'External storage not ready',
   localModeHint: 'Default mode. Clipboard entries and memos stay in the local SQLite database.',
   remoteModeHint: 'Use external PostgreSQL. Clipboard and memo bodies are written only to the external database.',
-  remoteStoragePending: 'Saving will test the connection and initialize remote tables automatically.',
+  remoteStoragePending: 'Saving will test the connection and initialize remote tables automatically',
   connectionMode: 'Connection',
   connectionUrl: 'URL',
   connectionManual: 'Manual',
@@ -467,12 +485,9 @@ export const en: Translations = {
   databaseUser: 'User',
   databasePassword: 'Password',
   databaseSsl: 'SSL',
-  testConnection: 'Test',
-  testConnectionPending: 'Switch to remote mode to test the connection',
   testingConnection: 'Testing...',
   storageConnectionReady: 'Connected and schema ready',
   storageConnectionFailed: 'Connection failed',
-  saveStorageConfig: 'Save',
   saveAndUseLocal: 'Save and use local',
   saveAndUseRemote: 'Save and use remote',
   savingStorageConfig: 'Saving...',
