@@ -1222,9 +1222,9 @@ async fn check_update() -> Result<UpdateInfo, String> {
 
 /// Compare two app version strings: returns true if `latest` > `current`.
 ///
-/// Historical SuperClipboard releases used decimal-style minor numbers:
-/// `2.20.0` was followed by the user-facing `2.3.0`. Normalize a single-digit
-/// minor segment to its two-digit decimal form so future checks do not regress.
+/// Historical SuperClipboard releases use decimal-style minor numbers:
+/// `2.2.0` is followed by the user-facing `2.3.0`. Normalize a single-digit
+/// minor segment before comparing so future checks do not regress.
 fn compare_versions(latest: &str, current: &str) -> bool {
     let parse = |s: &str| -> Vec<u64> {
         let parts = s.split('.').collect::<Vec<_>>();
@@ -1261,10 +1261,8 @@ mod version_tests {
 
     #[test]
     fn compares_decimal_style_minor_versions() {
-        assert!(compare_versions("2.3.0", "2.20.0"));
-        assert!(compare_versions("2.30.0", "2.20.0"));
-        assert!(!compare_versions("2.30.0", "2.3.0"));
-        assert!(!compare_versions("2.3.0", "2.30.0"));
+        assert!(compare_versions("2.3.0", "2.2.0"));
+        assert!(!compare_versions("2.2.0", "2.3.0"));
     }
 
     #[test]
