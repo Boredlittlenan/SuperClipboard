@@ -78,6 +78,7 @@ interface SettingsButtonProps {
   onVersionTitleTrigger?: (clickCount: number) => void;
   onStorageSettingsEnabledChange?: (enabled: boolean) => void;
   onCategoryTabSortingEnabledChange?: (enabled: boolean) => void;
+  onModernUiChange?: (enabled: boolean) => void;
 }
 
 export default function SettingsButton({
@@ -91,6 +92,7 @@ export default function SettingsButton({
   onVersionTitleTrigger,
   onStorageSettingsEnabledChange,
   onCategoryTabSortingEnabledChange,
+  onModernUiChange,
 }: SettingsButtonProps) {
   const { t, locale, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
@@ -100,6 +102,7 @@ export default function SettingsButton({
   const [rawPreview, setRawPreviewState] = useState(false);
   const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
   const [themeAccent, setThemeAccentState] = useState('default');
+  const [modernUiEnabled, setModernUiEnabled] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [storageSettingsEnabled, setStorageSettingsEnabled] = useState(false);
   const [categoryTabSortingEnabled, setCategoryTabSortingEnabled] = useState(true);
@@ -192,6 +195,11 @@ export default function SettingsButton({
         setThemeAccentState(accent);
         onThemeAccentChange?.(accent);
       }).catch(console.error);
+      getSetting('modern_ui_enabled').then((v) => {
+        const enabled = v === 'true';
+        setModernUiEnabled(enabled);
+        onModernUiChange?.(enabled);
+      }).catch(console.error);
       getSetting('auto_update').then((v) => {
         setAutoUpdate(v === null ? true : v === 'true');
       }).catch(console.error);
@@ -225,6 +233,7 @@ export default function SettingsButton({
     onArchiveEnabledChange,
     onStorageSettingsEnabledChange,
     onCategoryTabSortingEnabledChange,
+    onModernUiChange,
   ]);
 
   // Close panel when clicking outside
@@ -380,6 +389,13 @@ export default function SettingsButton({
     setThemeAccentState(accent);
     onThemeAccentChange?.(accent);
   }, [onThemeAccentChange]);
+
+  const handleModernUiToggle = useCallback(async () => {
+    const newValue = !modernUiEnabled;
+    await setSetting('modern_ui_enabled', newValue ? 'true' : 'false');
+    setModernUiEnabled(newValue);
+    onModernUiChange?.(newValue);
+  }, [modernUiEnabled, onModernUiChange]);
 
   const handleAutoUpdateToggle = useCallback(async () => {
     const newValue = !autoUpdate;
@@ -563,6 +579,17 @@ export default function SettingsButton({
                 <span>{t.themeSakura}</span>
               </button>
             </div>
+          </div>
+
+          {/* UI style */}
+          <div style={styles.compactRow} title={t.modernUiDesc}>
+            <span style={styles.rowLabel}>{t.modernUi}</span>
+            <button
+              style={{ ...styles.toggle, ...(modernUiEnabled ? styles.toggleOn : {}) }}
+              onClick={handleModernUiToggle}
+            >
+              <div style={{ ...styles.toggleKnob, ...(modernUiEnabled ? styles.toggleKnobOn : {}) }} />
+            </button>
           </div>
 
           {/* Autostart */}

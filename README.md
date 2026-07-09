@@ -37,6 +37,7 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 - Version: `2.3.2`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
+- UI style: classic UI by default, with Modern UI available in System Settings
 - Theme mode: follows system
 - Theme accent: blue
 - Auto-start: enabled
@@ -47,17 +48,34 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Usage Notes
 
-- Click a clipboard item to copy it back to the system clipboard.
-- If the window was opened by the global shortcut, clicking a clipboard item also hides the window and simulates `Ctrl+V` into the previously active app.
-- Paste-to-caret is currently timing-sensitive: it depends on the previous app regaining focus after SuperClipboard hides, then sends `Ctrl+V` after a short delay. Some apps or slow focus transitions may make it feel intermittent; this is documented for a future redesign.
-- Repeatedly launching the app shortcut focuses the existing instance instead of creating duplicate tray icons.
-- When the window is visible but covered by another app, pressing the global shortcut brings it back to the front; pressing the shortcut only hides it when it is already the foreground window.
-- Hovering the tray icon shows the localized app name.
-- When upgrading from `SuperClipboard3`, the old local data directory is migrated automatically.
-- Since v2.1.0, image clipboard deduplication uses real image bytes instead of only dimensions, and memo auto tags are inferred by the backend classifier.
-- Since v2.1.6, update checks show release notes before opening GitHub.
-- Since v2.2.0, Storage Settings (Beta) can expose Local / External storage mode configuration.
-- Since v2.3.0, local backup/restore uses the new `.scbackup` package format with manifest, data, and checksum metadata. Older gzip `.scbackup` and raw `.json` backups are no longer loaded.
+### Set a Shortcut
+
+Open Settings, click the shortcut button, then press the desired key combination. `Alt`, `Ctrl`, `Shift`, and `Win` modifiers are supported. Clicking the recording button again cancels the edit; entering the same shortcut again still saves and re-registers it.
+
+### Use Clipboard History
+
+Copied text, links, images, code, emails, and paths are added to the list automatically. Clicking an item copies it back to the system clipboard. If the window was opened by the global shortcut, clicking an item also tries to hide SuperClipboard and send `Ctrl+V` to the previously active app.
+
+When the window is visible but covered by another app, pressing the global shortcut brings it back to the front. The shortcut only hides the window when SuperClipboard is already the foreground window.
+
+### Raw Preview
+
+Raw Preview only affects clipboard entries. Enable it when you want text to preserve original line breaks and spacing, which is useful for code, logs, and config snippets. Disable it for a denser list. Memos always use formatted preview and are not affected by this switch.
+
+### Configure External Storage
+
+The storage entry is hidden by default. Enable `Storage Settings (Beta)` in System Settings first; a storage button appears next to Settings. The panel supports two modes:
+
+- Local: writes data to the local SQLite database and is the default mode.
+- External: saves clipboard and memo bodies to a user-provided PostgreSQL database. Saving automatically tests the connection and initializes remote tables.
+
+Backup / Restore is shown only in Local mode. Backups use the `.scbackup` package format with source version, data manifest, and checksum metadata. Cross-version restore is not guaranteed.
+
+### Classification and Tags
+
+Clipboard entries currently have one primary `category`, so an item can only appear under one category tab. The backend already exposes reusable signals for embedded links, emails, file paths, and code, so single-item multi-tag support is feasible, but it needs a data model upgrade: keep the primary category for compatibility and add a tag table or tag array for filtering, stats, and display.
+
+The current classifier is better at choosing the main content type than representing mixed content. For example, a note containing a link, email, and path still lands in one category. A stronger direction is `primary category + auxiliary tags`: the primary category drives list styling, while auxiliary tags improve multi-tag filtering and search recall.
 
 ## Privacy
 

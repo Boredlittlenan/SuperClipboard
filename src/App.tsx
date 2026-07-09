@@ -58,6 +58,7 @@ function AppContent() {
   const [rawPreview, setRawPreview] = useState(false);
   const [themeAccent, setThemeAccent] = useState('default');
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
+  const [modernUiEnabled, setModernUiEnabled] = useState(false);
   const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(() =>
     window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   );
@@ -142,6 +143,9 @@ function AppContent() {
       .catch(console.error);
     getSetting('category_tab_sorting_enabled')
       .then((v) => setCategoryTabSortingEnabled(v === null ? true : v === 'true'))
+      .catch(console.error);
+    getSetting('modern_ui_enabled')
+      .then((v) => setModernUiEnabled(v === 'true'))
       .catch(console.error);
   }, []);
 
@@ -643,6 +647,7 @@ function AppContent() {
       className={`app-root${isWindowDragging ? ' is-window-dragging' : ''}`}
       data-theme={resolvedTheme}
       data-accent={themeAccent}
+      data-ui-style={modernUiEnabled ? 'modern' : 'classic'}
       data-memo-color={memoColor || undefined}
     >
       {/* Title bar (draggable, frameless window) */}
@@ -665,6 +670,7 @@ function AppContent() {
               onVersionTitleTrigger={handleVersionTitleTrigger}
               onStorageSettingsEnabledChange={setStorageSettingsEnabled}
               onCategoryTabSortingEnabledChange={setCategoryTabSortingEnabled}
+              onModernUiChange={setModernUiEnabled}
             />
           </div>
         </div>
@@ -672,7 +678,12 @@ function AppContent() {
 
       {/* Search bar */}
       <div className="search-bar">
-        <span className="search-icon">&#x1F50D;</span>
+        <span className="search-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m16.5 16.5 4 4" />
+          </svg>
+        </span>
         <input
           ref={searchRef}
           type="text"
@@ -698,11 +709,12 @@ function AppContent() {
         onTabChange={handleTabChange}
         stats={stats}
         memoEnabled={memoEnabled}
-          memoCount={memoCountState}
-          archiveEnabled={archiveEnabled}
-          archiveCount={archiveCountState}
-          categorySortingEnabled={categoryTabSortingEnabled}
-        />
+        memoCount={memoCountState}
+        archiveEnabled={archiveEnabled}
+        archiveCount={archiveCountState}
+        categorySortingEnabled={categoryTabSortingEnabled}
+        modernUi={modernUiEnabled}
+      />
 
       {/* Main content: memo list or clipboard list */}
       {activeTab === 'memo' ? (

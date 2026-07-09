@@ -2,36 +2,46 @@
 :root {
   --bg: #ffffff;
   --surface: #f8f8f8;
+  --surface-raised: #ffffff;
   --hover-bg: #f0f0f0;
   --border: #e5e5e5;
+  --border-strong: #d8d8d8;
   --text-primary: #1a1a1a;
   --text-secondary: #525252;
   --text-muted: #999999;
   --accent: #2563eb;
   --accent-bg: rgba(37, 99, 235, 0.1);
+  --accent-ring: rgba(37, 99, 235, 0.22);
   --code-bg: #f5f5f5;
   --danger: #ef4444;
   --success: #10b981;
   --memo-contrast: #3f3f3f;
   --memo-contrast-bg: rgba(63, 63, 63, 0.1);
   --memo-item-hover-bg: #f5f5f5;
+  --soft-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+  --hairline-highlight: rgba(255, 255, 255, 0.72);
 }
 
 :root[data-theme="dark"],
 .app-root[data-theme="dark"] {
   --bg: #181818;
   --surface: #1e1e1e;
+  --surface-raised: #242424;
   --hover-bg: #252525;
   --border: #2a2a2a;
+  --border-strong: #343434;
   --text-primary: #e5e5e5;
   --text-secondary: #a3a3a3;
   --text-muted: #a3a3a3;
   --accent: #3b82f6;
   --accent-bg: rgba(59, 130, 246, 0.16);
+  --accent-ring: rgba(59, 130, 246, 0.32);
   --code-bg: #1e1e1e;
   --memo-contrast: #3f3f3f;
   --memo-contrast-bg: rgba(63, 63, 63, 0.18);
   --memo-item-hover-bg: #252525;
+  --soft-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  --hairline-highlight: rgba(255, 255, 255, 0.06);
 }
 
 /* shortcut-hint keeps a fixed neutral bg regardless of accent theme */
@@ -41,10 +51,8 @@
 }
 
 :root[data-theme="dark"] .title-bar,
-:root[data-theme="dark"] .search-bar,
 :root[data-theme="dark"] .footer-bar,
 .app-root[data-theme="dark"] .title-bar,
-.app-root[data-theme="dark"] .search-bar,
 .app-root[data-theme="dark"] .footer-bar {
   background: #181818;
 }
@@ -53,6 +61,7 @@
 .app-root[data-accent="sakura"] {
   --accent: #ec5f9e;
   --accent-bg: rgba(236, 95, 158, 0.12);
+  --accent-ring: rgba(236, 95, 158, 0.24);
   --hover-bg: #fff0f6;
   --code-bg: #fff7fb;
   --memo-contrast: #3f3f3f;
@@ -63,6 +72,7 @@
 .app-root[data-theme="dark"][data-accent="sakura"] {
   --accent: #ff85b7;
   --accent-bg: rgba(255, 133, 183, 0.18);
+  --accent-ring: rgba(255, 133, 183, 0.32);
   --hover-bg: #2a1d25;
   --code-bg: #241a20;
   --memo-contrast: #3f3f3f;
@@ -105,6 +115,10 @@
   overflow: hidden;
 }
 
+.app-root[data-ui-style="modern"] {
+  animation: appSurfaceIn 0.16s ease-out;
+}
+
 .app-root.is-window-dragging *,
 .app-root.is-window-dragging *::before,
 .app-root.is-window-dragging *::after {
@@ -125,6 +139,10 @@
   flex-shrink: 0;
 }
 
+.app-root[data-ui-style="modern"] .title-bar {
+  box-shadow: inset 0 1px 0 var(--hairline-highlight);
+}
+
 .title-content {
   display: flex;
   justify-content: space-between;
@@ -139,6 +157,11 @@
   letter-spacing: 0.3px;
 }
 
+.app-root[data-ui-style="modern"] .title-text {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
 .shortcut-hint {
   font-size: 11px;
   color: var(--text-muted);
@@ -146,6 +169,14 @@
   border-radius: 4px;
   background: #e8e8e8;
   font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+}
+
+.app-root[data-ui-style="modern"] .shortcut-hint {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: inset 0 1px 0 var(--hairline-highlight);
 }
 
 /* ─── Search Bar ─── */
@@ -159,10 +190,36 @@
   flex-shrink: 0;
 }
 
+.app-root[data-ui-style="modern"] .search-bar {
+  margin: 8px 10px 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: inset 0 1px 0 var(--hairline-highlight);
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+}
+
+.app-root[data-ui-style="modern"] .search-bar:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring), inset 0 1px 0 var(--hairline-highlight);
+}
+
 .search-icon {
-  font-size: 14px;
-  opacity: 0.5;
+  display: inline-flex;
+  color: var(--text-muted);
   flex-shrink: 0;
+  opacity: 0.65;
+}
+
+.app-root[data-ui-style="modern"] .search-icon {
+  opacity: 1;
+  transition: color 0.14s ease, transform 0.14s ease;
+}
+
+.app-root[data-ui-style="modern"] .search-bar:focus-within .search-icon {
+  color: var(--accent);
+  transform: scale(1.04);
 }
 
 .search-input {
@@ -186,7 +243,24 @@
   cursor: pointer;
   font-size: 12px;
   padding: 2px 4px;
+  border-radius: 4px;
   -webkit-app-region: no-drag;
+}
+
+.app-root[data-ui-style="modern"] .clear-search-btn {
+  background: var(--hover-bg);
+  font-size: 11px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  transition: color 0.14s ease, background 0.14s ease, transform 0.14s ease;
+}
+
+.app-root[data-ui-style="modern"] .clear-search-btn:hover {
+  color: var(--text-primary);
+  background: var(--border);
+  transform: scale(1.05);
 }
 
 .remote-storage-btn {
@@ -382,6 +456,17 @@
   50% { opacity: 0.5; }
 }
 
+@keyframes appSurfaceIn {
+  from {
+    opacity: 0.96;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ─── Tauri Drag Regions ─── */
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
@@ -398,6 +483,11 @@
   color: var(--text-primary) !important;
 }
 
+.app-root[data-ui-style="modern"] .settings-gear-btn:hover {
+  background: var(--surface-raised) !important;
+  box-shadow: 0 0 0 1px var(--border), var(--soft-shadow);
+}
+
 /* ─── Entry Hover Fix (CSS :hover instead of React state) ─── */
 .clipboard-entry {
   background: #ffffff;
@@ -408,6 +498,13 @@
 }
 .clipboard-entry:hover {
   background: var(--hover-bg);
+}
+.app-root[data-ui-style="modern"] .clipboard-entry {
+  transition: background 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+.app-root[data-ui-style="modern"] .clipboard-entry:hover {
+  transform: translateX(1px);
+  box-shadow: inset 3px 0 0 var(--accent-bg);
 }
 
 [data-theme="dark"] .clipboard-entry {
@@ -433,6 +530,13 @@
 .memo-entry:hover {
   background: var(--memo-item-hover-bg);
 }
+.app-root[data-ui-style="modern"] .memo-entry {
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.app-root[data-ui-style="modern"] .memo-entry:hover {
+  transform: translateX(1px);
+  box-shadow: inset 3px 0 0 var(--memo-contrast-bg);
+}
 /* Fixed text colors inside memo entries — readable on white in light mode */
 .memo-entry,
 .memo-entry .memo-selectable {
@@ -448,6 +552,18 @@
 /* Dark mode: use theme-aware colors for memo entries */
 [data-theme="dark"] .memo-entry {
   background: #1e1e1e;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-root,
+  .search-bar,
+  .search-icon,
+  .clear-search-btn,
+  .clipboard-entry,
+  .memo-entry {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 [data-theme="dark"] .memo-entry:hover {
   background: var(--memo-item-hover-bg);

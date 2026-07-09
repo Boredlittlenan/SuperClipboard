@@ -181,6 +181,7 @@ fn initialize_first_run_defaults(storage: &Storage) {
     set_default_setting_if_missing(storage, "auto_update", "true");
     set_default_setting_if_missing(storage, "memo_enabled", "false");
     set_default_setting_if_missing(storage, "archive_enabled", "false");
+    set_default_setting_if_missing(storage, "modern_ui_enabled", "false");
     set_default_setting_if_missing(storage, "autostart", "true");
     set_default_setting_if_missing(storage, "language", detect_system_locale());
     set_default_setting_if_missing(storage, "defaults_schema_version", DEFAULT_SETTINGS_VERSION);

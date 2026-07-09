@@ -95,6 +95,8 @@ export interface Translations {
   themeSystem: string;
   themeLight: string;
   themeDark: string;
+  modernUi: string;
+  modernUiDesc: string;
   autostart: string;
   autostartDesc: string;
   alwaysOnTop: string;
@@ -259,6 +261,8 @@ export const zhCN: Translations = {
   themeSystem: '跟随系统',
   themeLight: '浅色',
   themeDark: '深色',
+  modernUi: '新版界面',
+  modernUiDesc: '切换新版视觉样式，关闭后恢复旧版简洁界面',
   autostart: '开机自启',
   autostartDesc: '系统启动时自动运行',
   alwaysOnTop: '窗口置顶',
@@ -423,6 +427,8 @@ export const en: Translations = {
   themeSystem: 'System',
   themeLight: 'Light',
   themeDark: 'Dark',
+  modernUi: 'Modern UI',
+  modernUiDesc: 'Use the refreshed visual style, or turn off for the classic compact UI',
   autostart: 'Auto-start',
   autostartDesc: 'Launch on system startup',
   alwaysOnTop: 'Always on Top',

@@ -13,6 +13,7 @@ interface Props {
   archiveEnabled?: boolean;
   archiveCount?: number | null;
   categorySortingEnabled?: boolean;
+  modernUi?: boolean;
 }
 
 const TAB_ORDER_SETTING_KEY = 'category_tab_order';
@@ -40,6 +41,7 @@ export default function CategoryTabs({
   archiveEnabled,
   archiveCount,
   categorySortingEnabled = true,
+  modernUi = true,
 }: Props) {
   const { t } = useI18n();
   const [baseTabs, setBaseTabs] = useState<FilterTab[]>(DEFAULT_CLIPBOARD_TABS);
@@ -178,8 +180,8 @@ export default function CategoryTabs({
   }, [onTabChange]);
 
   return (
-    <div style={styles.container}>
-      <div ref={scrollRef} style={styles.scrollArea} onWheel={handleWheel}>
+    <div style={{ ...styles.container, ...(modernUi ? styles.containerModern : {}) }}>
+      <div ref={scrollRef} style={{ ...styles.scrollArea, ...(modernUi ? styles.scrollAreaModern : {}) }} onWheel={handleWheel}>
         {tabs.map((tab) => {
           const isActive = tab === activeTab;
           const count = getCount(tab);
@@ -198,13 +200,16 @@ export default function CategoryTabs({
               title={draggable ? t.dragToReorder : undefined}
               style={{
                 ...styles.tab,
+                ...(modernUi ? styles.tabModern : {}),
                 ...(draggable ? styles.tabDraggable : {}),
                 ...(isActive
-                  ? (tab === 'memo' ? styles.tabActiveMemo : styles.tabActive)
+                  ? (tab === 'memo'
+                    ? { ...styles.tabActiveMemo, ...(modernUi ? styles.tabActiveMemoModern : {}) }
+                    : { ...styles.tabActive, ...(modernUi ? styles.tabActiveModern : {}) })
                   : {}),
-                ...(draggingTab === tab ? styles.tabDragging : {}),
-                ...(insertBefore ? styles.tabInsertBefore : {}),
-                ...(insertAfter ? styles.tabInsertAfter : {}),
+                ...(draggingTab === tab ? { ...styles.tabDragging, ...(modernUi ? styles.tabDraggingModern : {}) } : {}),
+                ...(insertBefore ? (modernUi ? styles.tabInsertBeforeModern : styles.tabInsertBefore) : {}),
+                ...(insertAfter ? (modernUi ? styles.tabInsertAfterModern : styles.tabInsertAfter) : {}),
               }}
               onMouseEnter={(e) => {
                 if (!isActive && draggingTab === null) {
@@ -222,6 +227,7 @@ export default function CategoryTabs({
                 <span
                   style={{
                     ...styles.badge,
+                    ...(modernUi ? styles.badgeModern : {}),
                     ...(isActive ? styles.badgeActive : {}),
                   }}
                 >
@@ -242,12 +248,19 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--surface)',
     overflow: 'hidden',
   },
+  containerModern: {
+    boxShadow: 'inset 0 1px 0 var(--hairline-highlight)',
+  },
   scrollArea: {
     display: 'flex',
     gap: '2px',
     padding: '4px 8px',
     overflowX: 'auto',
     scrollbarWidth: 'none',
+  },
+  scrollAreaModern: {
+    gap: '4px',
+    padding: '5px 8px 6px',
   },
   tab: {
     display: 'flex',
@@ -264,15 +277,24 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
     transition: 'all 0.15s ease',
   },
+  tabModern: {
+    padding: '6px 11px',
+    borderRadius: '999px',
+    fontWeight: 600,
+    transition: 'background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, opacity 0.15s ease',
+  },
   tabDraggable: {
     cursor: 'grab',
     touchAction: 'none',
   },
   tabDragging: {
-    opacity: 0.78,
+    opacity: 0.5,
     cursor: 'grabbing',
-    transform: 'translateY(-1px) scale(1.03)',
-    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.14)',
+  },
+  tabDraggingModern: {
+    opacity: 0.78,
+    transform: 'translateY(-2px) scale(1.03)',
+    boxShadow: '0 8px 18px rgba(0, 0, 0, 0.18)',
   },
   tabInsertBefore: {
     boxShadow: 'inset 2px 0 0 var(--accent)',
@@ -280,13 +302,25 @@ const styles: Record<string, React.CSSProperties> = {
   tabInsertAfter: {
     boxShadow: 'inset -2px 0 0 var(--accent)',
   },
+  tabInsertBeforeModern: {
+    boxShadow: 'inset 3px 0 0 var(--accent), 0 0 0 1px var(--accent-ring)',
+  },
+  tabInsertAfterModern: {
+    boxShadow: 'inset -3px 0 0 var(--accent), 0 0 0 1px var(--accent-ring)',
+  },
   tabActive: {
     background: 'var(--accent)',
     color: '#ffffff',
   },
+  tabActiveModern: {
+    boxShadow: '0 6px 16px var(--accent-ring)',
+  },
   tabActiveMemo: {
     background: 'var(--memo-contrast)',
     color: '#ffffff',
+  },
+  tabActiveMemoModern: {
+    boxShadow: '0 6px 16px var(--memo-contrast-bg)',
   },
   tabLabel: {
     lineHeight: 1,
@@ -304,6 +338,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '10px',
     fontWeight: 600,
     lineHeight: 1,
+  },
+  badgeModern: {
+    background: 'var(--surface-raised)',
+    boxShadow: 'inset 0 0 0 1px var(--border)',
   },
   badgeActive: {
     background: 'rgba(255,255,255,0.25)',
