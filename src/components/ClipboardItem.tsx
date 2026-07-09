@@ -15,11 +15,12 @@ interface Props {
   isArchive?: boolean;
   archiveEnabled?: boolean;
   multiTagEnabled?: boolean;
+  showCategoryIndicator?: boolean;
   onRestore?: (id: number) => void;
   onPermanentDelete?: (id: number) => void;
 }
 
-export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, onEdit, rawPreview, isArchive, archiveEnabled, multiTagEnabled, onRestore, onPermanentDelete }: Props) {
+export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, onEdit, rawPreview, isArchive, archiveEnabled, multiTagEnabled, showCategoryIndicator = true, onRestore, onPermanentDelete }: Props) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(entry.content);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -102,7 +103,9 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
       title={editing ? undefined : t.clickToCopy}
     >
       {/* Category indicator */}
-      <div style={{ ...styles.categoryBar, background: categoryBarBackground }} />
+      {showCategoryIndicator && (
+        <div style={{ ...styles.categoryBar, background: categoryBarBackground }} />
+      )}
 
       <div style={styles.body}>
         {/* Header row */}
@@ -271,7 +274,10 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
               {showOriginal ? t.hideOriginal : t.showOriginal}
             </button>
             {showOriginal && (
-              <div style={styles.originalContent}>
+              <div style={{
+                ...styles.originalContent,
+                ...(showCategoryIndicator ? {} : styles.originalContentNoIndicator),
+              }}>
                 <pre style={styles.originalPre}>{entry.original_content}</pre>
               </div>
             )}
@@ -404,7 +410,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.4,
     color: 'var(--text-primary)',
     fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
-    background: 'var(--code-bg)',
+    background: 'var(--preview-bg)',
     padding: '6px 8px',
     borderRadius: '4px',
     overflow: 'hidden',
@@ -420,7 +426,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.4,
     color: 'var(--text-primary)',
     fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
-    background: 'var(--code-bg)',
+    background: 'var(--preview-bg)',
     padding: '6px 8px',
     borderRadius: '4px',
     whiteSpace: 'pre-wrap',
@@ -447,7 +453,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1.5,
     fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
     color: 'var(--text-primary)',
-    background: 'var(--code-bg, #f5f5f5)',
+    background: 'var(--preview-bg, #f5f5f5)',
     border: '1px solid var(--accent, #3b82f6)',
     borderRadius: '4px',
     padding: '8px',
@@ -510,10 +516,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
   originalContent: {
     marginTop: '4px',
-    background: 'var(--code-bg, #f5f5f5)',
+    background: 'var(--preview-bg, #f5f5f5)',
     borderRadius: '4px',
     padding: '6px 8px',
     borderLeft: '3px solid var(--text-muted)',
+  },
+  originalContentNoIndicator: {
+    borderLeft: 'none',
   },
   originalPre: {
     margin: 0,

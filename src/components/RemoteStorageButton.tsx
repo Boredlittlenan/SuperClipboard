@@ -332,7 +332,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       </button>
 
       {open && (
-        <div style={styles.panel}>
+        <div className="glass-menu-panel" style={styles.panel}>
           <div style={styles.panelTitle}>
             <span>{t.remoteStorage}</span>
             <span style={styles.headerStatus}>
@@ -557,7 +557,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
     position: 'relative',
-    zIndex: 105,
+    zIndex: 1210,
   },
   iconBtn: {
     display: 'flex',
@@ -577,14 +577,16 @@ const styles: Record<string, React.CSSProperties> = {
     top: '36px',
     right: '0',
     width: '300px',
-    maxHeight: 'calc(100vh - 52px)',
+    maxHeight: 'calc(100vh - 48px)',
     overflowY: 'auto',
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: '8px',
-    padding: '10px',
-    zIndex: 230,
-    boxShadow: '0 12px 32px rgba(0, 0, 0, 0.16)',
+    background: 'var(--panel-glass)',
+    border: '1px solid var(--apple-separator)',
+    borderRadius: '12px',
+    padding: '12px',
+    zIndex: 1320,
+    boxShadow: '0 18px 46px rgba(15, 23, 42, 0.2), inset 0 1px 0 var(--hairline-highlight)',
+    backdropFilter: 'blur(44px) saturate(1.9)',
+    WebkitBackdropFilter: 'blur(44px) saturate(1.9)',
   },
   panelTitle: {
     display: 'flex',

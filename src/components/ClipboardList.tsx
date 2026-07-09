@@ -13,6 +13,7 @@ interface Props {
   isArchive?: boolean;
   archiveEnabled?: boolean;
   multiTagEnabled?: boolean;
+  showCategoryIndicator?: boolean;
   onRestore?: (id: number) => void;
   onPermanentDelete?: (id: number) => void;
 }
@@ -28,6 +29,7 @@ export default function ClipboardList({
   isArchive,
   archiveEnabled,
   multiTagEnabled,
+  showCategoryIndicator,
   onRestore,
   onPermanentDelete,
 }: Props) {
@@ -53,7 +55,7 @@ export default function ClipboardList({
   }
 
   return (
-    <div style={styles.list}>
+    <div className="clipboard-list" style={styles.list}>
       {entries.map((entry) => (
         <ClipboardItem
           key={entry.id}
@@ -66,6 +68,7 @@ export default function ClipboardList({
           isArchive={isArchive}
           archiveEnabled={archiveEnabled}
           multiTagEnabled={multiTagEnabled}
+          showCategoryIndicator={showCategoryIndicator}
           onRestore={onRestore}
           onPermanentDelete={onPermanentDelete}
         />

@@ -56,6 +56,7 @@ function AppContent() {
   const [archiveEnabled, setArchiveEnabled] = useState(false);
   const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] = useState(false);
   const [clipboardMultiTagEnabled, setClipboardMultiTagEnabled] = useState(false);
+  const [hideEntryColorStripEnabled, setHideEntryColorStripEnabled] = useState(false);
   const [categoryTabSortingEnabled, setCategoryTabSortingEnabled] = useState(true);
   const [archiveCountState, setArchiveCountState] = useState<number | null>(null);
   const [rawPreview, setRawPreview] = useState(false);
@@ -147,6 +148,9 @@ function AppContent() {
     getSetting('clipboard_multi_tag_enabled')
       .then((v) => setClipboardMultiTagEnabled(v === 'true'))
       .catch(console.error);
+    getSetting('hide_entry_color_strip_enabled')
+      .then((v) => setHideEntryColorStripEnabled(v === 'true'))
+      .catch(console.error);
     getSetting('category_tab_sorting_enabled')
       .then((v) => setCategoryTabSortingEnabled(v === null ? true : v === 'true'))
       .catch(console.error);
@@ -192,6 +196,7 @@ function AppContent() {
 
   const resolvedTheme = themeMode === 'system' ? systemTheme : themeMode;
   const effectiveModernUiEnabled = experimentalFeaturesEnabled && modernUiEnabled;
+  const effectiveEntryColorIndicatorEnabled = !experimentalFeaturesEnabled || !hideEntryColorStripEnabled;
 
   useEffect(() => {
     document.documentElement.dataset.theme = resolvedTheme;
@@ -672,6 +677,7 @@ function AppContent() {
               <ExperimentalFeaturesButton
                 onClipboardMultiTagChange={setClipboardMultiTagEnabled}
                 onModernUiChange={setModernUiEnabled}
+                onHideEntryColorStripChange={setHideEntryColorStripEnabled}
               />
             )}
             <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
@@ -692,7 +698,7 @@ function AppContent() {
       </div>
 
       {/* Search bar */}
-      <div className="search-bar">
+      <div className={`search-bar${activeTab === 'memo' ? ' search-bar-memo' : ''}`}>
         <span className="search-icon" aria-hidden="true">
           <Search size={15} strokeWidth={2.2} />
         </span>
@@ -785,6 +791,7 @@ function AppContent() {
                 isArchive={true}
                 archiveEnabled={archiveEnabled}
                 multiTagEnabled={experimentalFeaturesEnabled && clipboardMultiTagEnabled}
+                showCategoryIndicator={effectiveEntryColorIndicatorEnabled}
                 onRestore={handleRestore}
                 onPermanentDelete={handlePermanentDelete}
               />
@@ -821,6 +828,7 @@ function AppContent() {
           loading={loading}
           archiveEnabled={archiveEnabled}
           multiTagEnabled={experimentalFeaturesEnabled && clipboardMultiTagEnabled}
+          showCategoryIndicator={effectiveEntryColorIndicatorEnabled}
           onRestore={handleRestore}
           onPermanentDelete={handlePermanentDelete}
         />

@@ -6,36 +6,43 @@ import { useI18n } from '../i18n';
 
 const SETTING_KEYS = {
   clipboardMultiTag: 'clipboard_multi_tag_enabled',
+  hideEntryColorStrip: 'hide_entry_color_strip_enabled',
   modernUi: 'modern_ui_enabled',
 };
 
 interface ExperimentalFeaturesButtonProps {
   onClipboardMultiTagChange?: (enabled: boolean) => void;
+  onHideEntryColorStripChange?: (enabled: boolean) => void;
   onModernUiChange?: (enabled: boolean) => void;
 }
 
-export default function ExperimentalFeaturesButton({ onClipboardMultiTagChange, onModernUiChange }: ExperimentalFeaturesButtonProps) {
+export default function ExperimentalFeaturesButton({ onClipboardMultiTagChange, onHideEntryColorStripChange, onModernUiChange }: ExperimentalFeaturesButtonProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [clipboardMultiTagEnabled, setClipboardMultiTagEnabled] = useState(false);
+  const [hideEntryColorStripEnabled, setHideEntryColorStripEnabled] = useState(false);
   const [modernUiEnabled, setModernUiEnabled] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     Promise.all([
       getSetting(SETTING_KEYS.clipboardMultiTag),
+      getSetting(SETTING_KEYS.hideEntryColorStrip),
       getSetting(SETTING_KEYS.modernUi),
     ])
-      .then(([multiTagValue, modernUiValue]) => {
+      .then(([multiTagValue, hideStripValue, modernUiValue]) => {
         const multiTagEnabled = multiTagValue === 'true';
+        const hideStripEnabled = hideStripValue === 'true';
         const modernEnabled = modernUiValue === 'true';
         setClipboardMultiTagEnabled(multiTagEnabled);
+        setHideEntryColorStripEnabled(hideStripEnabled);
         setModernUiEnabled(modernEnabled);
         onClipboardMultiTagChange?.(multiTagEnabled);
+        onHideEntryColorStripChange?.(hideStripEnabled);
         onModernUiChange?.(modernEnabled);
       })
       .catch(console.error);
-  }, [onClipboardMultiTagChange, onModernUiChange]);
+  }, [onClipboardMultiTagChange, onHideEntryColorStripChange, onModernUiChange]);
 
   useEffect(() => {
     if (!open) return;
@@ -64,6 +71,13 @@ export default function ExperimentalFeaturesButton({ onClipboardMultiTagChange, 
     onModernUiChange?.(nextEnabled);
   }, [modernUiEnabled, onModernUiChange]);
 
+  const handleHideEntryColorStripToggle = useCallback(async () => {
+    const nextEnabled = !hideEntryColorStripEnabled;
+    await setSetting(SETTING_KEYS.hideEntryColorStrip, nextEnabled ? 'true' : 'false');
+    setHideEntryColorStripEnabled(nextEnabled);
+    onHideEntryColorStripChange?.(nextEnabled);
+  }, [hideEntryColorStripEnabled, onHideEntryColorStripChange]);
+
   return (
     <div style={styles.wrapper} ref={panelRef}>
       <button
@@ -79,7 +93,7 @@ export default function ExperimentalFeaturesButton({ onClipboardMultiTagChange, 
       </button>
 
       {open && (
-        <div style={styles.panel}>
+        <div className="glass-menu-panel" style={styles.panel}>
           <div style={styles.panelTitle}>{t.experimentalFeatures}</div>
           <div style={styles.compactRow} title={t.modernUiDesc}>
             <span style={styles.rowLabel}>{t.modernUi}</span>
@@ -99,6 +113,15 @@ export default function ExperimentalFeaturesButton({ onClipboardMultiTagChange, 
               <div style={{ ...styles.toggleKnob, ...(clipboardMultiTagEnabled ? styles.toggleKnobOn : {}) }} />
             </button>
           </div>
+          <div style={styles.compactRow} title={t.hideEntryColorStripDesc}>
+            <span style={styles.rowLabel}>{t.hideEntryColorStrip}</span>
+            <button
+              style={{ ...styles.toggle, ...(hideEntryColorStripEnabled ? styles.toggleOn : {}) }}
+              onClick={handleHideEntryColorStripToggle}
+            >
+              <div style={{ ...styles.toggleKnob, ...(hideEntryColorStripEnabled ? styles.toggleKnobOn : {}) }} />
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -108,7 +131,7 @@ export default function ExperimentalFeaturesButton({ onClipboardMultiTagChange, 
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
     position: 'relative',
-    zIndex: 110,
+    zIndex: 1220,
   },
   iconBtn: {
     display: 'flex',
@@ -128,12 +151,16 @@ const styles: Record<string, React.CSSProperties> = {
     top: '36px',
     right: '0',
     width: '220px',
-    background: 'var(--surface)',
-    border: '1px solid var(--border)',
-    borderRadius: '8px',
-    padding: '10px',
-    zIndex: 220,
-    boxShadow: '0 12px 32px rgba(0, 0, 0, 0.16)',
+    maxHeight: 'calc(100vh - 48px)',
+    overflowY: 'auto',
+    background: 'var(--panel-glass)',
+    border: '1px solid var(--apple-separator)',
+    borderRadius: '12px',
+    padding: '12px',
+    zIndex: 1310,
+    boxShadow: '0 18px 46px rgba(15, 23, 42, 0.2), inset 0 1px 0 var(--hairline-highlight)',
+    backdropFilter: 'blur(44px) saturate(1.9)',
+    WebkitBackdropFilter: 'blur(44px) saturate(1.9)',
   },
   panelTitle: {
     display: 'flex',

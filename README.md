@@ -12,8 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_2.5.0_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_2.5.0_x64_en-US.msi`: MSI package
+- `SuperClipboard_3.0.0_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_3.0.0_x64_en-US.msi`: MSI package
 
 ## Highlights
 
@@ -25,7 +25,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Global shortcut, tray controls, single-instance launch, and auto-start support
 - Theme mode switcher with System / Light / Dark and independent accent colors
 - Storage settings with Local / External PostgreSQL modes and `.scbackup` local backup/restore tools
-- Experimental features panel for optional Modern UI and clipboard multi-tag display
+- Experimental features panel for optional Modern UI, clipboard multi-tag display, and color-strip hiding
 - First launch follows the system language, with Chinese and English UI available
 - Built-in update check through GitHub Releases with release notes preview
 
@@ -35,7 +35,7 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `2.5.0`
+- Version: `3.0.0`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - UI style: classic UI by default, with Modern UI available in Experimental Features
@@ -76,8 +76,9 @@ Backup / Restore is shown only in Local mode. Backups use the `.scbackup` packag
 
 Enable Experimental Features in Settings to show the lab button next to Storage Settings. Experimental options are off by default.
 
-- Modern UI: switches from the classic compact interface to the refreshed visual style.
+- Modern UI: switches from the classic compact interface to the refreshed glass-style visual system.
 - Clipboard Multi-tag Display: shows every detected category tag on clipboard entries and uses a segmented category color bar.
+- Hide Entry Color Strip: hides the left category strip on clipboard entries and the original-content left border.
 
 ### Classification and Tags
 

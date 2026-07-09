@@ -111,6 +111,8 @@ export interface Translations {
   experimentalFeaturesDesc: string;
   clipboardMultiTag: string;
   clipboardMultiTagDesc: string;
+  hideEntryColorStrip: string;
+  hideEntryColorStripDesc: string;
   categoryTabSorting: string;
   categoryTabSortingDesc: string;
   version: string;
@@ -279,6 +281,8 @@ export const zhCN: Translations = {
   experimentalFeaturesDesc: '显示实验功能入口，实验功能默认关闭',
   clipboardMultiTag: '剪贴板多标签显示',
   clipboardMultiTagDesc: '在剪贴板条目中显示所有识别出的分类标签',
+  hideEntryColorStrip: '隐藏条目色条',
+  hideEntryColorStripDesc: '隐藏剪贴板条目左侧的分类色条和原文左侧边框',
   categoryTabSorting: '标签排序',
   categoryTabSortingDesc: '允许直接拖动剪贴板分类标签调整顺序',
   version: '版本号',
@@ -447,6 +451,8 @@ export const en: Translations = {
   experimentalFeaturesDesc: 'Show the experimental features entry. Experimental features are off by default.',
   clipboardMultiTag: 'Clipboard Multi-tag Display',
   clipboardMultiTagDesc: 'Show every detected category tag on clipboard entries',
+  hideEntryColorStrip: 'Hide Entry Color Strip',
+  hideEntryColorStripDesc: 'Hide the category color strip and original-content left border on clipboard entries',
   categoryTabSorting: 'Tab Sorting',
   categoryTabSortingDesc: 'Allow dragging clipboard category tabs to reorder them',
   version: 'Version',

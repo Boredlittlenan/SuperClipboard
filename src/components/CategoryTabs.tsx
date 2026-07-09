@@ -249,7 +249,14 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
   },
   containerModern: {
-    boxShadow: 'inset 0 1px 0 var(--hairline-highlight)',
+    borderBottom: 'none',
+    position: 'relative',
+    zIndex: 20,
+    marginBottom: '3px',
+    background: 'var(--tab-glass)',
+    boxShadow: '0 5px 12px rgba(15, 23, 42, 0.035), inset 0 1px 0 var(--hairline-highlight)',
+    backdropFilter: 'blur(22px) saturate(1.36)',
+    WebkitBackdropFilter: 'blur(22px) saturate(1.36)',
   },
   scrollArea: {
     display: 'flex',
@@ -316,14 +323,14 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#ffffff',
   },
   tabActiveModern: {
-    boxShadow: '0 6px 16px var(--accent-ring)',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 1px 2px rgba(15, 23, 42, 0.1)',
   },
   tabActiveMemo: {
     background: 'var(--memo-contrast)',
     color: '#ffffff',
   },
   tabActiveMemoModern: {
-    boxShadow: '0 6px 16px var(--memo-contrast-bg)',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 2px rgba(15, 23, 42, 0.1)',
   },
   tabLabel: {
     display: 'inline-flex',
