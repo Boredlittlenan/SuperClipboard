@@ -1,4 +1,4 @@
-use crate::classifier::{classify_image, classify_text, Category};
+use crate::classifier::{classify_image, classify_image_tags, classify_text_tags, Category};
 use crate::remote_storage;
 use crate::storage::{ClipboardEntry, Storage};
 use arboard::Clipboard;
@@ -66,6 +66,7 @@ impl ClipboardMonitor {
                                     let entry = ClipboardEntry {
                                         id: 0,
                                         category: classify_image(),
+                                        category_tags: classify_image_tags(),
                                         content_type: "image/png".to_string(),
                                         content: data,
                                         preview,
@@ -115,12 +116,14 @@ impl ClipboardMonitor {
                         }
                         last_clipboard_hash = hash.clone();
 
-                        let category = classify_text(&text);
+                        let category_tags = classify_text_tags(&text);
+                        let category = category_tags.first().cloned().unwrap_or(Category::Text);
                         let preview = generate_preview(&text, &category);
 
                         let entry = ClipboardEntry {
                             id: 0,
                             category: category.clone(),
+                            category_tags,
                             content_type: "text/plain".to_string(),
                             content: text,
                             preview,

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type React from 'react';
+import { Archive, GripVertical, NotebookText, Pencil, Pin, Plus, Trash2 } from 'lucide-react';
 import type { Memo } from '../types';
 import {
   getMemos,
@@ -9,13 +10,13 @@ import {
   toggleMemoPin,
   reorderMemos,
   archiveMemo,
+  memoCount,
   memoArchiveCount,
   inferMemoTagTypes,
   type MemoAutoTagType,
 } from '../api/memos';
 import { useI18n } from '../i18n';
 import { formatRelativeTime, getCategoryColor } from '../utils';
-import { TrashIcon } from './icons/TrashIcon';
 import MemoRichEditor from './MemoRichEditor';
 import {
   hasMemoImage,
@@ -67,6 +68,21 @@ function getAutoMemoTagType(tag: string, detectedTypes: MemoAutoTagType[], label
   return null;
 }
 
+function isKnownAutoTagLabel(tag: string, labels: MemoTagLabels): boolean {
+  const key = normalizeTag(tag);
+  return (Object.keys(AUTO_TAG_ALIASES) as MemoAutoTagType[]).some((type) => {
+    const knownLabels = [...AUTO_TAG_ALIASES[type], labels[type]];
+    return knownLabels.some(label => normalizeTag(label) === key);
+  });
+}
+
+function filterStaleAutoTags(tags: string, detectedTypes: MemoAutoTagType[], labels: MemoTagLabels): string[] {
+  return splitTags(tags).filter((tag) => {
+    if (getAutoMemoTagType(tag, detectedTypes, labels)) return true;
+    return !isKnownAutoTagLabel(tag, labels);
+  });
+}
+
 function isMemoBodyCollapsible(body: string): boolean {
   if (!body) return false;
   const blocks = parseMemoBody(body);
@@ -113,10 +129,11 @@ interface Props {
   archiveEnabled?: boolean;
   refreshKey?: number;
   onCountChange?: (count: number) => void;
+  onTotalCountChange?: (count: number) => void;
   onArchiveCountChange?: (count: number) => void;
 }
 
-export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, onCountChange, onArchiveCountChange }: Props) {
+export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, onCountChange, onTotalCountChange, onArchiveCountChange }: Props) {
   const { t } = useI18n();
   const [memos, setMemos] = useState<Memo[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -135,10 +152,23 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   const fetchInFlightRef = useRef(false);
   const fetchPendingRef = useRef(false);
 
+  const refreshTotalCount = useCallback(async () => {
+    try {
+      const count = await memoCount();
+      onTotalCountChange?.(count);
+    } catch (err) {
+      console.error('Failed to refresh memo count:', err);
+    }
+  }, [onTotalCountChange]);
+
   // Keep editingIdRef in sync with editingId state
   useEffect(() => {
     editingIdRef.current = editingId;
   }, [editingId]);
+
+  useEffect(() => {
+    onCountChange?.(memos.length);
+  }, [memos.length, onCountChange]);
 
   // ─── Fetch memos ──────────────────────────────────────────
   const fetchMemos = useCallback(async () => {
@@ -153,7 +183,6 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       const data = await getMemos(filter);
       if (fetchRequestRef.current !== requestId) return;
       setMemos(data);
-      onCountChange?.(data.length);
       const tagTypeEntries = await Promise.all(
         data.map(async (memo) => {
           try {
@@ -175,7 +204,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
         setFetchNonce((value) => value + 1);
       }
     }
-  }, [searchQuery, onCountChange]);
+  }, [searchQuery]);
 
   useEffect(() => {
     fetchMemos();
@@ -217,9 +246,10 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     setSavingMemo(true);
     try {
       const autoTagTypes = await inferMemoTagTypes(editDraft.title, editDraft.body);
+      const memoTagLabels = getMemoTagLabels(t);
       const finalTags = mergeTags(
-        editDraft.tags,
-        inferMemoTags(autoTagTypes, getMemoTagLabels(t))
+        filterStaleAutoTags(editDraft.tags, autoTagTypes, memoTagLabels).join(','),
+        inferMemoTags(autoTagTypes, memoTagLabels)
       );
       const hasContent = editDraft.title.trim() || editDraft.body.trim() || editDraft.tags.trim();
       if (!hasContent && newMemoIdRef.current === id) {
@@ -230,7 +260,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
           delete next[id];
           return next;
         });
-        onCountChange?.(Math.max(0, memos.length - 1));
+        void refreshTotalCount();
       } else {
         const updated = await updateMemo(id, editDraft.title, editDraft.body, finalTags);
         if (!updated) throw new Error('Memo update failed');
@@ -247,7 +277,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       console.error('Failed to save memo:', err);
       setSavingMemo(false);
     }
-  }, [editDraft, memos.length, onCountChange, savingMemo, stopEditing, t]);
+  }, [editDraft, refreshTotalCount, savingMemo, stopEditing, t]);
 
   const handleCancelEditing = useCallback(async () => {
     const id = editingIdRef.current;
@@ -260,14 +290,14 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       if (newMemoIdRef.current === id) {
         await deleteMemo(id);
         setMemos(prev => prev.filter(m => m.id !== id));
-        onCountChange?.(Math.max(0, memos.length - 1));
+        void refreshTotalCount();
       }
     } catch (err) {
       console.error('Failed to cancel memo editing:', err);
     } finally {
       stopEditing();
     }
-  }, [memos.length, onCountChange, stopEditing]);
+  }, [refreshTotalCount, stopEditing]);
 
   const expandMemo = useCallback((id: number) => {
     setExpandedMemoIds(prev => {
@@ -299,6 +329,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       // Not editing — create new memo and start editing
       const newMemo = await createMemo('', '', '');
       setMemos(prev => [newMemo, ...prev]);
+      void refreshTotalCount();
       newMemoIdRef.current = newMemo.id;
       editingIdRef.current = newMemo.id;
       startEditing(newMemo);
@@ -312,13 +343,19 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     try {
       if (archiveEnabled) {
         await archiveMemo(id);
-        setMemos(prev => prev.filter(m => m.id !== id));
         // Refresh archive count
         const count = await memoArchiveCount();
         onArchiveCountChange?.(count);
       } else {
         await deleteMemo(id);
       }
+      setMemos(prev => prev.filter(m => m.id !== id));
+      setAutoTagTypesByMemoId(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      void refreshTotalCount();
       if (editingId === id) {
         setEditingId(null);
         setEditDraft(null);
@@ -454,7 +491,11 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     const hasImages = hasMemoImage(memo.body);
     const canExpand = !isEditing && isMemoBodyCollapsible(memo.body);
     const memoTagLabels = getMemoTagLabels(t);
+    const hasAutoTagInfo = Object.prototype.hasOwnProperty.call(autoTagTypesByMemoId, memo.id);
     const detectedAutoTagTypes = autoTagTypesByMemoId[memo.id] ?? [];
+    const visibleTags = hasAutoTagInfo
+      ? filterStaleAutoTags(memo.tags, detectedAutoTagTypes, memoTagLabels)
+      : splitTags(memo.tags);
 
     return (
       <div
@@ -503,7 +544,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                     }}
                     onPointerDown={(e) => handlePointerDown(e, memo.id)}
                   >
-                    {'\u2261'}
+                    <GripVertical size={14} />
                   </span>
                 )}
                 <div style={styles.hoverActions}>
@@ -512,7 +553,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                     onClick={(e) => { e.stopPropagation(); startEditing(memo); }}
                     title={t.edit}
                   >
-                    {'\u270E'}
+                    <Pencil size={13} />
                   </button>
                   <button
                     style={{
@@ -522,14 +563,14 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                     onClick={(e) => { e.stopPropagation(); handleTogglePin(memo.id); }}
                     title={memo.pinned ? t.unpin : t.pin}
                   >
-                    {'\uD83D\uDCCC'}
+                    <Pin size={13} />
                   </button>
                   <button
                     style={{ ...styles.actionBtn, ...styles.deleteBtn }}
                     onClick={(e) => { e.stopPropagation(); handleDelete(memo.id); }}
                     title={archiveEnabled ? t.archiveSetting : t.delete}
                   >
-                    {archiveEnabled ? '\uD83D\uDDD1\uFE0F' : <TrashIcon />}
+                    {archiveEnabled ? <Archive size={13} /> : <Trash2 size={13} />}
                   </button>
                 </div>
               </div>
@@ -616,51 +657,55 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                   {renderMemoBody(memo.body, isExpanded ? 10000 : MEMO_COLLAPSE_TEXT_LIMIT, isExpanded ? 220 : 72)}
                 </div>
               )}
-              {memo.tags && (
-                <div style={styles.tags}>
-                  {memo.tags.split(',').filter(Boolean).map((tag, i) => {
-                    const autoTagType = getAutoMemoTagType(
-                      tag,
-                      detectedAutoTagTypes,
-                      memoTagLabels
-                    );
-                    const color = autoTagType ? getCategoryColor(AUTO_TAG_CATEGORY[autoTagType]) : null;
-                    return (
-                      <span key={i} style={{
-                        ...styles.tag,
-                        ...(color ? {
-                          background: `${color}20`,
-                          color,
-                        } : styles.manualTag),
-                      }}>{tag.trim()}</span>
-                    );
-                  })}
-                </div>
-              )}
               {/* Timestamps */}
               <div style={styles.timestampRow}>
-                <span className="memo-time" style={styles.timestamp}>{formatRelativeTime(memo.created_at, t)}</span>
-                {memo.updated_at && memo.updated_at !== memo.created_at && (
-                  <span style={styles.editedBadge}>
-                    {t.editedAt(formatRelativeTime(memo.updated_at, t))}
-                  </span>
-                )}
-                {memo.pinned && <span style={styles.pinBadge}>{'\uD83D\uDCCC'}</span>}
-                {canExpand && (
-                  <button
-                    style={styles.expandBtn}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isExpanded) {
-                        collapseMemo(memo.id);
-                      } else {
-                        expandMemo(memo.id);
-                      }
-                    }}
-                  >
-                    {isExpanded ? t.memoShowLess : t.memoShowMore}
-                  </button>
-                )}
+                <div style={styles.timestampLeft}>
+                  <span className="memo-time" style={styles.timestamp}>{formatRelativeTime(memo.created_at, t)}</span>
+                  {memo.updated_at && memo.updated_at !== memo.created_at && (
+                    <span style={styles.editedBadge}>
+                      {t.editedAt(formatRelativeTime(memo.updated_at, t))}
+                    </span>
+                  )}
+                  {memo.pinned && <Pin size={12} style={styles.pinBadge} />}
+                </div>
+                <div style={styles.timestampRight}>
+                  {visibleTags.length > 0 && (
+                    <div style={styles.tags}>
+                      {visibleTags.map((tag, i) => {
+                        const autoTagType = getAutoMemoTagType(
+                          tag,
+                          detectedAutoTagTypes,
+                          memoTagLabels
+                        );
+                        const color = autoTagType ? getCategoryColor(AUTO_TAG_CATEGORY[autoTagType]) : null;
+                        return (
+                          <span key={i} style={{
+                            ...styles.tag,
+                            ...(color ? {
+                              borderColor: `${color}55`,
+                              color,
+                            } : styles.manualTag),
+                          }}>{tag.trim()}</span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {canExpand && (
+                    <button
+                      style={styles.expandBtn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isExpanded) {
+                          collapseMemo(memo.id);
+                        } else {
+                          expandMemo(memo.id);
+                        }
+                      }}
+                    >
+                      {isExpanded ? t.memoShowLess : t.memoShowMore}
+                    </button>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -674,10 +719,10 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     return (
       <div style={styles.container}>
         <div style={{ padding: '8px 12px' }}>
-          <button style={styles.newBtn} onClick={handleCreate}>+ {t.memoNew}</button>
+          <button style={styles.newBtn} onClick={handleCreate}><Plus size={13} /> {t.memoNew}</button>
         </div>
         <div style={styles.empty}>
-          <span style={styles.emptyIcon}>{'\uD83D\uDCDD'}</span>
+          <NotebookText style={styles.emptyIcon} />
           <span style={styles.emptyText}>{t.memoEmpty}</span>
           <span style={styles.emptyHint}>{t.memoEmptyHint}</span>
         </div>
@@ -689,7 +734,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   return (
     <div style={styles.container}>
       <div style={{ padding: '8px 12px', flexShrink: 0 }}>
-        <button style={styles.newBtn} onClick={handleCreate}>+ {t.memoNew}</button>
+        <button style={styles.newBtn} onClick={handleCreate}><Plus size={13} /> {t.memoNew}</button>
       </div>
       <div style={styles.list}>
         {pinnedMemos.map(m => renderMemoItem(m, false))}
@@ -733,6 +778,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   newBtn: {
     width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '4px',
+    minHeight: '34px',
     padding: '8px 0',
     border: '1px dashed var(--memo-contrast)',
     borderRadius: '6px',
@@ -740,6 +790,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--memo-contrast)',
     fontSize: '12px',
     fontWeight: 500,
+    lineHeight: 1,
     cursor: 'pointer',
     transition: 'all 0.15s',
   },
@@ -758,7 +809,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '40px 20px',
   },
   emptyIcon: {
-    fontSize: '36px',
+    width: '36px',
+    height: '36px',
     opacity: 0.5,
   },
   emptyText: {
@@ -794,11 +846,12 @@ const styles: Record<string, React.CSSProperties> = {
   memoHeader: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     background: 'var(--memo-contrast-bg)',
-    padding: '4px 6px',
+    padding: '3px 6px',
     borderRadius: '4px',
     margin: '-2px -4px 2px -4px',
+    minHeight: '26px',
   },
   memoHeaderEditing: {
     width: '100%',
@@ -813,6 +866,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+    lineHeight: '22px',
   },
   memoActions: {
     display: 'flex',
@@ -823,13 +877,16 @@ const styles: Record<string, React.CSSProperties> = {
 
   // ─── Drag handle ──────────────────────────────────────────
   dragHandle: {
-    fontSize: '14px',
+    width: '18px',
+    height: '22px',
     color: 'var(--text-muted)',
     opacity: 0.4,
     cursor: 'grab',
-    lineHeight: 1,
-    padding: '0 2px',
+    padding: 0,
     userSelect: 'none' as const,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   dragHandleDisabled: {
     cursor: 'default',
@@ -839,18 +896,23 @@ const styles: Record<string, React.CSSProperties> = {
   // ─── Hover action buttons ─────────────────────────────────
   hoverActions: {
     display: 'flex',
+    alignItems: 'center',
     gap: '4px',
   },
   actionBtn: {
+    width: '22px',
+    height: '22px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     border: 'none',
+    borderRadius: '4px',
     background: 'transparent',
     color: 'var(--text-muted)',
-    fontSize: '14px',
     cursor: 'pointer',
-    padding: '0 4px',
-    lineHeight: 1,
+    padding: 0,
     opacity: 0.5,
-    transition: 'opacity 0.15s',
+    transition: 'opacity 0.15s, background 0.12s',
   },
   actionBtnActive: {
     opacity: 1,
@@ -895,6 +957,10 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: 'visible',
   },
   expandBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '18px',
     border: 'none',
     background: 'transparent',
     color: 'var(--text-muted)',
@@ -902,50 +968,82 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '11px',
     fontWeight: 500,
     cursor: 'pointer',
-    lineHeight: 1.2,
-    marginLeft: 'auto',
+    lineHeight: 1,
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
   },
   tags: {
     display: 'flex',
     gap: '4px',
     flexWrap: 'wrap',
+    alignItems: 'center',
     justifyContent: 'flex-end',
-    marginTop: '2px',
   },
   tag: {
-    display: 'inline-block',
-    padding: '2px 8px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '18px',
+    padding: '0 6px',
     borderRadius: '10px',
     fontSize: '10px',
     fontWeight: 600,
     textTransform: 'uppercase' as const,
     letterSpacing: '0.5px',
+    border: '1px solid transparent',
+    background: 'transparent',
+    lineHeight: 1,
   },
   manualTag: {
-    background: 'var(--memo-contrast-bg)',
+    background: 'transparent',
+    borderColor: 'var(--memo-contrast)',
     color: 'var(--memo-contrast)',
   },
   timestampRow: {
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: '6px',
     marginTop: '2px',
+    minHeight: '18px',
+  },
+  timestampLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  timestampRight: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '6px',
+    minWidth: 0,
+    maxWidth: '72%',
+    flex: '0 1 auto',
     flexWrap: 'wrap',
   },
   timestamp: {
     fontSize: '11px',
     color: 'var(--text-muted)',
+    lineHeight: '18px',
   },
   editedBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '18px',
     fontSize: '10px',
     color: 'var(--memo-contrast)',
     background: 'var(--memo-contrast-bg, rgba(236,95,158,0.08))',
-    padding: '1px 6px',
+    padding: '0 6px',
     borderRadius: '8px',
     fontWeight: 500,
+    lineHeight: 1,
   },
   pinBadge: {
-    fontSize: '12px',
+    flexShrink: 0,
   },
 
   // ─── Inline editor ────────────────────────────────────────

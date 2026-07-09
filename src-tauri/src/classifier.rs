@@ -165,13 +165,95 @@ pub fn contains_file_path(text: &str) -> bool {
         || EMBEDDED_UNIX_PATH_RE.is_match(text)
         || text.split_whitespace().any(|token| {
             let trimmed = trim_token_punctuation(token);
-            WINDOWS_PATH_RE.is_match(trimmed) || UNIX_PATH_RE.is_match(trimmed)
+            WINDOWS_PATH_RE.is_match(trimmed)
+                || trimmed.starts_with("./")
+                || trimmed.starts_with("../")
+                || trimmed.starts_with("~/")
         })
 }
 
 pub fn contains_code(text: &str) -> bool {
     let trimmed = text.trim();
-    looks_like_json_code(trimmed) || score_code(trimmed) >= CODE_SCORE_THRESHOLD
+    let code_scoring_text = strip_non_code_tokens(trimmed);
+    looks_like_json_code(trimmed) || score_code(&code_scoring_text) >= CODE_SCORE_THRESHOLD
+}
+
+fn strip_non_code_tokens(text: &str) -> String {
+    let without_urls = URL_RE.replace_all(text, " ");
+    let without_emails = EMBEDDED_EMAIL_RE.replace_all(&without_urls, " ");
+    let without_windows_paths = EMBEDDED_WINDOWS_PATH_RE.replace_all(&without_emails, " ");
+    let without_unix_paths = EMBEDDED_UNIX_PATH_RE.replace_all(&without_windows_paths, " ");
+    without_unix_paths.to_string()
+}
+
+fn has_plain_text_after_structured_tokens(text: &str) -> bool {
+    text.lines().any(|line| {
+        let sanitized = strip_non_code_tokens(line);
+        let trimmed = sanitized.trim();
+        has_word_like_char(trimmed) && !looks_like_code_line(trimmed)
+    })
+}
+
+fn has_word_like_char(text: &str) -> bool {
+    text.chars()
+        .any(|c| c.is_alphanumeric() || ('\u{4e00}'..='\u{9fff}').contains(&c))
+}
+
+fn looks_like_code_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if matches!(trimmed, "{" | "}" | ");" | "};") {
+        return true;
+    }
+    if trimmed.contains("/*") || trimmed.contains("*/") || trimmed.starts_with("//") {
+        return true;
+    }
+    if CSS_PROPERTY_RE.is_match(trimmed) || CSS_SELECTOR_RE.is_match(trimmed) {
+        return true;
+    }
+    if trimmed.ends_with('{') && (trimmed.contains('.') || trimmed.contains('#')) {
+        return true;
+    }
+    let keyword_matches = CODE_KEYWORDS.find_iter(trimmed).take(1).count();
+    let syntax_matches = CODE_SYNTAX.find_iter(trimmed).take(1).count();
+    keyword_matches > 0 || syntax_matches > 0
+}
+
+fn push_unique_category(categories: &mut Vec<Category>, category: Category) {
+    if !categories.contains(&category) {
+        categories.push(category);
+    }
+}
+
+/// Return every category signal detected for a text clipboard entry.
+pub fn classify_text_tags(text: &str) -> Vec<Category> {
+    let mut categories = Vec::new();
+    let primary = classify_text(text);
+
+    if contains_link(text) {
+        push_unique_category(&mut categories, Category::Link);
+    }
+    if contains_email(text) {
+        push_unique_category(&mut categories, Category::Email);
+    }
+    if contains_file_path(text) {
+        push_unique_category(&mut categories, Category::FilePath);
+    }
+    if contains_code(text) {
+        push_unique_category(&mut categories, Category::Code);
+    }
+    if has_plain_text_after_structured_tokens(text) {
+        push_unique_category(&mut categories, Category::Text);
+    } else if primary != Category::Text {
+        push_unique_category(&mut categories, primary);
+    }
+
+    if categories.is_empty() {
+        categories.push(Category::Text);
+    }
+    categories
 }
 
 /// Score the content for code-likeness and classify
@@ -300,6 +382,10 @@ pub fn classify_text(text: &str) -> Category {
 /// Classify image content
 pub fn classify_image() -> Category {
     Category::Image
+}
+
+pub fn classify_image_tags() -> Vec<Category> {
+    vec![Category::Image]
 }
 
 #[cfg(test)]
@@ -446,5 +532,45 @@ mod tests {
             "Config lives in /Users/test/app/config.json"
         ));
         assert!(contains_code("const value = items.map(item => item.id);"));
+    }
+
+    #[test]
+    fn test_classify_text_tags_for_mixed_content() {
+        let text = r"Send logs to user@example.com and save C:\Users\test\log.txt";
+        let tags = classify_text_tags(text);
+        assert!(tags.contains(&Category::Text));
+        assert!(tags.contains(&Category::Email));
+        assert!(tags.contains(&Category::FilePath));
+    }
+
+    #[test]
+    fn test_link_and_email_lines_are_not_code() {
+        let text = "https://ajiro.infini-cloud.net/dav/\n\n123@123.com";
+        assert_eq!(classify_text(text), Category::Text);
+        let tags = classify_text_tags(text);
+        assert!(!tags.contains(&Category::Text));
+        assert!(tags.contains(&Category::Link));
+        assert!(tags.contains(&Category::Email));
+        assert!(!tags.contains(&Category::Code));
+    }
+
+    #[test]
+    fn test_mixed_structured_code_and_plain_lines_keep_text() {
+        let text = "https://ajiro.infini-cloud.net/dav/\n\n123@123.com\nE:\\Code\\Python\\BulkEmailSender111\n666666\n\n.banner2-title-container .wd-text-block {\n    color: #e0e0e0; /* 白灰色 */\n}\n\n99999";
+        let tags = classify_text_tags(text);
+        assert!(tags.contains(&Category::Link));
+        assert!(tags.contains(&Category::Email));
+        assert!(tags.contains(&Category::FilePath));
+        assert!(tags.contains(&Category::Code));
+        assert!(tags.contains(&Category::Text));
+    }
+
+    #[test]
+    fn test_css_comment_is_not_file_path() {
+        let text = ".banner2-title-container .wd-text-block {\n    color: #e0e0e0; /* 白灰色 */\n}";
+        let tags = classify_text_tags(text);
+        assert!(tags.contains(&Category::Code));
+        assert!(!tags.contains(&Category::FilePath));
+        assert!(!tags.contains(&Category::Text));
     }
 }

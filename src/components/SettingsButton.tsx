@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { SlidersHorizontal } from 'lucide-react';
 import { useI18n } from '../i18n';
 import type { Locale } from '../i18n/translations';
 import {
@@ -76,9 +77,8 @@ interface SettingsButtonProps {
   onThemeAccentChange?: (accent: string) => void;
   onArchiveEnabledChange?: (enabled: boolean) => void;
   onVersionTitleTrigger?: (clickCount: number) => void;
-  onStorageSettingsEnabledChange?: (enabled: boolean) => void;
+  onExperimentalFeaturesEnabledChange?: (enabled: boolean) => void;
   onCategoryTabSortingEnabledChange?: (enabled: boolean) => void;
-  onModernUiChange?: (enabled: boolean) => void;
 }
 
 export default function SettingsButton({
@@ -90,9 +90,8 @@ export default function SettingsButton({
   onThemeAccentChange,
   onArchiveEnabledChange,
   onVersionTitleTrigger,
-  onStorageSettingsEnabledChange,
+  onExperimentalFeaturesEnabledChange,
   onCategoryTabSortingEnabledChange,
-  onModernUiChange,
 }: SettingsButtonProps) {
   const { t, locale, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
@@ -102,9 +101,8 @@ export default function SettingsButton({
   const [rawPreview, setRawPreviewState] = useState(false);
   const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
   const [themeAccent, setThemeAccentState] = useState('default');
-  const [modernUiEnabled, setModernUiEnabled] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(true);
-  const [storageSettingsEnabled, setStorageSettingsEnabled] = useState(false);
+  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] = useState(false);
   const [categoryTabSortingEnabled, setCategoryTabSortingEnabled] = useState(true);
   const [archiveEnabled, setArchiveEnabledState] = useState(false);
   const [appVersion, setAppVersion] = useState('');
@@ -195,18 +193,13 @@ export default function SettingsButton({
         setThemeAccentState(accent);
         onThemeAccentChange?.(accent);
       }).catch(console.error);
-      getSetting('modern_ui_enabled').then((v) => {
-        const enabled = v === 'true';
-        setModernUiEnabled(enabled);
-        onModernUiChange?.(enabled);
-      }).catch(console.error);
       getSetting('auto_update').then((v) => {
         setAutoUpdate(v === null ? true : v === 'true');
       }).catch(console.error);
-      getSetting('storage_settings_beta').then((v) => {
+      getSetting('experimental_features_enabled').then((v) => {
         const enabled = v === 'true';
-        setStorageSettingsEnabled(enabled);
-        onStorageSettingsEnabledChange?.(enabled);
+        setExperimentalFeaturesEnabled(enabled);
+        onExperimentalFeaturesEnabledChange?.(enabled);
       }).catch(console.error);
       getSetting('category_tab_sorting_enabled').then((v) => {
         const enabled = v === null ? true : v === 'true';
@@ -231,9 +224,8 @@ export default function SettingsButton({
     onThemeModeChange,
     onThemeAccentChange,
     onArchiveEnabledChange,
-    onStorageSettingsEnabledChange,
+    onExperimentalFeaturesEnabledChange,
     onCategoryTabSortingEnabledChange,
-    onModernUiChange,
   ]);
 
   // Close panel when clicking outside
@@ -390,25 +382,18 @@ export default function SettingsButton({
     onThemeAccentChange?.(accent);
   }, [onThemeAccentChange]);
 
-  const handleModernUiToggle = useCallback(async () => {
-    const newValue = !modernUiEnabled;
-    await setSetting('modern_ui_enabled', newValue ? 'true' : 'false');
-    setModernUiEnabled(newValue);
-    onModernUiChange?.(newValue);
-  }, [modernUiEnabled, onModernUiChange]);
-
   const handleAutoUpdateToggle = useCallback(async () => {
     const newValue = !autoUpdate;
     await setSetting('auto_update', newValue ? 'true' : 'false');
     setAutoUpdate(newValue);
   }, [autoUpdate]);
 
-  const handleStorageSettingsToggle = useCallback(async () => {
-    const newValue = !storageSettingsEnabled;
-    await setSetting('storage_settings_beta', newValue ? 'true' : 'false');
-    setStorageSettingsEnabled(newValue);
-    onStorageSettingsEnabledChange?.(newValue);
-  }, [onStorageSettingsEnabledChange, storageSettingsEnabled]);
+  const handleExperimentalFeaturesToggle = useCallback(async () => {
+    const newValue = !experimentalFeaturesEnabled;
+    await setSetting('experimental_features_enabled', newValue ? 'true' : 'false');
+    setExperimentalFeaturesEnabled(newValue);
+    onExperimentalFeaturesEnabledChange?.(newValue);
+  }, [experimentalFeaturesEnabled, onExperimentalFeaturesEnabledChange]);
 
   const handleArchiveToggle = useCallback(async () => {
     const newValue = !archiveEnabled;
@@ -454,10 +439,7 @@ export default function SettingsButton({
         }}
         title={t.settings}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
+        <SlidersHorizontal size={16} strokeWidth={2.15} />
       </button>
 
       {/* Settings dropdown panel */}
@@ -581,17 +563,6 @@ export default function SettingsButton({
             </div>
           </div>
 
-          {/* UI style */}
-          <div style={styles.compactRow} title={t.modernUiDesc}>
-            <span style={styles.rowLabel}>{t.modernUi}</span>
-            <button
-              style={{ ...styles.toggle, ...(modernUiEnabled ? styles.toggleOn : {}) }}
-              onClick={handleModernUiToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(modernUiEnabled ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
-
           {/* Autostart */}
           <div style={styles.compactRow} title={t.autostartDesc}>
             <span style={styles.rowLabel}>{t.autostart}</span>
@@ -636,14 +607,14 @@ export default function SettingsButton({
             </button>
           </div>
 
-          {/* Storage settings beta */}
-          <div style={styles.compactRow} title={t.storageSettingsBetaDesc}>
-            <span style={styles.rowLabel}>{t.storageSettingsBeta}</span>
+          {/* Experimental features */}
+          <div style={styles.compactRow} title={t.experimentalFeaturesDesc}>
+            <span style={styles.rowLabel}>{t.experimentalFeatures}</span>
             <button
-              style={{ ...styles.toggle, ...(storageSettingsEnabled ? styles.toggleOn : {}) }}
-              onClick={handleStorageSettingsToggle}
+              style={{ ...styles.toggle, ...(experimentalFeaturesEnabled ? styles.toggleOn : {}) }}
+              onClick={handleExperimentalFeaturesToggle}
             >
-              <div style={{ ...styles.toggleKnob, ...(storageSettingsEnabled ? styles.toggleKnobOn : {}) }} />
+              <div style={{ ...styles.toggleKnob, ...(experimentalFeaturesEnabled ? styles.toggleKnobOn : {}) }} />
             </button>
           </div>
 

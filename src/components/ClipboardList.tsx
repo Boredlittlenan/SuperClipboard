@@ -12,6 +12,7 @@ interface Props {
   loading: boolean;
   isArchive?: boolean;
   archiveEnabled?: boolean;
+  multiTagEnabled?: boolean;
   onRestore?: (id: number) => void;
   onPermanentDelete?: (id: number) => void;
 }
@@ -26,6 +27,7 @@ export default function ClipboardList({
   loading,
   isArchive,
   archiveEnabled,
+  multiTagEnabled,
   onRestore,
   onPermanentDelete,
 }: Props) {
@@ -63,6 +65,7 @@ export default function ClipboardList({
           rawPreview={rawPreview}
           isArchive={isArchive}
           archiveEnabled={archiveEnabled}
+          multiTagEnabled={multiTagEnabled}
           onRestore={onRestore}
           onPermanentDelete={onPermanentDelete}
         />

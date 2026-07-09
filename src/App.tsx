@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { NotebookText, Search, Trash2 } from 'lucide-react';
 import type { ClipboardEntry, FilterTab, QueryFilter, Stats, Memo } from './types';
 import {
   getEntries,
@@ -23,6 +24,7 @@ import CategoryTabs from './components/CategoryTabs';
 import ClipboardList from './components/ClipboardList';
 import SettingsButton from './components/SettingsButton';
 import RemoteStorageButton from './components/RemoteStorageButton';
+import ExperimentalFeaturesButton from './components/ExperimentalFeaturesButton';
 import MemoList from './components/MemoList';
 import ArchivedMemoItem from './components/ArchivedMemoItem';
 import ConfirmDialog, { type ConfirmDialogState } from './components/ConfirmDialog';
@@ -52,7 +54,8 @@ function AppContent() {
   const [memoListCount, setMemoListCount] = useState<number>(0);
   const [memoColor, setMemoColor] = useState<string | null>(null);
   const [archiveEnabled, setArchiveEnabled] = useState(false);
-  const [storageSettingsEnabled, setStorageSettingsEnabled] = useState(false);
+  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] = useState(false);
+  const [clipboardMultiTagEnabled, setClipboardMultiTagEnabled] = useState(false);
   const [categoryTabSortingEnabled, setCategoryTabSortingEnabled] = useState(true);
   const [archiveCountState, setArchiveCountState] = useState<number | null>(null);
   const [rawPreview, setRawPreview] = useState(false);
@@ -136,10 +139,13 @@ function AppContent() {
     getSetting('archive_enabled').then((v) => setArchiveEnabled(v === 'true')).catch(console.error);
   }, []);
 
-  // Load storage settings beta gate on mount
+  // Load experimental feature gates on mount.
   useEffect(() => {
-    getSetting('storage_settings_beta')
-      .then((v) => setStorageSettingsEnabled(v === 'true'))
+    getSetting('experimental_features_enabled')
+      .then((v) => setExperimentalFeaturesEnabled(v === 'true'))
+      .catch(console.error);
+    getSetting('clipboard_multi_tag_enabled')
+      .then((v) => setClipboardMultiTagEnabled(v === 'true'))
       .catch(console.error);
     getSetting('category_tab_sorting_enabled')
       .then((v) => setCategoryTabSortingEnabled(v === null ? true : v === 'true'))
@@ -185,6 +191,7 @@ function AppContent() {
   }, []);
 
   const resolvedTheme = themeMode === 'system' ? systemTheme : themeMode;
+  const effectiveModernUiEnabled = experimentalFeaturesEnabled && modernUiEnabled;
 
   useEffect(() => {
     document.documentElement.dataset.theme = resolvedTheme;
@@ -622,6 +629,11 @@ function AppContent() {
     setMemoListCount(count);
   }, []);
 
+  const handleMemoTotalCountChange = useCallback((count: number) => {
+    setMemoCountState(count);
+    setStats((prev) => (prev ? { ...prev, memoCount: count } : prev));
+  }, []);
+
   const handleStorageModeChange = useCallback(() => {
     emitAppEvent('storage:changed');
   }, []);
@@ -647,18 +659,22 @@ function AppContent() {
       className={`app-root${isWindowDragging ? ' is-window-dragging' : ''}`}
       data-theme={resolvedTheme}
       data-accent={themeAccent}
-      data-ui-style={modernUiEnabled ? 'modern' : 'classic'}
+      data-ui-style={effectiveModernUiEnabled ? 'modern' : 'classic'}
       data-memo-color={memoColor || undefined}
     >
       {/* Title bar (draggable, frameless window) */}
       <div data-tauri-drag-region className="title-bar" onPointerDown={handleTitleDragStart}>
         <div data-tauri-drag-region className="title-content">
           <span className="title-text">{displayTitle}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <span className="shortcut-hint">{formatShortcutLabel(currentShortcut)}</span>
-            {storageSettingsEnabled && (
-              <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
+            {experimentalFeaturesEnabled && (
+              <ExperimentalFeaturesButton
+                onClipboardMultiTagChange={setClipboardMultiTagEnabled}
+                onModernUiChange={setModernUiEnabled}
+              />
             )}
+            <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
             <SettingsButton
               onShortcutChange={setCurrentShortcut}
               onMemoEnabledChange={setMemoEnabled}
@@ -668,9 +684,8 @@ function AppContent() {
               onThemeAccentChange={setThemeAccent}
               onArchiveEnabledChange={setArchiveEnabled}
               onVersionTitleTrigger={handleVersionTitleTrigger}
-              onStorageSettingsEnabledChange={setStorageSettingsEnabled}
+              onExperimentalFeaturesEnabledChange={setExperimentalFeaturesEnabled}
               onCategoryTabSortingEnabledChange={setCategoryTabSortingEnabled}
-              onModernUiChange={setModernUiEnabled}
             />
           </div>
         </div>
@@ -679,10 +694,7 @@ function AppContent() {
       {/* Search bar */}
       <div className="search-bar">
         <span className="search-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m16.5 16.5 4 4" />
-          </svg>
+          <Search size={15} strokeWidth={2.2} />
         </span>
         <input
           ref={searchRef}
@@ -713,12 +725,19 @@ function AppContent() {
         archiveEnabled={archiveEnabled}
         archiveCount={archiveCountState}
         categorySortingEnabled={categoryTabSortingEnabled}
-        modernUi={modernUiEnabled}
+        modernUi={effectiveModernUiEnabled}
       />
 
       {/* Main content: memo list or clipboard list */}
       {activeTab === 'memo' ? (
-        <MemoList searchQuery={searchQuery} archiveEnabled={archiveEnabled} refreshKey={storageRevision} onCountChange={handleMemoCountChange} onArchiveCountChange={setMemoArchiveCountState} />
+        <MemoList
+          searchQuery={searchQuery}
+          archiveEnabled={archiveEnabled}
+          refreshKey={storageRevision}
+          onCountChange={handleMemoCountChange}
+          onTotalCountChange={handleMemoTotalCountChange}
+          onArchiveCountChange={setMemoArchiveCountState}
+        />
       ) : activeTab === 'archive' ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* Archive sub-tabs */}
@@ -728,6 +747,7 @@ function AppContent() {
                 flex: 1, padding: '8px 0', border: 'none', borderBottom: archiveSubTab === 'clipboard' ? '2px solid var(--accent)' : '2px solid transparent',
                 background: 'transparent', color: archiveSubTab === 'clipboard' ? 'var(--accent)' : 'var(--text-muted)',
                 fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '34px', lineHeight: 1,
               }}
               onClick={() => setArchiveSubTab('clipboard')}
             >
@@ -738,6 +758,7 @@ function AppContent() {
                 flex: 1, padding: '8px 0', border: 'none', borderBottom: archiveSubTab === 'memos' ? '2px solid var(--accent)' : '2px solid transparent',
                 background: 'transparent', color: archiveSubTab === 'memos' ? 'var(--accent)' : 'var(--text-muted)',
                 fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '34px', lineHeight: 1,
               }}
               onClick={() => { setArchiveSubTab('memos'); fetchArchivedMemos(); }}
             >
@@ -748,7 +769,7 @@ function AppContent() {
           {archiveSubTab === 'clipboard' ? (
             entries.length === 0 && !loading ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '40px 20px' }}>
-                <span style={{ fontSize: '36px', opacity: 0.5 }}>{'\uD83D\uDDD1\uFE0F'}</span>
+                <Trash2 size={36} strokeWidth={1.8} style={{ opacity: 0.5 }} />
                 <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 500 }}>{t.archiveEmpty}</span>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.archiveEmptyHint}</span>
               </div>
@@ -763,6 +784,7 @@ function AppContent() {
                 loading={loading}
                 isArchive={true}
                 archiveEnabled={archiveEnabled}
+                multiTagEnabled={experimentalFeaturesEnabled && clipboardMultiTagEnabled}
                 onRestore={handleRestore}
                 onPermanentDelete={handlePermanentDelete}
               />
@@ -770,7 +792,7 @@ function AppContent() {
           ) : (
             archivedMemos.length === 0 ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '40px 20px' }}>
-                <span style={{ fontSize: '36px', opacity: 0.5 }}>{'\uD83D\uDCDD'}</span>
+                <NotebookText size={36} strokeWidth={1.8} style={{ opacity: 0.5 }} />
                 <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 500 }}>{t.archiveEmpty}</span>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.archiveEmptyHint}</span>
               </div>
@@ -798,6 +820,7 @@ function AppContent() {
           rawPreview={rawPreview}
           loading={loading}
           archiveEnabled={archiveEnabled}
+          multiTagEnabled={experimentalFeaturesEnabled && clipboardMultiTagEnabled}
           onRestore={handleRestore}
           onPermanentDelete={handlePermanentDelete}
         />

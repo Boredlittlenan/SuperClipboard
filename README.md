@@ -12,8 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_2.3.2_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_2.3.2_x64_en-US.msi`: MSI package
+- `SuperClipboard_2.5.0_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_2.5.0_x64_en-US.msi`: MSI package
 
 ## Highlights
 
@@ -24,7 +24,8 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Optional recycle bin with separate Clipboard and Memos views and 30-day cleanup
 - Global shortcut, tray controls, single-instance launch, and auto-start support
 - Theme mode switcher with System / Light / Dark and independent accent colors
-- Beta storage settings with Local / External PostgreSQL modes and `.scbackup` local backup/restore tools
+- Storage settings with Local / External PostgreSQL modes and `.scbackup` local backup/restore tools
+- Experimental features panel for optional Modern UI and clipboard multi-tag display
 - First launch follows the system language, with Chinese and English UI available
 - Built-in update check through GitHub Releases with release notes preview
 
@@ -34,10 +35,10 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `2.3.2`
+- Version: `2.5.0`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
-- UI style: classic UI by default, with Modern UI available in System Settings
+- UI style: classic UI by default, with Modern UI available in Experimental Features
 - Theme mode: follows system
 - Theme accent: blue
 - Auto-start: enabled
@@ -64,22 +65,29 @@ Raw Preview only affects clipboard entries. Enable it when you want text to pres
 
 ### Configure External Storage
 
-The storage entry is hidden by default. Enable `Storage Settings (Beta)` in System Settings first; a storage button appears next to Settings. The panel supports two modes:
+The storage entry is always available next to Settings. The panel supports two modes:
 
 - Local: writes data to the local SQLite database and is the default mode.
 - External: saves clipboard and memo bodies to a user-provided PostgreSQL database. Saving automatically tests the connection and initializes remote tables.
 
 Backup / Restore is shown only in Local mode. Backups use the `.scbackup` package format with source version, data manifest, and checksum metadata. Cross-version restore is not guaranteed.
 
+### Experimental Features
+
+Enable Experimental Features in Settings to show the lab button next to Storage Settings. Experimental options are off by default.
+
+- Modern UI: switches from the classic compact interface to the refreshed visual style.
+- Clipboard Multi-tag Display: shows every detected category tag on clipboard entries and uses a segmented category color bar.
+
 ### Classification and Tags
 
-Clipboard entries currently have one primary `category`, so an item can only appear under one category tab. The backend already exposes reusable signals for embedded links, emails, file paths, and code, so single-item multi-tag support is feasible, but it needs a data model upgrade: keep the primary category for compatibility and add a tag table or tag array for filtering, stats, and display.
+Clipboard entries store a primary `category` and a `category_tags` list. Category tabs and counts can match entries through the tag list, while the primary category remains the fallback style and compatibility anchor.
 
-The current classifier is better at choosing the main content type than representing mixed content. For example, a note containing a link, email, and path still lands in one category. A stronger direction is `primary category + auxiliary tags`: the primary category drives list styling, while auxiliary tags improve multi-tag filtering and search recall.
+Multi-tag display is intentionally behind Experimental Features. When it is off, clipboard entries show only the primary category for a calmer list. When it is on, mixed content such as links plus email addresses can show multiple category badges.
 
 ## Privacy
 
-By default, SuperClipboard stores clipboard entries, memos, and settings locally in SQLite under the app data directory. When Storage Settings (Beta) is enabled and External mode is selected, clipboard and memo bodies are written to the user-configured PostgreSQL database instead. Update checks contact GitHub Releases when enabled.
+By default, SuperClipboard stores clipboard entries, memos, and settings locally in SQLite under the app data directory. When External mode is selected in Storage Settings, clipboard and memo bodies are written to the user-configured PostgreSQL database instead. Update checks contact GitHub Releases when enabled.
 
 ## License
 

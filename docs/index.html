@@ -6,7 +6,7 @@
     <title>SuperClipboard | 超级剪贴板</title>
     <meta
       name="description"
-      content="SuperClipboard is a polished Windows clipboard manager with local history, smart categorization, memos, recycle bin recovery, themes, tray controls, and beta external PostgreSQL storage."
+      content="SuperClipboard is a polished Windows clipboard manager with local history, smart categorization, memos, recycle bin recovery, themes, tray controls, and external PostgreSQL storage."
     />
     <meta
       name="keywords"
@@ -14,7 +14,7 @@
     />
     <meta name="robots" content="index,follow" />
     <meta name="google-site-verification" content="29ShAjmmaG4pmkyDGCIA2fjfF2tjT10nyUg_dp_t8xU" />
-    <meta name="website-version" content="1.1.0" />
+    <meta name="website-version" content="1.5" />
     <meta name="theme-color" content="#2563eb" />
     <link rel="canonical" href="https://boredlittlenan.github.io/SuperClipboard/" />
     <meta property="og:type" content="website" />
@@ -22,7 +22,7 @@
     <meta property="og:title" content="SuperClipboard | 超级剪贴板" />
     <meta
       property="og:description"
-      content="A polished Windows clipboard manager with local history, smart categories, memos, recycle bin recovery, themes, tray controls, and beta external storage."
+      content="A polished Windows clipboard manager with local history, smart categories, memos, recycle bin recovery, themes, tray controls, and external storage."
     />
     <meta property="og:url" content="https://boredlittlenan.github.io/SuperClipboard/" />
     <meta property="og:image" content="https://boredlittlenan.github.io/SuperClipboard/assets/icon.png" />
@@ -30,7 +30,7 @@
     <meta name="twitter:title" content="SuperClipboard | 超级剪贴板" />
     <meta
       name="twitter:description"
-      content="Local Windows clipboard history, smart categorization, memos, recycle bin recovery, tray controls, and beta external PostgreSQL storage."
+      content="Local Windows clipboard history, smart categorization, memos, recycle bin recovery, tray controls, and external PostgreSQL storage."
     />
     <meta name="twitter:image" content="https://boredlittlenan.github.io/SuperClipboard/assets/icon.png" />
     <link rel="icon" href="./assets/icon.png" />
@@ -43,11 +43,11 @@
         "alternateName": "超级剪贴板",
         "applicationCategory": "UtilitiesApplication",
         "operatingSystem": "Windows",
-    "softwareVersion": "2.3.2",
+    "softwareVersion": "2.5.0",
         "url": "https://boredlittlenan.github.io/SuperClipboard/",
         "downloadUrl": "https://github.com/Boredlittlenan/SuperClipboard/releases/latest",
         "codeRepository": "https://github.com/Boredlittlenan/SuperClipboard",
-        "description": "A polished Windows clipboard manager with local history, smart categorization, memos, recycle bin recovery, tray controls, and beta external PostgreSQL storage."
+        "description": "A polished Windows clipboard manager with local history, smart categorization, memos, recycle bin recovery, tray controls, and external PostgreSQL storage."
       }
     </script>
   </head>
@@ -94,7 +94,7 @@
               </div>
               <div class="scene-entry">
                 <strong data-i18n="visualEntryTwoTitle">发布记录</strong>
-          <p>SuperClipboard 2.3.2</p>
+          <p>SuperClipboard 2.5</p>
                 <small>Text</small>
               </div>
               <div class="scene-entry memo">
@@ -117,7 +117,7 @@
           <p class="eyebrow" data-i18n="eyebrow">Windows 剪贴板工作台</p>
           <h1 data-i18n="heroTitle">复制过的内容，不该只停留几秒。</h1>
           <p class="lead" data-i18n="heroLead">
-            SuperClipboard 把剪贴板历史、备忘录、回收站、主题和托盘快捷操作收进一个轻量窗口里。默认本地保存，也可以在测试版存储设置中连接自己的 PostgreSQL。
+            SuperClipboard 把剪贴板历史、备忘录、回收站、主题和托盘快捷操作收进一个轻量窗口里。默认本地保存，也可以在存储设置中连接自己的 PostgreSQL。
           </p>
           <div class="hero-actions" aria-label="Primary actions">
             <a class="primary-action" href="https://github.com/Boredlittlenan/SuperClipboard/releases/latest" data-i18n="downloadLatest">
@@ -180,7 +180,7 @@
           <p class="eyebrow" data-i18n="storageEyebrow">数据与隐私</p>
           <h2 data-i18n="storageTitle">先本地可靠，再给外部存储留入口</h2>
           <p data-i18n="storageLead">
-            默认数据保存在本机 SQLite。需要多设备方案时，可开启存储设置(测试版)，连接自己的 PostgreSQL 数据库。
+            默认数据保存在本机 SQLite。需要多设备方案时，可在存储设置中连接自己的 PostgreSQL 数据库。
           </p>
         </div>
         <div class="storage-layout">
@@ -190,7 +190,7 @@
             <p data-i18n="storageLocalBody">剪贴板、备忘录和设置默认写入本机应用数据目录，软件不会主动上传内容。</p>
           </article>
           <article>
-            <span data-i18n="storageExternalLabel">测试版</span>
+            <span data-i18n="storageExternalLabel">可选模式</span>
             <h3 data-i18n="storageExternalTitle">外部 PostgreSQL</h3>
             <p data-i18n="storageExternalBody">用户可以配置自己的数据库连接。外部模式下正文数据写入外部数据库。</p>
           </article>
@@ -211,14 +211,14 @@
         <div class="support-panel">
           <span class="support-status" data-i18n="supportWindowsStatus">当前支持</span>
           <strong>Windows x64</strong>
-          <p data-i18n="supportWindowsBody">SuperClipboard 2.3.2</p>
+          <p data-i18n="supportWindowsBody">SuperClipboard 2.5</p>
         </div>
       </section>
 
       <section id="download" class="download-section">
         <div>
           <p class="eyebrow" data-i18n="downloadEyebrow">当前版本</p>
-        <h2>SuperClipboard 2.3.2</h2>
+        <h2>SuperClipboard 2.5</h2>
           <p data-i18n="downloadBody">推荐下载 Windows x64 安装器，也可以选择 MSI 包。源码以非商用许可开放。</p>
         </div>
         <div class="download-actions">
@@ -236,7 +236,7 @@
       <div class="footer-brand">
         <img src="./assets/icon.png" alt="" />
         <span>SuperClipboard</span>
-        <small data-i18n="siteVersion">官网 v1.1.0</small>
+        <small data-i18n="siteVersion">官网 v1.5</small>
       </div>
       <a href="https://github.com/Boredlittlenan/SuperClipboard" data-i18n="footerRepo">GitHub 仓库</a>
     </footer>

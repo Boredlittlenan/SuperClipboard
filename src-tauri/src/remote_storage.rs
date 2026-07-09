@@ -1,4 +1,4 @@
-use crate::classifier::Category;
+use crate::classifier::{classify_text_tags, Category};
 use crate::storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage};
 use chrono::{DateTime, Utc};
 use native_tls::TlsConnector;
@@ -61,6 +61,37 @@ pub struct RemoteStats {
     pub memo_archive: i64,
     pub clipboard_size: i64,
     pub memo_size: i64,
+}
+
+fn category_tags_json(tags: &[Category]) -> String {
+    serde_json::to_string(&normalize_category_tags(tags.to_vec()))
+        .unwrap_or_else(|_| "[\"text\"]".to_string())
+}
+
+fn normalize_category_tags(tags: Vec<Category>) -> Vec<Category> {
+    let mut result = Vec::new();
+    for category in tags {
+        if !result.contains(&category) {
+            result.push(category);
+        }
+    }
+    if result.is_empty() {
+        result.push(Category::Text);
+    }
+    result
+}
+
+fn category_tags_from_json(fallback: Category, value: String) -> Vec<Category> {
+    let parsed = serde_json::from_str::<Vec<Category>>(&value).unwrap_or_default();
+    if parsed.is_empty() {
+        vec![fallback]
+    } else {
+        normalize_category_tags(parsed)
+    }
+}
+
+fn category_tag_pattern(category: &str) -> String {
+    format!("%\"{}\"%", category)
 }
 
 pub fn is_remote_mode(storage: &Storage) -> bool {
@@ -228,6 +259,7 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
             id BIGSERIAL PRIMARY KEY,
             uuid TEXT NOT NULL UNIQUE,
             category TEXT NOT NULL,
+            category_tags TEXT NOT NULL DEFAULT '[]',
             content_type TEXT NOT NULL,
             content TEXT NOT NULL,
             preview TEXT NOT NULL DEFAULT '',
@@ -244,6 +276,8 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
         CREATE INDEX IF NOT EXISTS idx_sc_clipboard_category ON superclipboard.clipboard_entries(category);
         CREATE INDEX IF NOT EXISTS idx_sc_clipboard_created_at ON superclipboard.clipboard_entries(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_sc_clipboard_archived_at ON superclipboard.clipboard_entries(archived_at);
+        ALTER TABLE superclipboard.clipboard_entries
+            ADD COLUMN IF NOT EXISTS category_tags TEXT NOT NULL DEFAULT '[]';
 
         CREATE TABLE IF NOT EXISTS superclipboard.memos (
             id BIGSERIAL PRIMARY KEY,
@@ -333,10 +367,15 @@ fn parse_created_at(value: String) -> DateTime<Utc> {
 
 fn row_to_entry(row: &Row) -> ClipboardEntry {
     let category: String = row.get("category");
+    let fallback_category = category_from_str(&category);
+    let category_tags: String = row.get("category_tags");
+    let category_tags = category_tags_from_json(fallback_category, category_tags);
+    let category = category_tags.first().cloned().unwrap_or(Category::Text);
     let created_at: String = row.get("created_at");
     ClipboardEntry {
         id: row.get("id"),
-        category: category_from_str(&category),
+        category,
+        category_tags,
         content_type: row.get("content_type"),
         content: row.get("content"),
         preview: row.get("preview"),
@@ -364,16 +403,21 @@ fn row_to_memo(row: &Row) -> Memo {
 }
 
 pub fn insert_clipboard(storage: &Storage, entry: &ClipboardEntry) -> RemoteResult<bool> {
+    let _ = ensure_schema(storage);
     let mut client = connect(storage)?;
     let uuid = Uuid::new_v4().to_string();
+    let category_tags = normalize_category_tags(entry.category_tags.clone());
+    let category = category_tags.first().cloned().unwrap_or(Category::Text);
+    let category_tags = category_tags_json(&category_tags);
     let rows = client.execute(
         "INSERT INTO superclipboard.clipboard_entries
-         (uuid, category, content_type, content, preview, hash, pinned, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         (uuid, category, category_tags, content_type, content, preview, hash, pinned, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT(hash) DO NOTHING",
         &[
             &uuid,
-            &entry.category.to_string(),
+            &category.to_string(),
+            &category_tags,
             &entry.content_type,
             &entry.content,
             &entry.preview,
@@ -389,15 +433,21 @@ pub fn query_clipboard(
     storage: &Storage,
     filter: &QueryFilter,
 ) -> RemoteResult<Vec<ClipboardEntry>> {
+    let _ = ensure_schema(storage);
     let mut sql = String::from(
-        "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
+        "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
          FROM superclipboard.clipboard_entries WHERE archived_at IS NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
 
     if let Some(category) = &filter.category {
         values.push(Box::new(category.clone()));
-        sql.push_str(&format!(" AND category = ${}", values.len()));
+        let category_index = values.len();
+        values.push(Box::new(category_tag_pattern(category)));
+        let tag_index = values.len();
+        sql.push_str(&format!(
+            " AND (category = ${category_index} OR category_tags LIKE ${tag_index})"
+        ));
     }
     if let Some(search) = &filter.search {
         append_token_search(&mut sql, &mut values, search, &["content", "preview"]);
@@ -423,9 +473,10 @@ pub fn query_clipboard(
 }
 
 pub fn get_clipboard_by_id(storage: &Storage, id: i64) -> RemoteResult<Option<ClipboardEntry>> {
+    let _ = ensure_schema(storage);
     with_client(storage, |client| {
         let row = client.query_opt(
-            "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
+            "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
              FROM superclipboard.clipboard_entries WHERE id = $1 AND deleted_at IS NULL",
             &[&id],
         )?;
@@ -459,6 +510,7 @@ pub fn toggle_clipboard_pin(storage: &Storage, id: i64) -> RemoteResult<bool> {
 }
 
 pub fn update_clipboard(storage: &Storage, id: i64, content: &str) -> RemoteResult<bool> {
+    let _ = ensure_schema(storage);
     let mut client = connect(storage)?;
     let current = client.query_opt(
         "SELECT content, original_content FROM superclipboard.clipboard_entries WHERE id = $1",
@@ -476,27 +528,31 @@ pub fn update_clipboard(storage: &Storage, id: i64, content: &str) -> RemoteResu
         content.to_string()
     };
     let now = Utc::now().to_rfc3339();
+    let categories = classify_text_tags(content);
+    let category = categories.first().cloned().unwrap_or(Category::Text);
+    let category_tags = category_tags_json(&categories);
     let rows = client.execute(
         "UPDATE superclipboard.clipboard_entries
-         SET content = $1, preview = $2, original_content = $3, updated_at = $4, version = version + 1
-         WHERE id = $5",
-        &[&content, &preview, &original, &now, &id],
+         SET category = $1, category_tags = $2, content = $3, preview = $4, original_content = $5, updated_at = $6, version = version + 1
+         WHERE id = $7",
+        &[&category.to_string(), &category_tags, &content, &preview, &original, &now, &id],
     )?;
     Ok(rows > 0)
 }
 
 pub fn stats(storage: &Storage) -> RemoteResult<RemoteStats> {
+    let _ = ensure_schema(storage);
     with_client(storage, |client| {
         let row = client.query_one(
             "
         SELECT
             COUNT(*) FILTER (WHERE ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS total,
-            COUNT(*) FILTER (WHERE ce.category = 'text' AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS text,
-            COUNT(*) FILTER (WHERE ce.category = 'link' AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS link,
-            COUNT(*) FILTER (WHERE ce.category = 'image' AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS image,
-            COUNT(*) FILTER (WHERE ce.category = 'code' AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS code,
-            COUNT(*) FILTER (WHERE ce.category = 'email' AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS email,
-            COUNT(*) FILTER (WHERE ce.category = 'file_path' AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS file_path,
+            COUNT(*) FILTER (WHERE (ce.category = 'text' OR ce.category_tags LIKE '%\"text\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS text,
+            COUNT(*) FILTER (WHERE (ce.category = 'link' OR ce.category_tags LIKE '%\"link\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS link,
+            COUNT(*) FILTER (WHERE (ce.category = 'image' OR ce.category_tags LIKE '%\"image\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS image,
+            COUNT(*) FILTER (WHERE (ce.category = 'code' OR ce.category_tags LIKE '%\"code\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS code,
+            COUNT(*) FILTER (WHERE (ce.category = 'email' OR ce.category_tags LIKE '%\"email\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS email,
+            COUNT(*) FILTER (WHERE (ce.category = 'file_path' OR ce.category_tags LIKE '%\"file_path\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS file_path,
             COUNT(*) FILTER (WHERE ce.archived_at IS NOT NULL AND ce.deleted_at IS NULL)::bigint AS archive,
             COALESCE(SUM(LENGTH(ce.content) + LENGTH(ce.preview) + LENGTH(COALESCE(ce.original_content, '')))
                 FILTER (WHERE ce.archived_at IS NULL AND ce.deleted_at IS NULL), 0)::bigint AS clipboard_size,
@@ -547,11 +603,21 @@ pub fn query_archived_clipboard(
     storage: &Storage,
     filter: &QueryFilter,
 ) -> RemoteResult<Vec<ClipboardEntry>> {
+    let _ = ensure_schema(storage);
     let mut sql = String::from(
-        "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
+        "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
          FROM superclipboard.clipboard_entries WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+    if let Some(category) = &filter.category {
+        values.push(Box::new(category.clone()));
+        let category_index = values.len();
+        values.push(Box::new(category_tag_pattern(category)));
+        let tag_index = values.len();
+        sql.push_str(&format!(
+            " AND (category = ${category_index} OR category_tags LIKE ${tag_index})"
+        ));
+    }
     if let Some(search) = &filter.search {
         append_token_search(&mut sql, &mut values, search, &["content", "preview"]);
     }
@@ -808,6 +874,7 @@ mod tests {
         let entry = ClipboardEntry {
             id: 0,
             category: Category::Text,
+            category_tags: vec![Category::Text],
             content_type: "text/plain".to_string(),
             content: format!("Codex remote smoke {}", Uuid::new_v4()),
             preview: "Codex remote smoke".to_string(),

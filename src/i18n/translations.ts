@@ -107,8 +107,10 @@ export interface Translations {
   followModeDesc: string;
   autoUpdate: string;
   autoUpdateDesc: string;
-  storageSettingsBeta: string;
-  storageSettingsBetaDesc: string;
+  experimentalFeatures: string;
+  experimentalFeaturesDesc: string;
+  clipboardMultiTag: string;
+  clipboardMultiTagDesc: string;
   categoryTabSorting: string;
   categoryTabSortingDesc: string;
   version: string;
@@ -273,8 +275,10 @@ export const zhCN: Translations = {
   followModeDesc: '快捷键唤起时窗口跟随插入符位置',
   autoUpdate: '自动检查更新',
   autoUpdateDesc: '每次启动时自动检查更新',
-  storageSettingsBeta: '存储设置(测试版)',
-  storageSettingsBetaDesc: '显示存储模式与备份/恢复配置入口',
+  experimentalFeatures: '实验功能',
+  experimentalFeaturesDesc: '显示实验功能入口，实验功能默认关闭',
+  clipboardMultiTag: '剪贴板多标签显示',
+  clipboardMultiTagDesc: '在剪贴板条目中显示所有识别出的分类标签',
   categoryTabSorting: '标签排序',
   categoryTabSortingDesc: '允许直接拖动剪贴板分类标签调整顺序',
   version: '版本号',
@@ -439,8 +443,10 @@ export const en: Translations = {
   followModeDesc: 'Window follows caret position when shown via shortcut',
   autoUpdate: 'Auto Update',
   autoUpdateDesc: 'Check for updates on startup',
-  storageSettingsBeta: 'Storage Settings (Beta)',
-  storageSettingsBetaDesc: 'Show the storage mode and backup/restore entry',
+  experimentalFeatures: 'Experimental Features',
+  experimentalFeaturesDesc: 'Show the experimental features entry. Experimental features are off by default.',
+  clipboardMultiTag: 'Clipboard Multi-tag Display',
+  clipboardMultiTagDesc: 'Show every detected category tag on clipboard entries',
   categoryTabSorting: 'Tab Sorting',
   categoryTabSortingDesc: 'Allow dragging clipboard category tabs to reorder them',
   version: 'Version',

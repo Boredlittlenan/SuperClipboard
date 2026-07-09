@@ -1,8 +1,8 @@
+import { RotateCcw, Trash2 } from 'lucide-react';
 import type { Memo } from '../types';
 import { useI18n } from '../i18n';
 import { formatRelativeTime, getArchiveDaysRemaining, getArchiveTone } from '../utils';
 import { renderMemoBody } from './MemoBody';
-import { TrashIcon } from './icons/TrashIcon';
 
 interface Props {
   memo: Memo;
@@ -28,14 +28,14 @@ export default function ArchivedMemoItem({ memo, onRestore, onPermanentDelete }:
           </span>
           <div style={styles.actions}>
             <button style={styles.actionBtn} onClick={onRestore} title={t.restore}>
-              {'\u21A9'}
+              <RotateCcw size={13} />
             </button>
             <button
               style={{ ...styles.actionBtn, ...styles.deleteBtn }}
               onClick={onPermanentDelete}
               title={t.permanentDelete}
             >
-              <TrashIcon />
+              <Trash2 size={13} />
             </button>
           </div>
         </div>

@@ -263,7 +263,8 @@
   transform: scale(1.05);
 }
 
-.remote-storage-btn {
+.remote-storage-btn,
+.experimental-features-btn {
   -webkit-app-region: no-drag;
 }
 

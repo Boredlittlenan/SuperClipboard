@@ -1,7 +1,7 @@
 {
   "name": "superclipboard",
   "private": true,
-  "version": "2.3.2",
+  "version": "2.5.0",
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-shell": "^2.3.5",
+    "lucide-react": "^1.23.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

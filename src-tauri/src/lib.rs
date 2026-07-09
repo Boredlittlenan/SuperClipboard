@@ -932,6 +932,16 @@ fn memo_body_has_image(body: &str) -> bool {
         || body.contains("data:image/")
 }
 
+fn memo_auto_tag_from_category(category: &classifier::Category) -> Option<&'static str> {
+    match category {
+        classifier::Category::Link => Some("link"),
+        classifier::Category::Email => Some("email"),
+        classifier::Category::FilePath => Some("path"),
+        classifier::Category::Code => Some("code"),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 fn infer_memo_tag_types(title: String, body: String) -> Vec<String> {
     let content = format!("{}\n{}", title, body);
@@ -940,20 +950,44 @@ fn infer_memo_tag_types(title: String, body: String) -> Vec<String> {
     if memo_body_has_image(&body) {
         tags.push("image".to_string());
     }
-    if classifier::contains_email(&content) {
-        tags.push("email".to_string());
-    }
-    if classifier::contains_file_path(&content) {
-        tags.push("path".to_string());
-    }
-    if classifier::contains_link(&content) {
-        tags.push("link".to_string());
-    }
-    if classifier::contains_code(&content) {
-        tags.push("code".to_string());
+
+    for category in classifier::classify_text_tags(&content) {
+        if let Some(tag) = memo_auto_tag_from_category(&category) {
+            if !tags.iter().any(|value| value == tag) {
+                tags.push(tag.to_string());
+            }
+        }
     }
 
     tags
+}
+
+#[cfg(test)]
+mod memo_tag_tests {
+    use super::*;
+
+    #[test]
+    fn memo_tags_reuse_clipboard_classifier_without_false_code() {
+        let tags = infer_memo_tag_types(
+            "555".to_string(),
+            "5555 222@123.com https://www.diskgenius.cn/help/restorefile\nhttps://v2rayn.co/"
+                .to_string(),
+        );
+
+        assert!(tags.contains(&"email".to_string()));
+        assert!(tags.contains(&"link".to_string()));
+        assert!(!tags.contains(&"code".to_string()));
+    }
+
+    #[test]
+    fn memo_tags_keep_image_signal() {
+        let tags = infer_memo_tag_types(
+            String::new(),
+            "note\n![image](data:image/png;base64,abc)".to_string(),
+        );
+
+        assert_eq!(tags.first().map(String::as_str), Some("image"));
+    }
 }
 
 #[tauri::command]

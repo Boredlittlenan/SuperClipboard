@@ -1,9 +1,9 @@
 import { useState, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { Archive, ExternalLink, Pencil, Pin, RotateCcw, Trash2 } from 'lucide-react';
 import type { ClipboardEntry } from '../types';
 import { getArchiveDaysRemaining, getArchiveTone, getCategoryColor, getCategoryLabel, formatRelativeTime } from '../utils';
 import { useI18n } from '../i18n';
-import { TrashIcon } from './icons/TrashIcon';
 
 interface Props {
   entry: ClipboardEntry;
@@ -14,11 +14,12 @@ interface Props {
   rawPreview?: boolean;
   isArchive?: boolean;
   archiveEnabled?: boolean;
+  multiTagEnabled?: boolean;
   onRestore?: (id: number) => void;
   onPermanentDelete?: (id: number) => void;
 }
 
-export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, onEdit, rawPreview, isArchive, archiveEnabled, onRestore, onPermanentDelete }: Props) {
+export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, onEdit, rawPreview, isArchive, archiveEnabled, multiTagEnabled, onRestore, onPermanentDelete }: Props) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(entry.content);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -27,6 +28,17 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const categoryColor = getCategoryColor(entry.category);
+  const categoryTags = multiTagEnabled
+    ? Array.from(new Set([entry.category, ...(entry.category_tags ?? [])]))
+    : [entry.category];
+  const categoryBarBackground = categoryTags.length <= 1
+    ? categoryColor
+    : `linear-gradient(to bottom, ${categoryTags.map((category, index) => {
+        const start = (index / categoryTags.length) * 100;
+        const end = ((index + 1) / categoryTags.length) * 100;
+        const color = getCategoryColor(category);
+        return `${color} ${start}% ${end}%`;
+      }).join(', ')})`;
   const isImage = entry.category === 'image';
   const isLink = entry.category === 'link';
   const hasOriginal = entry.original_content != null;
@@ -90,22 +102,30 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
       title={editing ? undefined : t.clickToCopy}
     >
       {/* Category indicator */}
-      <div style={{ ...styles.categoryBar, background: categoryColor }} />
+      <div style={{ ...styles.categoryBar, background: categoryBarBackground }} />
 
       <div style={styles.body}>
         {/* Header row */}
         <div style={styles.header}>
           <div style={styles.headerLeft}>
-            <span
-              className="entry-category-badge"
-              style={{
-                ...styles.categoryBadge,
-                background: `${categoryColor}20`,
-                color: categoryColor,
-              }}
-            >
-              {getCategoryLabel(entry.category, t)}
-            </span>
+            <div style={styles.categoryBadges}>
+              {categoryTags.map((category) => {
+                const color = getCategoryColor(category);
+                return (
+                  <span
+                    key={category}
+                    className="entry-category-badge"
+                    style={{
+                      ...styles.categoryBadge,
+                      background: `${color}20`,
+                      color,
+                    }}
+                  >
+                    {getCategoryLabel(category, t)}
+                  </span>
+                );
+              })}
+            </div>
             {!editing && (
               <div className="entry-actions" style={styles.inlineActions}>
                 {isArchive ? (
@@ -118,7 +138,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                       }}
                       title={t.restore}
                     >
-                      {'\u21A9'}
+                      <RotateCcw size={13} />
                     </button>
                     <button
                       style={{ ...styles.actionBtn, ...styles.deleteBtn }}
@@ -128,7 +148,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                       }}
                       title={t.permanentDelete}
                     >
-                      <TrashIcon />
+                      <Trash2 size={13} />
                     </button>
                   </>
                 ) : (
@@ -139,7 +159,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                         onClick={handleOpenInBrowser}
                         title={t.openInBrowser || 'Open in browser'}
                       >
-                        {'\uD83C\uDF10'}
+                        <ExternalLink size={13} />
                       </button>
                     )}
                     {!isImage && (
@@ -148,7 +168,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                         onClick={handleEditClick}
                         title={t.edit}
                       >
-                        {'\u270E'}
+                        <Pencil size={13} />
                       </button>
                     )}
                     <button
@@ -162,7 +182,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                       }}
                       title={entry.pinned ? t.unpin : t.pin}
                     >
-                      {'\uD83D\uDCCC'}
+                      <Pin size={13} />
                     </button>
                     <button
                       style={{ ...styles.actionBtn, ...(archiveEnabled ? styles.archiveBtn : styles.deleteBtn) }}
@@ -172,7 +192,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                       }}
                       title={archiveEnabled ? t.archiveSetting : t.delete}
                     >
-                      {archiveEnabled ? '\uD83D\uDDD1\uFE0F' : <TrashIcon />}
+                      {archiveEnabled ? <Archive size={13} /> : <Trash2 size={13} />}
                     </button>
                   </>
                 )}
@@ -186,7 +206,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
               </span>
             )}
             <span className="entry-time" style={styles.time}>{formatRelativeTime(entry.created_at, t)}</span>
-            {entry.pinned && !isArchive && <span style={styles.pinBadge}>{'\u{1F4CC}'}</span>}
+            {entry.pinned && !isArchive && <Pin size={12} style={styles.pinBadge} />}
             {isArchive && entry.archived_at && (
               <span style={{ ...styles.archiveTimer, ...styles[`archiveTimer${getArchiveTone(archiveDaysRemaining ?? 0)}`] }}>
                 {t.daysRemaining(archiveDaysRemaining ?? 0)}
@@ -301,33 +321,56 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   categoryBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '18px',
     fontSize: '10px',
     fontWeight: 600,
-    padding: '2px 8px',
+    padding: '0 8px',
     borderRadius: '10px',
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
+    lineHeight: 1,
+  },
+  categoryBadges: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    flexWrap: 'wrap',
+    minWidth: 0,
   },
   time: {
     fontSize: '11px',
     color: 'var(--text-muted)',
+    lineHeight: '18px',
   },
   editedBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '18px',
     fontSize: '10px',
     color: 'var(--accent)',
     background: 'var(--accent-bg, rgba(59,130,246,0.1))',
-    padding: '1px 6px',
+    padding: '0 6px',
     borderRadius: '8px',
     fontWeight: 500,
+    lineHeight: 1,
   },
   pinBadge: {
     fontSize: '12px',
   },
   archiveTimer: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '18px',
     fontSize: '10px',
-    padding: '1px 6px',
+    padding: '0 6px',
     borderRadius: '8px',
     fontWeight: 500,
+    lineHeight: 1,
   },
   archiveTimerwarning: {
     color: '#f59e0b',

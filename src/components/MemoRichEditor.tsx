@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { GripVertical, Trash2 } from 'lucide-react';
 import { parseMemoBody, type MemoBodyBlock } from './MemoBody';
 
 type MemoImageElement = HTMLElement & {
@@ -22,15 +24,8 @@ interface Props {
   onSave: () => void;
 }
 
-const trashIconSvg = `
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <path d="M3 6h18"></path>
-    <path d="M8 6V4h8v2"></path>
-    <path d="M19 6l-1 14H6L5 6"></path>
-    <path d="M10 11v5"></path>
-    <path d="M14 11v5"></path>
-  </svg>
-`;
+const dragIconSvg = renderToStaticMarkup(<GripVertical size={13} strokeWidth={2} aria-hidden="true" />);
+const trashIconSvg = renderToStaticMarkup(<Trash2 size={13} strokeWidth={2} aria-hidden="true" />);
 
 function appendTextBlock(blocks: MemoBodyBlock[], text: string) {
   const normalized = text.replace(/\u00A0/g, ' ');
@@ -145,7 +140,7 @@ export default function MemoRichEditor({
     dragHandle.className = 'memo-editor-image-btn memo-editor-image-drag';
     dragHandle.dataset.memoImageDrag = 'true';
     dragHandle.title = dragLabel;
-    dragHandle.textContent = '\u2261';
+    dragHandle.innerHTML = dragIconSvg;
 
     const deleteButton = document.createElement('button');
     deleteButton.className = 'memo-editor-image-btn memo-editor-image-delete';

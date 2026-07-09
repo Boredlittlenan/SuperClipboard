@@ -1,4 +1,4 @@
-use crate::classifier::Category;
+use crate::classifier::{classify_text_tags, Category};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use thiserror::Error;
 const CLIPBOARD_QUERY_LIMIT: i64 = 50;
 const MEMO_QUERY_LIMIT: i64 = 100;
 const MAX_QUERY_LIMIT: i64 = 500;
-const SCHEMA_VERSION: &str = "2";
+const SCHEMA_VERSION: &str = "3";
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -50,6 +50,8 @@ pub struct RestoreSummary {
 pub struct ClipboardEntry {
     pub id: i64,
     pub category: Category,
+    #[serde(default)]
+    pub category_tags: Vec<Category>,
     pub content_type: String, // "text", "image/png", etc.
     pub content: String,      // Text content or base64-encoded image data
     pub preview: String,      // Short preview text for UI display
@@ -96,27 +98,71 @@ pub struct MemoFilter {
     pub offset: Option<i64>,
 }
 
-/// Map a SQLite row to a ClipboardEntry (shared by query and get_entry_by_id)
-fn map_row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry> {
-    let category_str: String = row.get(1)?;
-    let category = match category_str.as_str() {
+fn category_from_str(value: &str) -> Category {
+    match value {
         "link" => Category::Link,
         "image" => Category::Image,
         "code" => Category::Code,
         "email" => Category::Email,
         "file_path" => Category::FilePath,
         _ => Category::Text,
-    };
+    }
+}
+
+fn normalize_category_tags(tags: Vec<Category>) -> Vec<Category> {
+    let mut result = Vec::new();
+    for category in tags {
+        if !result.contains(&category) {
+            result.push(category);
+        }
+    }
+    if result.is_empty() {
+        result.push(Category::Text);
+    }
+    result
+}
+
+fn category_tags_json(tags: &[Category]) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&normalize_category_tags(tags.to_vec()))
+}
+
+fn category_tags_from_json(fallback: Category, value: Option<String>) -> Vec<Category> {
+    let parsed = value
+        .and_then(|json| serde_json::from_str::<Vec<Category>>(&json).ok())
+        .unwrap_or_default();
+    if parsed.is_empty() {
+        vec![fallback]
+    } else {
+        normalize_category_tags(parsed)
+    }
+}
+
+fn category_match_condition(column: &str) -> String {
+    format!("({column} = ? OR category_tags LIKE ?)")
+}
+
+fn category_tag_pattern(category: &str) -> String {
+    format!("%\"{}\"%", category)
+}
+
+/// Map a SQLite row to a ClipboardEntry (shared by query and get_entry_by_id)
+fn map_row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry> {
+    let category_str: String = row.get(1)?;
+    let fallback_category = category_from_str(&category_str);
 
     let pinned_int: i32 = row.get(6)?;
     let created_str: String = row.get(7)?;
     let original_content: Option<String> = row.get(8)?;
     let updated_at: Option<String> = row.get(9)?;
     let archived_at: Option<String> = row.get(10)?;
+    let category_tags_json: Option<String> = row.get(11).ok();
+    let category_tags = category_tags_from_json(fallback_category, category_tags_json);
+    let category = category_tags.first().cloned().unwrap_or(Category::Text);
 
     Ok(ClipboardEntry {
         id: row.get(0)?,
         category,
+        category_tags,
         content_type: row.get(2)?,
         content: row.get(3)?,
         preview: row.get(4)?,
@@ -208,6 +254,7 @@ impl Storage {
             CREATE TABLE IF NOT EXISTS clipboard_entries (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 category    TEXT    NOT NULL,
+                category_tags TEXT NOT NULL DEFAULT '[]',
                 content_type TEXT   NOT NULL,
                 content     TEXT    NOT NULL,
                 preview     TEXT    NOT NULL DEFAULT '',
@@ -262,6 +309,9 @@ impl Storage {
 
         // Migration: add archived_at column to memos
         let _ = conn.execute_batch("ALTER TABLE memos ADD COLUMN archived_at TEXT");
+        let _ = conn.execute_batch(
+            "ALTER TABLE clipboard_entries ADD COLUMN category_tags TEXT NOT NULL DEFAULT '[]'",
+        );
 
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
@@ -289,12 +339,16 @@ impl Storage {
     /// Insert a new clipboard entry, returns Ok(true) if inserted, Ok(false) if duplicate
     pub fn insert(&self, entry: &ClipboardEntry) -> Result<bool, StorageError> {
         let conn = self.conn.lock().unwrap();
+        let category_tags = normalize_category_tags(entry.category_tags.clone());
+        let category = category_tags.first().cloned().unwrap_or(Category::Text);
+        let category_tags = category_tags_json(&category_tags)?;
         let result = conn.execute(
             "INSERT OR IGNORE INTO clipboard_entries 
-             (category, content_type, content, preview, hash, pinned, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (category, category_tags, content_type, content, preview, hash, pinned, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
-                entry.category.to_string(),
+                category.to_string(),
+                category_tags,
                 entry.content_type,
                 entry.content,
                 entry.preview,
@@ -310,12 +364,14 @@ impl Storage {
     pub fn query(&self, filter: &QueryFilter) -> Result<Vec<ClipboardEntry>, StorageError> {
         let conn = self.conn.lock().unwrap();
 
-        let mut sql = String::from("SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at FROM clipboard_entries WHERE archived_at IS NULL");
+        let mut sql = String::from("SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, category_tags FROM clipboard_entries WHERE archived_at IS NULL");
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref cat) = filter.category {
-            sql.push_str(" AND category = ?");
+            sql.push_str(" AND ");
+            sql.push_str(&category_match_condition("category"));
             param_values.push(Box::new(cat.clone()));
+            param_values.push(Box::new(category_tag_pattern(cat)));
         }
 
         if let Some(ref search) = filter.search {
@@ -349,7 +405,7 @@ impl Storage {
     pub fn get_entry_by_id(&self, id: i64) -> Result<Option<ClipboardEntry>, StorageError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
+            "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, category_tags
              FROM clipboard_entries WHERE id = ?1",
         )?;
 
@@ -362,7 +418,7 @@ impl Storage {
         let conn = self.conn.lock().unwrap();
 
         let mut entry_stmt = conn.prepare(
-            "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
+            "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, category_tags
              FROM clipboard_entries ORDER BY id ASC",
         )?;
         let clipboard_entries = entry_stmt
@@ -409,11 +465,17 @@ impl Storage {
         for entry in &backup.clipboard_entries {
             tx.execute(
                 "INSERT INTO clipboard_entries
-                 (id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 (id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     entry.id,
-                    entry.category.to_string(),
+                    entry
+                        .category_tags
+                        .first()
+                        .cloned()
+                        .unwrap_or(entry.category.clone())
+                        .to_string(),
+                    category_tags_json(&entry.category_tags)?,
                     entry.content_type,
                     entry.content,
                     entry.preview,
@@ -527,11 +589,14 @@ impl Storage {
         } else {
             new_content.to_string()
         };
+        let categories = classify_text_tags(new_content);
+        let category = categories.first().cloned().unwrap_or(Category::Text);
+        let category_tags = category_tags_json(&categories)?;
         let now = Utc::now().to_rfc3339();
 
         let rows = conn.execute(
-            "UPDATE clipboard_entries SET content = ?1, preview = ?2, original_content = ?3, updated_at = ?4 WHERE id = ?5",
-            params![new_content, preview, original, now, id],
+            "UPDATE clipboard_entries SET category = ?1, category_tags = ?2, content = ?3, preview = ?4, original_content = ?5, updated_at = ?6 WHERE id = ?7",
+            params![category.to_string(), category_tags, new_content, preview, original, now, id],
         )?;
         Ok(rows > 0)
     }
@@ -541,8 +606,8 @@ impl Storage {
         let conn = self.conn.lock().unwrap();
         let count = if let Some(cat) = category {
             conn.query_row(
-                "SELECT COUNT(*) FROM clipboard_entries WHERE category = ?1 AND archived_at IS NULL",
-                params![cat],
+                "SELECT COUNT(*) FROM clipboard_entries WHERE (category = ?1 OR category_tags LIKE ?2) AND archived_at IS NULL",
+                params![cat, category_tag_pattern(cat)],
                 |row| row.get(0),
             )?
         } else {
@@ -628,12 +693,14 @@ impl Storage {
         filter: &QueryFilter,
     ) -> Result<Vec<ClipboardEntry>, StorageError> {
         let conn = self.conn.lock().unwrap();
-        let mut sql = String::from("SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at FROM clipboard_entries WHERE archived_at IS NOT NULL");
+        let mut sql = String::from("SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, category_tags FROM clipboard_entries WHERE archived_at IS NOT NULL");
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref cat) = filter.category {
-            sql.push_str(" AND category = ?");
+            sql.push_str(" AND ");
+            sql.push_str(&category_match_condition("category"));
             param_values.push(Box::new(cat.clone()));
+            param_values.push(Box::new(category_tag_pattern(cat)));
         }
 
         if let Some(ref search) = filter.search {
@@ -950,6 +1017,7 @@ mod tests {
         let entry = ClipboardEntry {
             id: 0,
             category: Category::Text,
+            category_tags: vec![Category::Text],
             content_type: "text".to_string(),
             content: "alpha beta release note".to_string(),
             preview: "alpha beta".to_string(),

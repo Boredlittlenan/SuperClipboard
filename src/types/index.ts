@@ -3,6 +3,7 @@ export type Category = 'text' | 'link' | 'image' | 'code' | 'email' | 'file_path
 export interface ClipboardEntry {
   id: number;
   category: Category;
+  category_tags?: Category[];
   content_type: string;
   content: string;
   preview: string;

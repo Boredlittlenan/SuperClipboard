@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
+import { Database, Network } from 'lucide-react';
 import {
   createBackup,
   getSetting,
@@ -318,21 +319,16 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
     <div style={styles.wrapper} ref={panelRef}>
       <button
         className="settings-gear-btn remote-storage-btn"
-        style={{
-          ...styles.iconBtn,
-          ...(activeStorageMode === 'remote' ? styles.iconBtnActive : {}),
-        }}
+        style={styles.iconBtn}
         onClick={(event) => {
           event.stopPropagation();
           setOpen((value) => !value);
         }}
         title={t.remoteStorage}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <ellipse cx="12" cy="5" rx="8" ry="3" />
-          <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
-          <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
-        </svg>
+        {activeStorageMode === 'remote'
+          ? <Network size={16} strokeWidth={2.15} />
+          : <Database size={16} strokeWidth={2.15} />}
       </button>
 
       {open && (
@@ -575,10 +571,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
     cursor: 'pointer',
     transition: 'background 0.15s, color 0.15s',
-  },
-  iconBtnActive: {
-    color: 'var(--accent)',
-    background: 'var(--accent-bg)',
   },
   panel: {
     position: 'absolute',

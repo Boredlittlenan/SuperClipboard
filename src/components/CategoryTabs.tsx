@@ -265,7 +265,9 @@ const styles: Record<string, React.CSSProperties> = {
   tab: {
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: '4px',
+    minHeight: '30px',
     padding: '6px 12px',
     border: 'none',
     borderRadius: '6px',
@@ -273,6 +275,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
     fontSize: '12px',
     fontWeight: 500,
+    lineHeight: 1,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     transition: 'all 0.15s ease',
@@ -323,6 +326,10 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: '0 6px 16px var(--memo-contrast-bg)',
   },
   tabLabel: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: '18px',
     lineHeight: 1,
   },
   badge: {
