@@ -12,8 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_3.0.0_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_3.0.0_x64_en-US.msi`: MSI package
+- `SuperClipboard_3.1.0_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_3.1.0_x64_en-US.msi`: MSI package
 
 ## Highlights
 
@@ -24,7 +24,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Optional recycle bin with separate Clipboard and Memos views and 30-day cleanup
 - Global shortcut, tray controls, single-instance launch, and auto-start support
 - Theme mode switcher with System / Light / Dark and independent accent colors
-- Storage settings with Local / External PostgreSQL modes and `.scbackup` local backup/restore tools
+- Storage settings with Local / External PostgreSQL modes, fast switching among saved connections, and `.scbackup` local backup/restore tools
 - Experimental features panel for optional Modern UI, clipboard multi-tag display, and color-strip hiding
 - First launch follows the system language, with Chinese and English UI available
 - Built-in update check through GitHub Releases with release notes preview
@@ -35,7 +35,7 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `3.0.0`
+- Version: `3.1.0`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - UI style: classic UI by default, with Modern UI available in Experimental Features
@@ -70,6 +70,8 @@ The storage entry is always available next to Settings. The panel supports two m
 - Local: writes data to the local SQLite database and is the default mode.
 - External: saves clipboard and memo bodies to a user-provided PostgreSQL database. Saving automatically tests the connection and initializes remote tables.
 
+External databases that connect and switch successfully appear under Saved Connections, with up to 12 profiles retained. Select a profile to refill the form or choose Use to test and switch immediately. Deleting a saved connection removes only the local profile; it never deletes the external database or its data.
+
 Backup / Restore is shown only in Local mode. Backups use the `.scbackup` package format with source version, data manifest, and checksum metadata. Cross-version restore is not guaranteed.
 
 ### Experimental Features
@@ -88,7 +90,7 @@ Multi-tag display is intentionally behind Experimental Features. When it is off,
 
 ## Privacy
 
-By default, SuperClipboard stores clipboard entries, memos, and settings locally in SQLite under the app data directory. When External mode is selected in Storage Settings, clipboard and memo bodies are written to the user-configured PostgreSQL database instead. Update checks contact GitHub Releases when enabled.
+By default, SuperClipboard stores clipboard entries, memos, and settings locally in SQLite under the app data directory. When External mode is selected in Storage Settings, clipboard and memo bodies are written to the user-configured PostgreSQL database instead. Saved external connection profiles and credentials remain in the local settings database and are not written to remote data tables; deleting a profile does not delete remote data. Update checks contact GitHub Releases when enabled.
 
 ## License
 

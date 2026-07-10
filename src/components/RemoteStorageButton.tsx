@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
-import { Database, Network } from 'lucide-react';
+import { Database, Network, Trash2 } from 'lucide-react';
 import {
   createBackup,
   getSetting,
@@ -14,6 +14,7 @@ import {
 } from '../api/settings';
 import type { BackupFileInfo, StorageStatusInfo } from '../api/settings';
 import { useI18n } from '../i18n';
+import ConfirmDialog, { type ConfirmDialogState } from './ConfirmDialog';
 
 type StorageMode = 'local' | 'remote';
 type ConnectionMode = 'url' | 'manual';
@@ -30,9 +31,24 @@ const SETTING_KEYS = {
   password: 'remote_db_password',
   sslMode: 'remote_db_ssl_mode',
   ready: 'remote_db_ready',
+  profiles: 'remote_db_profiles',
 };
 
 type StoredSettingsPayload = Record<string, string>;
+
+interface RemoteDbProfile {
+  id: string;
+  name: string;
+  connectionMode: ConnectionMode;
+  url: string;
+  host: string;
+  port: string;
+  database: string;
+  username: string;
+  password: string;
+  sslMode: string;
+  lastUsedAt: string;
+}
 
 function formatBackupSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -49,6 +65,157 @@ function formatBackupTime(value: string): string {
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
   return `${month}/${day} ${hours}:${minutes}`;
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function withoutUrlPassword(value: string): string {
+  try {
+    const parsed = new URL(value);
+    parsed.password = '';
+    return parsed.toString();
+  } catch {
+    return value.replace(/:\/\/([^:@/]+):[^@/]*@/, '://$1@');
+  }
+}
+
+function profileSignature(payload: StoredSettingsPayload): string {
+  const mode = payload[SETTING_KEYS.connectionMode] === 'manual' ? 'manual' : 'url';
+  const sslMode = payload[SETTING_KEYS.sslMode] || 'prefer';
+  if (mode === 'manual') {
+    return [
+      mode,
+      payload[SETTING_KEYS.host]?.trim().toLowerCase() ?? '',
+      payload[SETTING_KEYS.port]?.trim() || '5432',
+      payload[SETTING_KEYS.database]?.trim().toLowerCase() ?? '',
+      payload[SETTING_KEYS.username]?.trim().toLowerCase() ?? '',
+      sslMode,
+    ].join('|');
+  }
+  return [mode, withoutUrlPassword(payload[SETTING_KEYS.url]?.trim() ?? '').toLowerCase(), sslMode].join('|');
+}
+
+function profileId(payload: StoredSettingsPayload): string {
+  return `remote-${hashString(profileSignature(payload))}`;
+}
+
+function profileLabel(payload: StoredSettingsPayload): string {
+  const mode = payload[SETTING_KEYS.connectionMode] === 'manual' ? 'manual' : 'url';
+  if (mode === 'manual') {
+    const host = payload[SETTING_KEYS.host]?.trim();
+    const port = payload[SETTING_KEYS.port]?.trim() || '5432';
+    const database = payload[SETTING_KEYS.database]?.trim();
+    const username = payload[SETTING_KEYS.username]?.trim();
+    return [username && `${username}@`, host, host && `:${port}`, database && `/${database}`]
+      .filter(Boolean)
+      .join('') || 'PostgreSQL';
+  }
+
+  const rawUrl = payload[SETTING_KEYS.url]?.trim() ?? '';
+  try {
+    const parsed = new URL(rawUrl);
+    const database = parsed.pathname.replace(/^\//, '');
+    return [parsed.username && `${parsed.username}@`, parsed.host, database && `/${database}`]
+      .filter(Boolean)
+      .join('') || parsed.host || 'PostgreSQL';
+  } catch {
+    return withoutUrlPassword(rawUrl) || 'PostgreSQL';
+  }
+}
+
+function profileFromPayload(payload: StoredSettingsPayload, existingId?: string): RemoteDbProfile {
+  return {
+    id: existingId || profileId(payload),
+    name: profileLabel(payload),
+    connectionMode: payload[SETTING_KEYS.connectionMode] === 'manual' ? 'manual' : 'url',
+    url: payload[SETTING_KEYS.url] ?? '',
+    host: payload[SETTING_KEYS.host] ?? '',
+    port: payload[SETTING_KEYS.port] || '5432',
+    database: payload[SETTING_KEYS.database] ?? '',
+    username: payload[SETTING_KEYS.username] ?? '',
+    password: payload[SETTING_KEYS.password] ?? '',
+    sslMode: payload[SETTING_KEYS.sslMode] || 'prefer',
+    lastUsedAt: new Date().toISOString(),
+  };
+}
+
+function payloadFromProfile(profile: RemoteDbProfile, ready: boolean): StoredSettingsPayload {
+  return {
+    [SETTING_KEYS.storageMode]: 'remote',
+    [SETTING_KEYS.connectionMode]: profile.connectionMode,
+    [SETTING_KEYS.url]: profile.url,
+    [SETTING_KEYS.host]: profile.host,
+    [SETTING_KEYS.port]: profile.port || '5432',
+    [SETTING_KEYS.database]: profile.database,
+    [SETTING_KEYS.username]: profile.username,
+    [SETTING_KEYS.password]: profile.password,
+    [SETTING_KEYS.sslMode]: profile.sslMode || 'prefer',
+    [SETTING_KEYS.ready]: ready ? 'true' : 'false',
+  };
+}
+
+function parseProfiles(value: string | null): RemoteDbProfile[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item): RemoteDbProfile | null => {
+        if (!item || typeof item !== 'object') return null;
+        const profile = item as Partial<RemoteDbProfile>;
+        const payload = payloadFromProfile({
+          id: typeof profile.id === 'string' ? profile.id : '',
+          name: typeof profile.name === 'string' ? profile.name : '',
+          connectionMode: profile.connectionMode === 'manual' ? 'manual' : 'url',
+          url: typeof profile.url === 'string' ? profile.url : '',
+          host: typeof profile.host === 'string' ? profile.host : '',
+          port: typeof profile.port === 'string' ? profile.port : '5432',
+          database: typeof profile.database === 'string' ? profile.database : '',
+          username: typeof profile.username === 'string' ? profile.username : '',
+          password: typeof profile.password === 'string' ? profile.password : '',
+          sslMode: typeof profile.sslMode === 'string' ? profile.sslMode : 'prefer',
+          lastUsedAt: typeof profile.lastUsedAt === 'string' ? profile.lastUsedAt : '',
+        }, false);
+        const id = profile.id || profileId(payload);
+        return {
+          ...profileFromPayload(payload, id),
+          name: profile.name || profileLabel(payload),
+          lastUsedAt: profile.lastUsedAt || '',
+        };
+      })
+      .filter((profile): profile is RemoteDbProfile => Boolean(profile))
+      .slice(0, 12);
+  } catch {
+    return [];
+  }
+}
+
+function upsertProfile(profiles: RemoteDbProfile[], nextProfile: RemoteDbProfile): RemoteDbProfile[] {
+  const nextSignature = profileSignature(payloadFromProfile(nextProfile, false));
+  return [
+    nextProfile,
+    ...profiles.filter((profile) => (
+      profile.id !== nextProfile.id
+      && profileSignature(payloadFromProfile(profile, false)) !== nextSignature
+    )),
+  ].slice(0, 12);
+}
+
+function profileIdForPayload(profiles: RemoteDbProfile[], payload: StoredSettingsPayload): string {
+  const signature = profileSignature(payload);
+  return profiles.find((profile) => profileSignature(payloadFromProfile(profile, false)) === signature)?.id
+    || profileId(payload);
+}
+
+function formatProfileTime(value: string): string {
+  return formatBackupTime(value);
 }
 
 interface RemoteStorageButtonProps {
@@ -79,6 +246,9 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
   const [backupStatus, setBackupStatus] = useState<'idle' | 'success' | 'failed'>('idle');
   const [backupMessage, setBackupMessage] = useState('');
   const [restoreConfirming, setRestoreConfirming] = useState(false);
+  const [profiles, setProfiles] = useState<RemoteDbProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [deleteProfileTarget, setDeleteProfileTarget] = useState<RemoteDbProfile | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const persistedSettingsRef = useRef<StoredSettingsPayload | null>(null);
 
@@ -105,6 +275,15 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
     return status;
   }, []);
 
+  const persistProfiles = useCallback(async (items: RemoteDbProfile[]) => {
+    setProfiles(items);
+    await setSetting(SETTING_KEYS.profiles, JSON.stringify(items));
+  }, []);
+
+  const readProfiles = useCallback(async () => {
+    return parseProfiles(await getSetting(SETTING_KEYS.profiles));
+  }, []);
+
   const buildSettingsPayload = useCallback((ready: boolean): StoredSettingsPayload => ({
     [SETTING_KEYS.storageMode]: storageMode,
     [SETTING_KEYS.connectionMode]: connectionMode,
@@ -124,8 +303,20 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       : 'local';
   }, []);
 
+  const applyPayloadToForm = useCallback((payload: StoredSettingsPayload) => {
+    setStorageMode(payload[SETTING_KEYS.storageMode] === 'remote' ? 'remote' : 'local');
+    setConnectionMode(payload[SETTING_KEYS.connectionMode] === 'manual' ? 'manual' : 'url');
+    setUrl(payload[SETTING_KEYS.url] ?? '');
+    setHost(payload[SETTING_KEYS.host] ?? '');
+    setPort(payload[SETTING_KEYS.port] || '5432');
+    setDatabase(payload[SETTING_KEYS.database] ?? '');
+    setUsername(payload[SETTING_KEYS.username] ?? '');
+    setPassword(payload[SETTING_KEYS.password] ?? '');
+    setSslMode(payload[SETTING_KEYS.sslMode] || 'prefer');
+  }, []);
+
   const loadSettings = useCallback(async () => {
-    const [mode, connMode, savedUrl, savedHost, savedPort, savedDatabase, savedUsername, savedPassword, savedSslMode, ready] = await Promise.all([
+    const [mode, connMode, savedUrl, savedHost, savedPort, savedDatabase, savedUsername, savedPassword, savedSslMode, ready, savedProfiles] = await Promise.all([
       getSetting(SETTING_KEYS.storageMode),
       getSetting(SETTING_KEYS.connectionMode),
       getSetting(SETTING_KEYS.url),
@@ -136,6 +327,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       getSetting(SETTING_KEYS.password),
       getSetting(SETTING_KEYS.sslMode),
       getSetting(SETTING_KEYS.ready),
+      getSetting(SETTING_KEYS.profiles),
     ]);
     const loadedStorageMode = mode === 'remote' ? 'remote' : 'local';
     const loadedRemoteActive = loadedStorageMode === 'remote' && ready === 'true';
@@ -154,19 +346,14 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
 
     persistedSettingsRef.current = persistedPayload;
     setActiveStorageMode(loadedRemoteActive ? 'remote' : 'local');
-    setStorageMode(loadedStorageMode);
-    setConnectionMode(persistedPayload[SETTING_KEYS.connectionMode] === 'manual' ? 'manual' : 'url');
-    setUrl(persistedPayload[SETTING_KEYS.url]);
-    setHost(persistedPayload[SETTING_KEYS.host]);
-    setPort(persistedPayload[SETTING_KEYS.port]);
-    setDatabase(persistedPayload[SETTING_KEYS.database]);
-    setUsername(persistedPayload[SETTING_KEYS.username]);
-    setPassword(persistedPayload[SETTING_KEYS.password]);
-    setSslMode(persistedPayload[SETTING_KEYS.sslMode]);
+    applyPayloadToForm(persistedPayload);
+    const loadedProfiles = parseProfiles(savedProfiles);
+    setProfiles(loadedProfiles);
+    setSelectedProfileId(loadedRemoteActive ? profileIdForPayload(loadedProfiles, persistedPayload) : '');
     setSaveState('idle');
     setTestState('idle');
     setTestMessage('');
-  }, []);
+  }, [applyPayloadToForm]);
 
   useEffect(() => {
     loadSettings().catch((err) => {
@@ -225,13 +412,19 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       setTestState('testing');
       const pendingPayload = buildSettingsPayload(false);
       await writeSettings(pendingPayload);
-      await testRemoteStorage();
+      const message = await testRemoteStorage();
       await initializeRemoteStorage();
       const readyPayload = { ...pendingPayload, [SETTING_KEYS.ready]: 'true' };
       await writeSettings(readyPayload);
+      const savedProfile = profileFromPayload(readyPayload);
+      const currentProfiles = await readProfiles();
+      const nextProfiles = upsertProfile(currentProfiles, savedProfile);
+      await persistProfiles(nextProfiles);
       persistedSettingsRef.current = readyPayload;
       setActiveStorageMode('remote');
+      setSelectedProfileId(savedProfile.id);
       setTestState('ready');
+      setTestMessage(message);
       setSaveState('saved');
       await refreshStorageStatus();
       setOpen(false);
@@ -248,7 +441,90 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       setTestState(storageMode === 'remote' ? 'failed' : 'idle');
       setTestMessage(String(err));
     }
-  }, [buildSettingsPayload, getPayloadActiveMode, onStorageModeChange, refreshStorageStatus, storageMode, writeSettings]);
+  }, [buildSettingsPayload, getPayloadActiveMode, onStorageModeChange, persistProfiles, readProfiles, refreshStorageStatus, storageMode, writeSettings]);
+
+  const handleSelectProfile = useCallback((profile: RemoteDbProfile) => {
+    setSelectedProfileId(profile.id);
+    applyPayloadToForm(payloadFromProfile(profile, false));
+    setSaveState('idle');
+    setTestState('idle');
+    setTestMessage('');
+  }, [applyPayloadToForm]);
+
+  const handleUseProfile = useCallback(async (profile: RemoteDbProfile) => {
+    const previousPayload = persistedSettingsRef.current;
+    setSelectedProfileId(profile.id);
+    setSaveState('saving');
+    setTestState('testing');
+    setTestMessage('');
+    applyPayloadToForm(payloadFromProfile(profile, false));
+    try {
+      const pendingPayload = payloadFromProfile(profile, false);
+      await writeSettings(pendingPayload);
+      const message = await testRemoteStorage();
+      await initializeRemoteStorage();
+      const readyPayload = payloadFromProfile(profile, true);
+      await writeSettings(readyPayload);
+      const activatedProfile = {
+        ...profile,
+        name: profile.name || profileLabel(readyPayload),
+        lastUsedAt: new Date().toISOString(),
+      };
+      const currentProfiles = await readProfiles();
+      const nextProfiles = upsertProfile(currentProfiles, activatedProfile);
+      await persistProfiles(nextProfiles);
+      persistedSettingsRef.current = readyPayload;
+      setActiveStorageMode('remote');
+      setSaveState('saved');
+      setTestState('ready');
+      setTestMessage(message);
+      await refreshStorageStatus();
+      setOpen(false);
+      onStorageModeChange?.('remote');
+    } catch (err) {
+      console.error('Failed to switch remote storage profile:', err);
+      if (previousPayload) {
+        await writeSettings(previousPayload).catch((restoreErr) => {
+          console.error('Failed to restore previous remote storage settings:', restoreErr);
+        });
+        applyPayloadToForm(previousPayload);
+        setActiveStorageMode(getPayloadActiveMode(previousPayload));
+        setSelectedProfileId(getPayloadActiveMode(previousPayload) === 'remote' ? profileIdForPayload(profiles, previousPayload) : '');
+      }
+      setSaveState('failed');
+      setTestState('failed');
+      setTestMessage(String(err));
+    }
+  }, [applyPayloadToForm, getPayloadActiveMode, onStorageModeChange, persistProfiles, profiles, readProfiles, refreshStorageStatus, writeSettings]);
+
+  const deleteProfile = useCallback(async (profileIdToDelete: string) => {
+    const currentProfiles = await readProfiles();
+    const nextProfiles = currentProfiles.filter((profile) => profile.id !== profileIdToDelete);
+    await persistProfiles(nextProfiles);
+    if (selectedProfileId === profileIdToDelete) {
+      setSelectedProfileId('');
+    }
+  }, [persistProfiles, readProfiles, selectedProfileId]);
+
+  const deleteProfileDialog: ConfirmDialogState | null = deleteProfileTarget
+    ? {
+        title: t.deleteRemoteProfile,
+        message: t.deleteRemoteProfileConfirm(deleteProfileTarget.name),
+        confirmLabel: t.delete,
+        tone: 'danger',
+        resolve: (confirmed) => {
+          const profileId = deleteProfileTarget.id;
+          setDeleteProfileTarget(null);
+          if (confirmed) {
+            deleteProfile(profileId).catch((err) => {
+              console.error('Failed to delete remote storage profile:', err);
+              setSaveState('failed');
+              setTestMessage(String(err));
+            });
+          }
+        },
+      }
+    : null;
 
   const handleCreateBackup = useCallback(async () => {
     setBackupAction('creating');
@@ -471,6 +747,61 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
             </button>
           </div>
 
+          {storageMode === 'remote' && (
+            <div style={styles.profileSection}>
+              <div style={styles.profileHeader}>
+                <span style={styles.label}>{t.remoteProfiles}</span>
+              </div>
+              {profiles.length === 0 ? (
+                <div style={styles.hint}>{t.noRemoteProfiles}</div>
+              ) : (
+                <div style={styles.profileList}>
+                  {profiles.map((profile) => {
+                    const isSelected = profile.id === selectedProfileId;
+                    return (
+                      <div
+                        key={profile.id}
+                        style={{
+                          ...styles.profileItem,
+                          ...(isSelected ? styles.profileItemSelected : {}),
+                        }}
+                      >
+                        <button
+                          type="button"
+                          style={styles.profileMain}
+                          onClick={() => handleSelectProfile(profile)}
+                          title={profile.name}
+                        >
+                          <span style={styles.profileName}>{profile.name}</span>
+                          <span style={styles.profileMeta}>
+                            {profile.connectionMode === 'manual' ? t.connectionManual : t.connectionUrl}
+                            {profile.lastUsedAt ? ` · ${t.lastUsedRemoteProfile(formatProfileTime(profile.lastUsedAt))}` : ''}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.profileUseBtn}
+                          onClick={() => handleUseProfile(profile)}
+                          disabled={saveState === 'saving' || testState === 'testing'}
+                        >
+                          {t.useRemoteProfile}
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.profileDeleteBtn}
+                          onClick={() => setDeleteProfileTarget(profile)}
+                          title={t.deleteRemoteProfile}
+                        >
+                          <Trash2 size={12} strokeWidth={2.1} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {saveState === 'saved' && <div style={styles.successText}>{t.storageConfigSaved}</div>}
           {saveState === 'failed' && <div style={styles.errorText}>{t.storageConfigFailed}</div>}
           {testState === 'ready' && <div style={styles.successText}>{t.storageConnectionReady}: {testMessage}</div>}
@@ -547,6 +878,13 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
                 )}
               </div>
             </>
+          )}
+
+          {deleteProfileDialog && (
+            <ConfirmDialog
+              dialog={deleteProfileDialog}
+              onClose={() => setDeleteProfileTarget(null)}
+            />
           )}
         </div>
       )}
@@ -629,6 +967,13 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '6px',
     marginBottom: '10px',
   },
+  profileSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    marginTop: '10px',
+    marginBottom: '6px',
+  },
   label: {
     fontSize: '11px',
     color: 'var(--text-secondary)',
@@ -663,6 +1008,85 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '10px',
     lineHeight: 1.45,
     color: 'var(--text-muted)',
+  },
+  profileHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+  },
+  profileList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  profileItem: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto 24px',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px',
+    border: '1px solid var(--border)',
+    borderRadius: '7px',
+    background: 'rgba(255, 255, 255, 0.36)',
+  },
+  profileItemSelected: {
+    borderColor: 'var(--accent)',
+    boxShadow: '0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent)',
+  },
+  profileMain: {
+    display: 'flex',
+    minWidth: 0,
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: '2px',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--text-primary)',
+    padding: 0,
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  profileName: {
+    maxWidth: '100%',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '11px',
+    fontWeight: 700,
+  },
+  profileMeta: {
+    maxWidth: '100%',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    color: 'var(--text-muted)',
+    fontSize: '9px',
+    fontWeight: 600,
+  },
+  profileUseBtn: {
+    border: '1px solid var(--accent)',
+    borderRadius: '6px',
+    background: 'var(--accent)',
+    color: '#fff',
+    fontSize: '10px',
+    fontWeight: 700,
+    padding: '4px 6px',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+  },
+  profileDeleteBtn: {
+    width: '24px',
+    height: '24px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    padding: 0,
   },
   grid: {
     display: 'grid',

@@ -162,6 +162,12 @@ export interface Translations {
   connectionMode: string;
   connectionUrl: string;
   connectionManual: string;
+  remoteProfiles: string;
+  noRemoteProfiles: string;
+  useRemoteProfile: string;
+  deleteRemoteProfile: string;
+  deleteRemoteProfileConfirm: (name: string) => string;
+  lastUsedRemoteProfile: (time: string) => string;
   databaseUrl: string;
   databaseHost: string;
   databasePort: string;
@@ -332,6 +338,12 @@ export const zhCN: Translations = {
   connectionMode: '连接方式',
   connectionUrl: '连接 URL',
   connectionManual: '手动填写',
+  remoteProfiles: '已保存连接',
+  noRemoteProfiles: '成功切换过的外部数据库会记录在这里',
+  useRemoteProfile: '使用',
+  deleteRemoteProfile: '删除连接',
+  deleteRemoteProfileConfirm: (name) => `确定删除已保存连接“${name}”吗？这不会删除外部数据库中的数据。`,
+  lastUsedRemoteProfile: (time) => `上次 ${time}`,
   databaseUrl: '数据库 URL',
   databaseHost: '地址',
   databasePort: '端口',
@@ -502,6 +514,12 @@ export const en: Translations = {
   connectionMode: 'Connection',
   connectionUrl: 'URL',
   connectionManual: 'Manual',
+  remoteProfiles: 'Saved Connections',
+  noRemoteProfiles: 'External databases you switch to successfully will appear here',
+  useRemoteProfile: 'Use',
+  deleteRemoteProfile: 'Delete connection',
+  deleteRemoteProfileConfirm: (name) => `Delete saved connection "${name}"? This will not delete data in the external database.`,
+  lastUsedRemoteProfile: (time) => `Last ${time}`,
   databaseUrl: 'Database URL',
   databaseHost: 'Host',
   databasePort: 'Port',
