@@ -113,6 +113,8 @@ export interface Translations {
   clipboardMultiTagDesc: string;
   hideEntryColorStrip: string;
   hideEntryColorStripDesc: string;
+  categoryTabSelectedColors: string;
+  categoryTabSelectedColorsDesc: string;
   categoryTabSorting: string;
   categoryTabSortingDesc: string;
   version: string;
@@ -289,6 +291,8 @@ export const zhCN: Translations = {
   clipboardMultiTagDesc: '在剪贴板条目中显示所有识别出的分类标签',
   hideEntryColorStrip: '隐藏条目色条',
   hideEntryColorStripDesc: '隐藏剪贴板条目左侧的分类色条和原文左侧边框',
+  categoryTabSelectedColors: '多色模式(Tab标签)',
+  categoryTabSelectedColorsDesc: '让选中的 Tab 标签使用对应分类颜色',
   categoryTabSorting: '标签排序',
   categoryTabSortingDesc: '允许直接拖动剪贴板分类标签调整顺序',
   version: '版本号',
@@ -354,8 +358,8 @@ export const zhCN: Translations = {
   testingConnection: '测试中...',
   storageConnectionReady: '连接成功，远端表已就绪',
   storageConnectionFailed: '连接失败',
-  saveAndUseLocal: '保存并切回本地',
-  saveAndUseRemote: '保存并切到远程',
+  saveAndUseLocal: '保存并切换到本地',
+  saveAndUseRemote: '保存并切换到外部',
   savingStorageConfig: '保存中...',
   storageConfigSaved: '存储设置已保存',
   storageConfigFailed: '保存失败',
@@ -465,6 +469,8 @@ export const en: Translations = {
   clipboardMultiTagDesc: 'Show every detected category tag on clipboard entries',
   hideEntryColorStrip: 'Hide Entry Color Strip',
   hideEntryColorStripDesc: 'Hide the category color strip and original-content left border on clipboard entries',
+  categoryTabSelectedColors: 'Multicolor Mode (Tab Labels)',
+  categoryTabSelectedColorsDesc: 'Use the matching category color for the selected Tab label background',
   categoryTabSorting: 'Tab Sorting',
   categoryTabSortingDesc: 'Allow dragging clipboard category tabs to reorder them',
   version: 'Version',

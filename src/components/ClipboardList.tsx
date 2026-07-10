@@ -4,7 +4,7 @@ import { useI18n } from '../i18n';
 
 interface Props {
   entries: ClipboardEntry[];
-  onCopy: (id: number) => void;
+  onCopy: (id: number, useOriginal?: boolean) => void;
   onDelete: (id: number) => void;
   onTogglePin: (id: number) => void;
   onEdit: (id: number, content: string) => Promise<void>;

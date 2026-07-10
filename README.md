@@ -59,6 +59,8 @@ Copied text, links, images, code, emails, and paths are added to the list automa
 
 When the window is visible but covered by another app, pressing the global shortcut brings it back to the front. The shortcut only hides the window when SuperClipboard is already the foreground window.
 
+After an entry is edited, clicking its visible content copies the latest saved version. Expand Original to inspect the first captured content; clicking that original-content area copies the original version without overwriting it.
+
 ### Raw Preview
 
 Raw Preview only affects clipboard entries. Enable it when you want text to preserve original line breaks and spacing, which is useful for code, logs, and config snippets. Disable it for a denser list. Memos always use formatted preview and are not affected by this switch.
@@ -78,9 +80,10 @@ Backup / Restore is shown only in Local mode. Backups use the `.scbackup` packag
 
 Enable Experimental Features in Settings to show the lab button next to Storage Settings. Experimental options are off by default.
 
-- Modern UI: switches from the classic compact interface to the refreshed glass-style visual system.
+- Modern UI: switches from the classic compact interface to the refreshed glass-style visual system, including a sliding active-tab indicator.
 - Clipboard Multi-tag Display: shows every detected category tag on clipboard entries and uses a segmented category color bar.
 - Hide Entry Color Strip: hides the left category strip on clipboard entries and the original-content left border.
+- Multicolor Mode (Tab Labels): uses the matching category color for a selected clipboard Tab. All, Archive, and Memos retain their existing theme or memo colors.
 
 ### Classification and Tags
 

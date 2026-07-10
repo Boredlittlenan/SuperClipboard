@@ -27,9 +27,9 @@ export async function clearUnpinned(archive?: boolean): Promise<number> {
   return invoke('clear_unpinned', { archive });
 }
 
-/** Copy an entry back to system clipboard */
-export async function copyToClipboard(id: number): Promise<boolean> {
-  return invoke('copy_to_clipboard', { id });
+/** Copy an entry back to system clipboard, optionally using its first captured content. */
+export async function copyToClipboard(id: number, useOriginal = false): Promise<boolean> {
+  return invoke('copy_to_clipboard', { id, useOriginal });
 }
 
 /** Update a clipboard entry's content */

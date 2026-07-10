@@ -592,7 +592,11 @@ fn purge_old_archives(state: tauri::State<'_, AppState>, days: i64) -> Result<u6
 
 /// Copy a stored entry back to the system clipboard
 #[tauri::command]
-fn copy_to_clipboard(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+fn copy_to_clipboard(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    use_original: Option<bool>,
+) -> Result<bool, String> {
     let entry = if remote_storage::is_remote_mode(&state.storage) {
         remote_storage::get_clipboard_by_id(&state.storage, id).map_err(|e| e.to_string())?
     } else {
@@ -621,7 +625,12 @@ fn copy_to_clipboard(state: tauri::State<'_, AppState>, id: i64) -> Result<bool,
                 clip.set_image(img_data).map_err(|e| e.to_string())?;
             }
             _ => {
-                clip.set_text(&entry.content).map_err(|e| e.to_string())?;
+                let text = if use_original.unwrap_or(false) {
+                    entry.original_content.as_deref().unwrap_or(&entry.content)
+                } else {
+                    &entry.content
+                };
+                clip.set_text(text).map_err(|e| e.to_string())?;
             }
         }
         Ok(true)

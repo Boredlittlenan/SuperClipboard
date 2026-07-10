@@ -7,7 +7,7 @@ import { useI18n } from '../i18n';
 
 interface Props {
   entry: ClipboardEntry;
-  onCopy: (id: number) => void;
+  onCopy: (id: number, useOriginal?: boolean) => void;
   onDelete: (id: number) => void;
   onTogglePin: (id: number) => void;
   onEdit: (id: number, content: string) => Promise<void>;
@@ -42,7 +42,8 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
       }).join(', ')})`;
   const isImage = entry.category === 'image';
   const isLink = entry.category === 'link';
-  const hasOriginal = entry.original_content != null;
+  const originalContent = entry.original_content;
+  const hasOriginal = originalContent != null;
   const archiveDaysRemaining = isArchive && entry.archived_at ? getArchiveDaysRemaining(entry.archived_at) : null;
 
   const handleOpenInBrowser = useCallback((e: React.MouseEvent) => {
@@ -263,7 +264,13 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
 
         {/* Original content collapsible */}
         {hasOriginal && !editing && !isArchive && (
-          <div style={styles.originalSection} onClick={(e) => e.stopPropagation()}>
+          <div
+            style={styles.originalSection}
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopy(entry.id, true);
+            }}
+          >
             <button style={styles.originalToggle} onClick={handleToggleOriginal}>
               <span style={{
                 ...styles.toggleArrow,
@@ -278,7 +285,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                 ...styles.originalContent,
                 ...(showCategoryIndicator ? {} : styles.originalContentNoIndicator),
               }}>
-                <pre style={styles.originalPre}>{entry.original_content}</pre>
+                <pre style={styles.originalPre}>{originalContent}</pre>
               </div>
             )}
           </div>

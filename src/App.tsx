@@ -57,6 +57,7 @@ function AppContent() {
   const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] = useState(false);
   const [clipboardMultiTagEnabled, setClipboardMultiTagEnabled] = useState(false);
   const [hideEntryColorStripEnabled, setHideEntryColorStripEnabled] = useState(false);
+  const [categoryTabSelectedColorsEnabled, setCategoryTabSelectedColorsEnabled] = useState(false);
   const [categoryTabSortingEnabled, setCategoryTabSortingEnabled] = useState(true);
   const [archiveCountState, setArchiveCountState] = useState<number | null>(null);
   const [rawPreview, setRawPreview] = useState(false);
@@ -150,6 +151,9 @@ function AppContent() {
       .catch(console.error);
     getSetting('hide_entry_color_strip_enabled')
       .then((v) => setHideEntryColorStripEnabled(v === 'true'))
+      .catch(console.error);
+    getSetting('category_tab_selected_colors_enabled')
+      .then((v) => setCategoryTabSelectedColorsEnabled(v === 'true'))
       .catch(console.error);
     getSetting('category_tab_sorting_enabled')
       .then((v) => setCategoryTabSortingEnabled(v === null ? true : v === 'true'))
@@ -475,14 +479,14 @@ function AppContent() {
   }, []);
 
   // Actions
-  const handleCopy = useCallback(async (id: number) => {
+  const handleCopy = useCallback(async (id: number, useOriginal = false) => {
     try {
-      if (openedViaShortcut) {
+      if (openedViaShortcut && !useOriginal) {
         // Paste directly to the active window (hides window + simulates Ctrl+V)
         await pasteToActiveWindow(id);
         setOpenedViaShortcut(false);
       } else {
-        await copyToClipboard(id);
+        await copyToClipboard(id, useOriginal);
       }
       setCopied(id);
       setTimeout(() => setCopied(null), 1500);
@@ -623,12 +627,13 @@ function AppContent() {
 
   // Handle tab change
   const handleTabChange = useCallback((tab: FilterTab) => {
+    if (tab === activeTab) return;
     if (tab !== 'memo') {
       setLoading(true);
     }
     setActiveTab(tab);
     void fetchStats();
-  }, [fetchStats]);
+  }, [activeTab, fetchStats]);
 
   const handleMemoCountChange = useCallback((count: number) => {
     setMemoListCount(count);
@@ -678,6 +683,7 @@ function AppContent() {
                 onClipboardMultiTagChange={setClipboardMultiTagEnabled}
                 onModernUiChange={setModernUiEnabled}
                 onHideEntryColorStripChange={setHideEntryColorStripEnabled}
+                onCategoryTabSelectedColorsChange={setCategoryTabSelectedColorsEnabled}
               />
             )}
             <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
@@ -731,6 +737,7 @@ function AppContent() {
         archiveEnabled={archiveEnabled}
         archiveCount={archiveCountState}
         categorySortingEnabled={categoryTabSortingEnabled}
+        categoryTabSelectedColors={experimentalFeaturesEnabled && categoryTabSelectedColorsEnabled}
         modernUi={effectiveModernUiEnabled}
       />
 

@@ -719,7 +719,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     return (
       <div style={styles.container}>
         <div style={{ padding: '8px 12px' }}>
-          <button style={styles.newBtn} onClick={handleCreate}><Plus size={13} /> {t.memoNew}</button>
+          <button className="memo-new-button" style={styles.newBtn} onClick={handleCreate}><Plus size={14} strokeWidth={2.25} /> {t.memoNew}</button>
         </div>
         <div style={styles.empty}>
           <NotebookText style={styles.emptyIcon} />
@@ -734,7 +734,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   return (
     <div style={styles.container}>
       <div style={{ padding: '8px 12px', flexShrink: 0 }}>
-        <button style={styles.newBtn} onClick={handleCreate}><Plus size={13} /> {t.memoNew}</button>
+        <button className="memo-new-button" style={styles.newBtn} onClick={handleCreate}><Plus size={14} strokeWidth={2.25} /> {t.memoNew}</button>
       </div>
       <div style={styles.list}>
         {pinnedMemos.map(m => renderMemoItem(m, false))}
@@ -784,15 +784,6 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '4px',
     minHeight: '34px',
     padding: '8px 0',
-    border: '1px dashed var(--memo-contrast)',
-    borderRadius: '6px',
-    background: 'transparent',
-    color: 'var(--memo-contrast)',
-    fontSize: '12px',
-    fontWeight: 500,
-    lineHeight: 1,
-    cursor: 'pointer',
-    transition: 'all 0.15s',
   },
   list: {
     flex: 1,

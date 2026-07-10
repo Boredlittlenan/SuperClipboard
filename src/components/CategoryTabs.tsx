@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FilterTab, Stats } from '../types';
-import { getTabLabel } from '../utils';
+import { getCategoryColor, getTabLabel } from '../utils';
 import { useI18n } from '../i18n';
 import { getSetting, setSetting } from '../api/settings';
 
@@ -13,6 +13,7 @@ interface Props {
   archiveEnabled?: boolean;
   archiveCount?: number | null;
   categorySortingEnabled?: boolean;
+  categoryTabSelectedColors?: boolean;
   modernUi?: boolean;
 }
 
@@ -41,6 +42,7 @@ export default function CategoryTabs({
   archiveEnabled,
   archiveCount,
   categorySortingEnabled = true,
+  categoryTabSelectedColors = false,
   modernUi = true,
 }: Props) {
   const { t } = useI18n();
@@ -75,6 +77,13 @@ export default function CategoryTabs({
     ...orderedBaseTabs,
     ...(archiveEnabled ? ['archive' as FilterTab] : []),
   ];
+  const tabSignature = tabs.join('|');
+
+  const getActiveTabColor = (tab: FilterTab): string => {
+    if (tab === 'memo') return 'var(--memo-contrast)';
+    if (!categoryTabSelectedColors || tab === 'all' || tab === 'archive') return 'var(--accent)';
+    return getCategoryColor(tab);
+  };
 
   const getCount = useCallback(
     (tab: FilterTab): number | null => {
@@ -88,6 +97,33 @@ export default function CategoryTabs({
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef(new Map<FilterTab, HTMLButtonElement>());
+  const [activeIndicator, setActiveIndicator] = useState({ left: 0, width: 0, visible: false });
+
+  const updateActiveIndicator = useCallback(() => {
+    const tabElement = tabRefs.current.get(activeTab);
+    if (!tabElement) {
+      setActiveIndicator((current) => (current.visible ? { ...current, visible: false } : current));
+      return;
+    }
+
+    const next = {
+      left: tabElement.offsetLeft,
+      width: tabElement.offsetWidth,
+      visible: true,
+    };
+    setActiveIndicator((current) => (
+      current.left === next.left && current.width === next.width && current.visible === next.visible
+        ? current
+        : next
+    ));
+  }, [activeTab]);
+
+  useLayoutEffect(() => {
+    updateActiveIndicator();
+    window.addEventListener('resize', updateActiveIndicator);
+    return () => window.removeEventListener('resize', updateActiveIndicator);
+  }, [archiveCount, memoCount, stats, tabSignature, updateActiveIndicator]);
 
   const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
     if (scrollRef.current) {
@@ -176,12 +212,25 @@ export default function CategoryTabs({
 
   const handleTabClick = useCallback((tab: FilterTab) => {
     if (suppressClickRef.current) return;
+    if (tab === activeTab) return;
     onTabChange(tab);
-  }, [onTabChange]);
+  }, [activeTab, onTabChange]);
 
   return (
     <div style={{ ...styles.container, ...(modernUi ? styles.containerModern : {}) }}>
       <div ref={scrollRef} style={{ ...styles.scrollArea, ...(modernUi ? styles.scrollAreaModern : {}) }} onWheel={handleWheel}>
+        {modernUi && activeIndicator.visible && (
+          <span
+            className="tab-active-indicator"
+            aria-hidden="true"
+            style={{
+              ...styles.activeIndicator,
+              width: `${activeIndicator.width}px`,
+              transform: `translateX(${activeIndicator.left}px)`,
+              background: getActiveTabColor(activeTab),
+            }}
+          />
+        )}
         {tabs.map((tab) => {
           const isActive = tab === activeTab;
           const count = getCount(tab);
@@ -192,6 +241,14 @@ export default function CategoryTabs({
             <button
               key={tab}
               data-clipboard-tab={tab}
+              data-active={isActive ? 'true' : undefined}
+              ref={(node) => {
+                if (node) {
+                  tabRefs.current.set(tab, node);
+                } else {
+                  tabRefs.current.delete(tab);
+                }
+              }}
               onClick={() => handleTabClick(tab)}
               onPointerDown={(e) => handleTabPointerDown(tab, e)}
               onPointerMove={handleTabPointerMove}
@@ -204,28 +261,21 @@ export default function CategoryTabs({
                 ...(draggable ? styles.tabDraggable : {}),
                 ...(isActive
                   ? (tab === 'memo'
-                    ? { ...styles.tabActiveMemo, ...(modernUi ? styles.tabActiveMemoModern : {}) }
-                    : { ...styles.tabActive, ...(modernUi ? styles.tabActiveModern : {}) })
+                    ? (modernUi ? styles.tabActiveMemoModern : styles.tabActiveMemo)
+                    : (modernUi ? styles.tabActiveModern : styles.tabActive))
+                  : {}),
+                ...(isActive && !modernUi && categoryTabSelectedColors
+                  ? { background: getActiveTabColor(tab) }
                   : {}),
                 ...(draggingTab === tab ? { ...styles.tabDragging, ...(modernUi ? styles.tabDraggingModern : {}) } : {}),
                 ...(insertBefore ? (modernUi ? styles.tabInsertBeforeModern : styles.tabInsertBefore) : {}),
                 ...(insertAfter ? (modernUi ? styles.tabInsertAfterModern : styles.tabInsertAfter) : {}),
               }}
-              onMouseEnter={(e) => {
-                if (!isActive && draggingTab === null) {
-                  e.currentTarget.style.background = 'var(--hover-bg)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isActive && draggingTab === null) {
-                  e.currentTarget.style.background = 'transparent';
-                }
-              }}
             >
               <span style={styles.tabLabel}>{tab === 'memo' ? t.memoTab : getTabLabel(tab, t)}</span>
               {count !== null && count > 0 && (
-                <span
-                  style={{
+                  <span
+                    style={{
                     ...styles.badge,
                     ...(modernUi ? styles.badgeModern : {}),
                     ...(isActive ? styles.badgeActive : {}),
@@ -266,6 +316,7 @@ const styles: Record<string, React.CSSProperties> = {
     scrollbarWidth: 'none',
   },
   scrollAreaModern: {
+    position: 'relative',
     gap: '4px',
     padding: '5px 8px 6px',
   },
@@ -288,6 +339,8 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'all 0.15s ease',
   },
   tabModern: {
+    position: 'relative',
+    zIndex: 1,
     padding: '6px 11px',
     borderRadius: '999px',
     fontWeight: 600,
@@ -323,14 +376,18 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#ffffff',
   },
   tabActiveModern: {
-    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 1px 2px rgba(15, 23, 42, 0.1)',
+    background: 'transparent',
+    color: '#ffffff',
+    boxShadow: 'none',
   },
   tabActiveMemo: {
     background: 'var(--memo-contrast)',
     color: '#ffffff',
   },
   tabActiveMemoModern: {
-    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 1px 2px rgba(15, 23, 42, 0.1)',
+    background: 'transparent',
+    color: '#ffffff',
+    boxShadow: 'none',
   },
   tabLabel: {
     display: 'inline-flex',
@@ -360,5 +417,16 @@ const styles: Record<string, React.CSSProperties> = {
   badgeActive: {
     background: 'rgba(255,255,255,0.25)',
     color: '#ffffff',
+  },
+  activeIndicator: {
+    position: 'absolute',
+    zIndex: 0,
+    top: '5px',
+    bottom: '6px',
+    left: 0,
+    borderRadius: '999px',
+    pointerEvents: 'none',
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 1px 2px rgba(15, 23, 42, 0.1)',
+    transition: 'transform 0.26s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.26s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.18s ease',
   },
 };

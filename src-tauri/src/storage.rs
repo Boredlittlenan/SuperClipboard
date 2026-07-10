@@ -564,11 +564,9 @@ impl Storage {
         Ok(pinned)
     }
 
-    /// Update a clipboard entry's content. Saves original content on first edit.
+    /// Update a clipboard entry while preserving its first captured content.
     pub fn update_entry(&self, id: i64, new_content: &str) -> Result<bool, StorageError> {
         let conn = self.conn.lock().unwrap();
-
-        // Read current entry to check if original_content is already set
         let current: Option<(String, Option<String>)> = conn
             .query_row(
                 "SELECT content, original_content FROM clipboard_entries WHERE id = ?1",
@@ -576,13 +574,10 @@ impl Storage {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .ok();
-
         let (current_content, existing_original) = match current {
-            Some(c) => c,
+            Some(current) => current,
             None => return Ok(false),
         };
-
-        // Only save original_content on first edit
         let original = existing_original.unwrap_or(current_content);
         let preview = if new_content.len() > 200 {
             new_content.chars().take(200).collect::<String>()
@@ -1068,5 +1063,38 @@ mod tests {
 
         std::fs::remove_file(source_path).ok();
         std::fs::remove_file(target_path).ok();
+    }
+
+    #[test]
+    fn update_entry_preserves_first_copied_content() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let entry = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Text],
+            content_type: "text".to_string(),
+            content: "before edit".to_string(),
+            preview: "before edit".to_string(),
+            hash: Storage::hash_content("before edit"),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+        };
+
+        storage.insert(&entry).unwrap();
+        let id = storage.query(&QueryFilter::default()).unwrap()[0].id;
+        assert!(storage.update_entry(id, "after edit").unwrap());
+
+        assert!(storage.update_entry(id, "after another edit").unwrap());
+
+        let updated = storage.get_entry_by_id(id).unwrap().unwrap();
+        assert_eq!(updated.content, "after another edit");
+        assert_eq!(updated.original_content.as_deref(), Some("before edit"));
+        assert!(updated.updated_at.is_some());
+
+        std::fs::remove_file(db_path).ok();
     }
 }

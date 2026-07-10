@@ -567,6 +567,7 @@ export default function SettingsButton({
           <div style={styles.compactRow} title={t.autostartDesc}>
             <span style={styles.rowLabel}>{t.autostart}</span>
             <button
+              className="settings-toggle"
               style={{ ...styles.toggle, ...(autostart ? styles.toggleOn : {}) }}
               onClick={handleAutostartToggle}
             >
@@ -578,6 +579,7 @@ export default function SettingsButton({
           <div style={styles.compactRow} title={t.alwaysOnTopDesc}>
             <span style={styles.rowLabel}>{t.alwaysOnTop}</span>
             <button
+              className="settings-toggle"
               style={{ ...styles.toggle, ...(alwaysOnTop ? styles.toggleOn : {}) }}
               onClick={handleAlwaysOnTopToggle}
             >
@@ -589,6 +591,7 @@ export default function SettingsButton({
           <div style={styles.compactRow} title={t.rawPreviewDesc}>
             <span style={styles.rowLabel}>{t.rawPreview}</span>
             <button
+              className="settings-toggle"
               style={{ ...styles.toggle, ...(rawPreview ? styles.toggleOn : {}) }}
               onClick={handleRawPreviewToggle}
             >
@@ -600,6 +603,7 @@ export default function SettingsButton({
           <div style={styles.compactRow} title={t.autoUpdateDesc}>
             <span style={styles.rowLabel}>{t.autoUpdate}</span>
             <button
+              className="settings-toggle"
               style={{ ...styles.toggle, ...(autoUpdate ? styles.toggleOn : {}) }}
               onClick={handleAutoUpdateToggle}
             >
@@ -611,6 +615,7 @@ export default function SettingsButton({
           <div style={styles.compactRow} title={t.experimentalFeaturesDesc}>
             <span style={styles.rowLabel}>{t.experimentalFeatures}</span>
             <button
+              className="settings-toggle"
               style={{ ...styles.toggle, ...(experimentalFeaturesEnabled ? styles.toggleOn : {}) }}
               onClick={handleExperimentalFeaturesToggle}
             >
@@ -625,6 +630,7 @@ export default function SettingsButton({
           <div style={styles.compactRow} title={t.categoryTabSortingDesc}>
             <span style={styles.rowLabel}>{t.categoryTabSorting}</span>
             <button
+              className="settings-toggle"
               style={{ ...styles.toggle, ...(categoryTabSortingEnabled ? styles.toggleOn : {}) }}
               onClick={handleCategoryTabSortingToggle}
             >
@@ -636,6 +642,7 @@ export default function SettingsButton({
           <div style={styles.compactRow} title={t.memoSettingDesc}>
             <span style={styles.rowLabel}>{t.memoSetting}</span>
             <button
+              className="settings-toggle"
               style={{ ...styles.toggle, ...(memoEnabled ? styles.toggleOn : {}) }}
               onClick={handleMemoToggle}
             >
@@ -703,6 +710,7 @@ export default function SettingsButton({
           <div style={styles.compactRow} title={t.archiveSettingDesc}>
             <span style={styles.rowLabel}>{t.archiveSetting}</span>
             <button
+              className="settings-toggle"
               style={{ ...styles.toggle, ...(archiveEnabled ? styles.toggleOn : {}) }}
               onClick={handleArchiveToggle}
             >
