@@ -25,6 +25,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Global shortcut, tray controls, single-instance launch, and auto-start support
 - Theme mode switcher with System / Light / Dark and independent accent colors
 - Storage settings with Local / External PostgreSQL modes, fast switching among saved connections, and `.scbackup` local backup/restore tools
+- External PostgreSQL operations use a bounded connection pool and background blocking tasks to keep remote search, counts, and list switching responsive
 - Experimental features panel for optional Modern UI, clipboard multi-tag display, and color-strip hiding
 - First launch follows the system language, with Chinese and English UI available
 - Built-in update check through GitHub Releases with release notes preview
@@ -101,7 +102,7 @@ SuperClipboard is source-available for non-commercial use only. Commercial use i
 
 ## Tech Stack
 
-- Backend: Rust, Tauri v2, SQLite (`rusqlite`), `arboard`
+- Backend: Rust, Tauri v2, SQLite (`rusqlite`), PostgreSQL with `r2d2`, `arboard`
 - Frontend: React 19, TypeScript, Vite 8
 - Platform target: Windows x64
 
@@ -137,6 +138,8 @@ src-tauri/
 src/
   components/           # React UI components
   api/                  # Tauri command wrappers
+  hooks/                # Shared application hooks
   i18n/                 # Translations and i18n context
+  settings/             # Typed settings schema and context
   types/                # TypeScript types
 ```

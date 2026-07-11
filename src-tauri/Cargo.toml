@@ -38,6 +38,8 @@ open = "5"
 postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 postgres-native-tls = "0.5"
 native-tls = "0.2"
+r2d2 = "0.8"
+r2d2_postgres = "0.18"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
 

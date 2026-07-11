@@ -10,6 +10,7 @@ mod window_position;
 use clipboard::ClipboardMonitor;
 use log::info;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -56,6 +57,18 @@ pub struct AppState {
     _monitor: std::sync::Mutex<ClipboardMonitor>,
     current_shortcut: std::sync::Mutex<String>,
     shortcut_recording: Arc<AtomicBool>,
+}
+
+async fn run_remote<T, F>(storage: Arc<Storage>, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&Storage) -> remote_storage::RemoteResult<T> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        operation(storage.as_ref()).map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| format!("Remote storage task failed: {err}"))?
 }
 
 fn tray_menu_labels(language: &str) -> (&'static str, &'static str) {
@@ -381,26 +394,34 @@ fn register_toggle_shortcut(
 // ─── Tauri Commands ──────────────────────────────────────────────────
 
 #[tauri::command]
-fn get_entries(
+async fn get_entries(
     state: tauri::State<'_, AppState>,
     filter: Option<QueryFilter>,
 ) -> Result<Vec<ClipboardEntry>, String> {
     let filter = filter.unwrap_or_default();
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::query_clipboard(&state.storage, &filter).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::query_clipboard(storage, &filter)
+        })
+        .await;
     }
     state.storage.query(&filter).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn delete_entry(
+async fn delete_entry(
     state: tauri::State<'_, AppState>,
     id: i64,
     archive: Option<bool>,
 ) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::delete_clipboard(&state.storage, id, archive.unwrap_or(false))
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        let archive = archive.unwrap_or(false);
+        return run_remote(storage, move |storage| {
+            remote_storage::delete_clipboard(storage, id, archive)
+        })
+        .await;
     }
     if archive.unwrap_or(false) {
         state.storage.archive_entry(id).map_err(|e| e.to_string())
@@ -410,22 +431,29 @@ fn delete_entry(
 }
 
 #[tauri::command]
-fn toggle_pin(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+async fn toggle_pin(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::toggle_clipboard_pin(&state.storage, id).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::toggle_clipboard_pin(storage, id)
+        })
+        .await;
     }
     state.storage.toggle_pin(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn update_entry(
+async fn update_entry(
     state: tauri::State<'_, AppState>,
     id: i64,
     content: String,
 ) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::update_clipboard(&state.storage, id, &content)
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::update_clipboard(storage, id, &content)
+        })
+        .await;
     }
     state
         .storage
@@ -434,9 +462,10 @@ fn update_entry(
 }
 
 #[tauri::command]
-fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+async fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        let stats = remote_storage::stats(&state.storage).map_err(|e| e.to_string())?;
+        let storage = state.storage.clone();
+        let stats = run_remote(storage, remote_storage::stats).await?;
         return Ok(serde_json::json!({
             "total": stats.total,
             "text": stats.text,
@@ -513,10 +542,17 @@ fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, Str
 }
 
 #[tauri::command]
-fn clear_unpinned(state: tauri::State<'_, AppState>, archive: Option<bool>) -> Result<u64, String> {
+async fn clear_unpinned(
+    state: tauri::State<'_, AppState>,
+    archive: Option<bool>,
+) -> Result<u64, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::clear_clipboard_unpinned(&state.storage, archive.unwrap_or(false))
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        let archive = archive.unwrap_or(false);
+        return run_remote(storage, move |storage| {
+            remote_storage::clear_clipboard_unpinned(storage, archive)
+        })
+        .await;
     }
     state
         .storage
@@ -527,30 +563,41 @@ fn clear_unpinned(state: tauri::State<'_, AppState>, archive: Option<bool>) -> R
 // ─── Archive Commands ──────────────────────────────────────────
 
 #[tauri::command]
-fn archive_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+async fn archive_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::archive_clipboard(&state.storage, id).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::archive_clipboard(storage, id)
+        })
+        .await;
     }
     state.storage.archive_entry(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn unarchive_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+async fn unarchive_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::unarchive_clipboard(&state.storage, id).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::unarchive_clipboard(storage, id)
+        })
+        .await;
     }
     state.storage.unarchive_entry(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_archived_entries(
+async fn get_archived_entries(
     state: tauri::State<'_, AppState>,
     filter: Option<QueryFilter>,
 ) -> Result<Vec<ClipboardEntry>, String> {
     let filter = filter.unwrap_or_default();
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::query_archived_clipboard(&state.storage, &filter)
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::query_archived_clipboard(storage, &filter)
+        })
+        .await;
     }
     state
         .storage
@@ -559,18 +606,22 @@ fn get_archived_entries(
 }
 
 #[tauri::command]
-fn archive_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
+async fn archive_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::clipboard_archive_count(&state.storage).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, remote_storage::clipboard_archive_count).await;
     }
     state.storage.archive_count().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn permanent_delete(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+async fn permanent_delete(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::permanent_delete_clipboard(&state.storage, id)
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::permanent_delete_clipboard(storage, id)
+        })
+        .await;
     }
     state
         .storage
@@ -579,10 +630,13 @@ fn permanent_delete(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, 
 }
 
 #[tauri::command]
-fn purge_old_archives(state: tauri::State<'_, AppState>, days: i64) -> Result<u64, String> {
+async fn purge_old_archives(state: tauri::State<'_, AppState>, days: i64) -> Result<u64, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::purge_old_clipboard_archives(&state.storage, days)
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::purge_old_clipboard_archives(storage, days)
+        })
+        .await;
     }
     state
         .storage
@@ -592,13 +646,17 @@ fn purge_old_archives(state: tauri::State<'_, AppState>, days: i64) -> Result<u6
 
 /// Copy a stored entry back to the system clipboard
 #[tauri::command]
-fn copy_to_clipboard(
+async fn copy_to_clipboard(
     state: tauri::State<'_, AppState>,
     id: i64,
     use_original: Option<bool>,
 ) -> Result<bool, String> {
     let entry = if remote_storage::is_remote_mode(&state.storage) {
-        remote_storage::get_clipboard_by_id(&state.storage, id).map_err(|e| e.to_string())?
+        let storage = state.storage.clone();
+        run_remote(storage, move |storage| {
+            remote_storage::get_clipboard_by_id(storage, id)
+        })
+        .await?
     } else {
         state
             .storage
@@ -645,6 +703,21 @@ fn get_setting(state: tauri::State<'_, AppState>, key: String) -> Result<Option<
     state.storage.get_setting(&key).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_settings(
+    state: tauri::State<'_, AppState>,
+    keys: Vec<String>,
+) -> Result<HashMap<String, String>, String> {
+    state.storage.get_settings(&keys).map_err(|e| e.to_string())
+}
+
+fn setting_affects_remote_pool(key: &str) -> bool {
+    key == "storage_mode"
+        || (key.starts_with("remote_db_")
+            && key != "remote_db_ready"
+            && key != "remote_db_profiles")
+}
+
 /// Set a user setting value
 #[tauri::command]
 fn set_setting(
@@ -659,6 +732,28 @@ fn set_setting(
         .map_err(|e| e.to_string())?;
     if key == "language" {
         update_tray_menu(&app, &value).map_err(|e| e.to_string())?;
+    }
+    if setting_affects_remote_pool(&key) {
+        remote_storage::invalidate_pool();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_settings(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    values: HashMap<String, String>,
+) -> Result<(), String> {
+    state
+        .storage
+        .set_settings(&values)
+        .map_err(|e| e.to_string())?;
+    if let Some(language) = values.get("language") {
+        update_tray_menu(&app, language).map_err(|e| e.to_string())?;
+    }
+    if values.keys().any(|key| setting_affects_remote_pool(key)) {
+        remote_storage::invalidate_pool();
     }
     Ok(())
 }
@@ -864,14 +959,18 @@ fn open_backup_folder(app: tauri::AppHandle) -> Result<(), String> {
 // ─── Paste Commands ─────────────────────────────────────────
 
 #[tauri::command]
-fn paste_to_active_window(
+async fn paste_to_active_window(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<bool, String> {
     // Copy content to clipboard first
     let entry = if remote_storage::is_remote_mode(&state.storage) {
-        remote_storage::get_clipboard_by_id(&state.storage, id).map_err(|e| e.to_string())?
+        let storage = state.storage.clone();
+        run_remote(storage, move |storage| {
+            remote_storage::get_clipboard_by_id(storage, id)
+        })
+        .await?
     } else {
         state
             .storage
@@ -1000,27 +1099,34 @@ mod memo_tag_tests {
 }
 
 #[tauri::command]
-fn get_memos(
+async fn get_memos(
     state: tauri::State<'_, AppState>,
     filter: Option<MemoFilter>,
 ) -> Result<Vec<Memo>, String> {
     let filter = filter.unwrap_or_default();
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::query_memos(&state.storage, &filter).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::query_memos(storage, &filter)
+        })
+        .await;
     }
     state.storage.get_memos(&filter).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn create_memo(
+async fn create_memo(
     state: tauri::State<'_, AppState>,
     title: String,
     body: String,
     tags: String,
 ) -> Result<Memo, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::create_memo(&state.storage, &title, &body, &tags)
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::create_memo(storage, &title, &body, &tags)
+        })
+        .await;
     }
     state
         .storage
@@ -1029,7 +1135,7 @@ fn create_memo(
 }
 
 #[tauri::command]
-fn update_memo(
+async fn update_memo(
     state: tauri::State<'_, AppState>,
     id: i64,
     title: String,
@@ -1037,8 +1143,11 @@ fn update_memo(
     tags: String,
 ) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::update_memo(&state.storage, id, &title, &body, &tags)
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::update_memo(storage, id, &title, &body, &tags)
+        })
+        .await;
     }
     state
         .storage
@@ -1047,14 +1156,18 @@ fn update_memo(
 }
 
 #[tauri::command]
-fn delete_memo(
+async fn delete_memo(
     state: tauri::State<'_, AppState>,
     id: i64,
     archive: Option<bool>,
 ) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::delete_memo(&state.storage, id, archive.unwrap_or(false))
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        let archive = archive.unwrap_or(false);
+        return run_remote(storage, move |storage| {
+            remote_storage::delete_memo(storage, id, archive)
+        })
+        .await;
     }
     state
         .storage
@@ -1063,17 +1176,22 @@ fn delete_memo(
 }
 
 #[tauri::command]
-fn toggle_memo_pin(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+async fn toggle_memo_pin(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::toggle_memo_pin(&state.storage, id).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::toggle_memo_pin(storage, id)
+        })
+        .await;
     }
     state.storage.toggle_memo_pin(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn memo_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
+async fn memo_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::memo_count(&state.storage).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, remote_storage::memo_count).await;
     }
     state.storage.memo_count().map_err(|e| e.to_string())
 }
@@ -1085,13 +1203,17 @@ struct ReorderItem {
 }
 
 #[tauri::command]
-fn reorder_memos(
+async fn reorder_memos(
     state: tauri::State<'_, AppState>,
     orders: Vec<ReorderItem>,
 ) -> Result<(), String> {
     let pairs: Vec<(i64, i64)> = orders.iter().map(|r| (r.id, r.sort_order)).collect();
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::reorder_memos(&state.storage, &pairs).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::reorder_memos(storage, &pairs)
+        })
+        .await;
     }
     state
         .storage
@@ -1102,30 +1224,41 @@ fn reorder_memos(
 // ─── Memo Archive Commands ──────────────────────────────────────
 
 #[tauri::command]
-fn archive_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+async fn archive_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::archive_memo(&state.storage, id).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::archive_memo(storage, id)
+        })
+        .await;
     }
     state.storage.archive_memo(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn unarchive_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+async fn unarchive_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::unarchive_memo(&state.storage, id).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::unarchive_memo(storage, id)
+        })
+        .await;
     }
     state.storage.unarchive_memo(id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_archived_memos(
+async fn get_archived_memos(
     state: tauri::State<'_, AppState>,
     filter: Option<MemoFilter>,
 ) -> Result<Vec<Memo>, String> {
     let filter = filter.unwrap_or_default();
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::query_archived_memos(&state.storage, &filter)
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::query_archived_memos(storage, &filter)
+        })
+        .await;
     }
     state
         .storage
@@ -1134,9 +1267,10 @@ fn get_archived_memos(
 }
 
 #[tauri::command]
-fn memo_archive_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
+async fn memo_archive_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::memo_archive_count(&state.storage).map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, remote_storage::memo_archive_count).await;
     }
     state
         .storage
@@ -1145,10 +1279,13 @@ fn memo_archive_count(state: tauri::State<'_, AppState>) -> Result<i64, String> 
 }
 
 #[tauri::command]
-fn permanent_delete_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
+async fn permanent_delete_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::permanent_delete_memo(&state.storage, id)
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::permanent_delete_memo(storage, id)
+        })
+        .await;
     }
     state
         .storage
@@ -1157,10 +1294,16 @@ fn permanent_delete_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<b
 }
 
 #[tauri::command]
-fn purge_old_memo_archives(state: tauri::State<'_, AppState>, days: i64) -> Result<u64, String> {
+async fn purge_old_memo_archives(
+    state: tauri::State<'_, AppState>,
+    days: i64,
+) -> Result<u64, String> {
     if remote_storage::is_remote_mode(&state.storage) {
-        return remote_storage::purge_old_memo_archives(&state.storage, days)
-            .map_err(|e| e.to_string());
+        let storage = state.storage.clone();
+        return run_remote(storage, move |storage| {
+            remote_storage::purge_old_memo_archives(storage, days)
+        })
+        .await;
     }
     state
         .storage
@@ -1175,18 +1318,25 @@ fn open_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn test_remote_storage(state: tauri::State<'_, AppState>) -> Result<String, String> {
-    remote_storage::test_connection(&state.storage).map_err(|e| e.to_string())
+async fn test_remote_storage(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let storage = state.storage.clone();
+    run_remote(storage, remote_storage::test_connection).await
 }
 
 #[tauri::command]
-fn initialize_remote_storage(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    remote_storage::ensure_schema(&state.storage).map_err(|e| e.to_string())
+async fn initialize_remote_storage(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let storage = state.storage.clone();
+    run_remote(storage, remote_storage::ensure_schema).await
 }
 
 #[tauri::command]
-fn get_storage_status(state: tauri::State<'_, AppState>) -> storage_backend::StorageStatusInfo {
-    storage_backend::status(&state.storage)
+async fn get_storage_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<storage_backend::StorageStatusInfo, String> {
+    let storage = state.storage.clone();
+    tauri::async_runtime::spawn_blocking(move || storage_backend::status(storage.as_ref()))
+        .await
+        .map_err(|err| format!("Storage status task failed: {err}"))
 }
 
 /// Check for updates from GitHub Releases
@@ -1439,7 +1589,9 @@ pub fn run() {
             purge_old_archives,
             copy_to_clipboard,
             get_setting,
+            get_settings,
             set_setting,
+            set_settings,
             get_autostart_enabled,
             set_autostart_enabled,
             get_shortcut,

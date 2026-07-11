@@ -16,7 +16,7 @@ import {
   permanentDelete,
   purgeOldArchives,
 } from './api/clipboard';
-import { getShortcut, getSetting, checkUpdate, openUrl, pasteToActiveWindow } from './api/settings';
+import { getShortcut, checkUpdate, openUrl, pasteToActiveWindow } from './api/settings';
 import { getArchivedMemos, unarchiveMemo, permanentDeleteMemo, purgeOldMemoArchives } from './api/memos';
 import { formatShortcutLabel } from './utils';
 import { I18nProvider, useI18n } from './i18n';
@@ -28,8 +28,9 @@ import ExperimentalFeaturesButton from './components/ExperimentalFeaturesButton'
 import MemoList from './components/MemoList';
 import ArchivedMemoItem from './components/ArchivedMemoItem';
 import ConfirmDialog, { type ConfirmDialogState } from './components/ConfirmDialog';
-import type { ThemeMode } from './types';
 import { emitAppEvent, onAppEvent } from './events/appEvents';
+import { useAppSettings } from './hooks/useAppSettings';
+import AppSettingsProvider from './components/settings/AppSettingsProvider';
 import './App.css';
 
 function formatBytes(bytes: number): string {
@@ -41,6 +42,22 @@ function formatBytes(bytes: number): string {
 
 function AppContent() {
   const { t } = useI18n();
+  const { settings } = useAppSettings();
+  const {
+    memoEnabled,
+    memoColor,
+    rawPreview,
+    archiveEnabled,
+    experimentalFeaturesEnabled,
+    clipboardMultiTagEnabled,
+    hideEntryColorStripEnabled,
+    categoryTabSelectedColorsEnabled,
+    categoryTabSortingEnabled,
+    modernUiEnabled,
+    themeAccent,
+    themeMode,
+    autoUpdate,
+  } = settings;
   const [titleVariant, setTitleVariant] = useState<'default' | 'xiaonan' | 'yingnan'>('default');
   const [entries, setEntries] = useState<ClipboardEntry[]>([]);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
@@ -49,21 +66,9 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<number | null>(null);
   const [currentShortcut, setCurrentShortcut] = useState('Alt+X');
-  const [memoEnabled, setMemoEnabled] = useState(false);
   const [memoCountState, setMemoCountState] = useState<number | null>(null);
   const [memoListCount, setMemoListCount] = useState<number>(0);
-  const [memoColor, setMemoColor] = useState<string | null>(null);
-  const [archiveEnabled, setArchiveEnabled] = useState(false);
-  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] = useState(false);
-  const [clipboardMultiTagEnabled, setClipboardMultiTagEnabled] = useState(false);
-  const [hideEntryColorStripEnabled, setHideEntryColorStripEnabled] = useState(false);
-  const [categoryTabSelectedColorsEnabled, setCategoryTabSelectedColorsEnabled] = useState(false);
-  const [categoryTabSortingEnabled, setCategoryTabSortingEnabled] = useState(true);
   const [archiveCountState, setArchiveCountState] = useState<number | null>(null);
-  const [rawPreview, setRawPreview] = useState(false);
-  const [themeAccent, setThemeAccent] = useState('default');
-  const [themeMode, setThemeMode] = useState<ThemeMode>('system');
-  const [modernUiEnabled, setModernUiEnabled] = useState(false);
   const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(() =>
     window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   );
@@ -121,65 +126,6 @@ function AppContent() {
     getShortcut().then(setCurrentShortcut).catch(console.error);
   }, []);
 
-  // Load memo_enabled setting on mount
-  useEffect(() => {
-    getSetting('memo_enabled').then((v) => setMemoEnabled(v === 'true')).catch(console.error);
-  }, []);
-
-  // Load memo_color setting on mount
-  useEffect(() => {
-    getSetting('memo_color').then((v) => setMemoColor(v || null)).catch(console.error);
-  }, []);
-
-  // Load raw_preview setting on mount
-  useEffect(() => {
-    getSetting('raw_preview').then((v) => setRawPreview(v === 'true')).catch(console.error);
-  }, []);
-
-  // Load archive_enabled setting on mount
-  useEffect(() => {
-    getSetting('archive_enabled').then((v) => setArchiveEnabled(v === 'true')).catch(console.error);
-  }, []);
-
-  // Load experimental feature gates on mount.
-  useEffect(() => {
-    getSetting('experimental_features_enabled')
-      .then((v) => setExperimentalFeaturesEnabled(v === 'true'))
-      .catch(console.error);
-    getSetting('clipboard_multi_tag_enabled')
-      .then((v) => setClipboardMultiTagEnabled(v === 'true'))
-      .catch(console.error);
-    getSetting('hide_entry_color_strip_enabled')
-      .then((v) => setHideEntryColorStripEnabled(v === 'true'))
-      .catch(console.error);
-    getSetting('category_tab_selected_colors_enabled')
-      .then((v) => setCategoryTabSelectedColorsEnabled(v === 'true'))
-      .catch(console.error);
-    getSetting('category_tab_sorting_enabled')
-      .then((v) => setCategoryTabSortingEnabled(v === null ? true : v === 'true'))
-      .catch(console.error);
-    getSetting('modern_ui_enabled')
-      .then((v) => setModernUiEnabled(v === 'true'))
-      .catch(console.error);
-  }, []);
-
-  // Load theme accent setting on mount
-  useEffect(() => {
-    getSetting('theme_accent')
-      .then((v) => setThemeAccent(v === 'sakura' ? 'sakura' : 'default'))
-      .catch(console.error);
-  }, []);
-
-  useEffect(() => {
-    getSetting('theme_mode')
-      .then((v) => {
-        if (v === 'light' || v === 'dark' || v === 'system') {
-          setThemeMode(v);
-        }
-      })
-      .catch(console.error);
-  }, []);
-
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const updateSystemTheme = (value: boolean) => {
@@ -226,15 +172,13 @@ function AppContent() {
 
   // Auto-check for updates on startup if enabled
   useEffect(() => {
-    if (autoUpdateCheckedRef.current) return;
+    if (!autoUpdate || autoUpdateCheckedRef.current) return;
     autoUpdateCheckedRef.current = true;
 
     let cancelled = false;
 
-    getSetting('auto_update')
-      .then(async (v) => {
-        if (v !== null && v !== 'true') return;
-
+    Promise.resolve()
+      .then(async () => {
         const info = await checkUpdate();
         if (cancelled || !info.hasUpdate) return;
 
@@ -259,7 +203,7 @@ function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [t]);
+  }, [autoUpdate, t]);
 
   // Fetch entries based on current filter
   const fetchEntries = useCallback(async () => {
@@ -679,25 +623,12 @@ function AppContent() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <span className="shortcut-hint">{formatShortcutLabel(currentShortcut)}</span>
             {experimentalFeaturesEnabled && (
-              <ExperimentalFeaturesButton
-                onClipboardMultiTagChange={setClipboardMultiTagEnabled}
-                onModernUiChange={setModernUiEnabled}
-                onHideEntryColorStripChange={setHideEntryColorStripEnabled}
-                onCategoryTabSelectedColorsChange={setCategoryTabSelectedColorsEnabled}
-              />
+              <ExperimentalFeaturesButton />
             )}
             <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
             <SettingsButton
               onShortcutChange={setCurrentShortcut}
-              onMemoEnabledChange={setMemoEnabled}
-              onMemoColorChange={setMemoColor}
-              onRawPreviewChange={setRawPreview}
-              onThemeModeChange={setThemeMode}
-              onThemeAccentChange={setThemeAccent}
-              onArchiveEnabledChange={setArchiveEnabled}
               onVersionTitleTrigger={handleVersionTitleTrigger}
-              onExperimentalFeaturesEnabledChange={setExperimentalFeaturesEnabled}
-              onCategoryTabSortingEnabledChange={setCategoryTabSortingEnabled}
             />
           </div>
         </div>
@@ -881,7 +812,9 @@ function AppContent() {
 function App() {
   return (
     <I18nProvider>
-      <AppContent />
+      <AppSettingsProvider>
+        <AppContent />
+      </AppSettingsProvider>
     </I18nProvider>
   );
 }

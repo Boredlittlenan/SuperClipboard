@@ -5,7 +5,10 @@ use native_tls::TlsConnector;
 use postgres::types::ToSql;
 use postgres::{Client, NoTls, Row};
 use postgres_native_tls::MakeTlsConnector;
+use r2d2::{Pool, PooledConnection};
+use r2d2_postgres::PostgresConnectionManager;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -24,6 +27,8 @@ pub enum RemoteStorageError {
     InvalidUrl(String),
     #[error("Remote storage client cache is unavailable")]
     CacheUnavailable,
+    #[error("Remote storage connection pool error: {0}")]
+    Pool(#[from] r2d2::Error),
 }
 
 pub type RemoteResult<T> = Result<T, RemoteStorageError>;
@@ -36,16 +41,25 @@ struct RemoteDbConfig {
 
 impl RemoteDbConfig {
     fn cache_key(&self) -> String {
-        format!("{}|{}", self.ssl_mode, self.url)
+        Storage::hash_content(&format!("{}|{}", self.ssl_mode, self.url))
     }
 }
 
-struct CachedClient {
-    key: String,
-    client: Client,
+type NoTlsManager = PostgresConnectionManager<NoTls>;
+type NativeTlsManager = PostgresConnectionManager<MakeTlsConnector>;
+
+#[derive(Clone)]
+enum RemotePool {
+    NoTls(Pool<NoTlsManager>),
+    NativeTls(Pool<NativeTlsManager>),
 }
 
-static CLIENT_CACHE: OnceLock<Mutex<Option<CachedClient>>> = OnceLock::new();
+struct CachedPool {
+    key: String,
+    pool: RemotePool,
+}
+
+static POOL_CACHE: OnceLock<Mutex<Option<CachedPool>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct RemoteStats {
@@ -181,28 +195,98 @@ fn remote_config(storage: &Storage) -> RemoteResult<RemoteDbConfig> {
     Ok(RemoteDbConfig { url, ssl_mode })
 }
 
-fn connect_config(config: &RemoteDbConfig) -> RemoteResult<Client> {
-    match config.ssl_mode.as_str() {
-        "disable" => Ok(Client::connect(&config.url, NoTls)?),
-        "prefer" => {
-            let connector = TlsConnector::builder().build()?;
-            let connector = MakeTlsConnector::new(connector);
-            match Client::connect(&config.url, connector) {
-                Ok(client) => Ok(client),
-                Err(_) => Ok(Client::connect(&config.url, NoTls)?),
-            }
+fn pool_builder<M>() -> r2d2::Builder<M>
+where
+    M: r2d2::ManageConnection,
+{
+    Pool::builder()
+        .max_size(4)
+        .connection_timeout(Duration::from_secs(6))
+        .idle_timeout(Some(Duration::from_secs(10 * 60)))
+        .max_lifetime(Some(Duration::from_secs(30 * 60)))
+        .test_on_check_out(true)
+}
+
+fn build_no_tls_pool(config: &RemoteDbConfig) -> RemoteResult<RemotePool> {
+    let pg_config = config.url.parse()?;
+    let manager = PostgresConnectionManager::new(pg_config, NoTls);
+    Ok(RemotePool::NoTls(pool_builder().build(manager)?))
+}
+
+fn build_native_tls_pool(config: &RemoteDbConfig) -> RemoteResult<RemotePool> {
+    let pg_config = config.url.parse()?;
+    let connector = MakeTlsConnector::new(TlsConnector::builder().build()?);
+    let manager = PostgresConnectionManager::new(pg_config, connector);
+    Ok(RemotePool::NativeTls(pool_builder().build(manager)?))
+}
+
+fn build_pool(config: &RemoteDbConfig) -> RemoteResult<RemotePool> {
+    if config.ssl_mode == "disable" {
+        return build_no_tls_pool(config);
+    }
+
+    let tls_pool = build_native_tls_pool(config)?;
+    if config.ssl_mode != "prefer" || test_pool_checkout(&tls_pool).is_ok() {
+        return Ok(tls_pool);
+    }
+
+    build_no_tls_pool(config)
+}
+
+fn test_pool_checkout(pool: &RemotePool) -> RemoteResult<()> {
+    match pool {
+        RemotePool::NoTls(pool) => {
+            let _ = pool.get()?;
         }
-        _ => {
-            let connector = TlsConnector::builder().build()?;
-            let connector = MakeTlsConnector::new(connector);
-            Ok(Client::connect(&config.url, connector)?)
+        RemotePool::NativeTls(pool) => {
+            let _ = pool.get()?;
+        }
+    }
+    Ok(())
+}
+
+fn cached_pool(config: &RemoteDbConfig) -> RemoteResult<RemotePool> {
+    let key = config.cache_key();
+    let cache = POOL_CACHE.get_or_init(|| Mutex::new(None));
+    let mut guard = cache
+        .lock()
+        .map_err(|_| RemoteStorageError::CacheUnavailable)?;
+
+    if !matches!(guard.as_ref(), Some(cached) if cached.key == key) {
+        *guard = Some(CachedPool {
+            key,
+            pool: build_pool(config)?,
+        });
+    }
+
+    guard
+        .as_ref()
+        .map(|cached| cached.pool.clone())
+        .ok_or(RemoteStorageError::CacheUnavailable)
+}
+
+pub fn invalidate_pool() {
+    if let Some(cache) = POOL_CACHE.get() {
+        if let Ok(mut guard) = cache.lock() {
+            *guard = None;
         }
     }
 }
 
-fn connect(storage: &Storage) -> RemoteResult<Client> {
-    let config = remote_config(storage)?;
-    connect_config(&config)
+fn with_pooled_connection<T>(
+    pool: &RemotePool,
+    action: &mut impl FnMut(&mut Client) -> RemoteResult<T>,
+) -> RemoteResult<T> {
+    match pool {
+        RemotePool::NoTls(pool) => {
+            let mut client: PooledConnection<NoTlsManager> = pool.get()?;
+            action(&mut client)
+        }
+        RemotePool::NativeTls(pool) => {
+            let mut client: PooledConnection<NativeTlsManager> = pool.get()?;
+            action(&mut client)
+        }
+    }
 }
 
 fn with_client<T>(
@@ -210,36 +294,8 @@ fn with_client<T>(
     mut action: impl FnMut(&mut Client) -> RemoteResult<T>,
 ) -> RemoteResult<T> {
     let config = remote_config(storage)?;
-    let key = config.cache_key();
-    let cache = CLIENT_CACHE.get_or_init(|| Mutex::new(None));
-    let mut guard = cache
-        .lock()
-        .map_err(|_| RemoteStorageError::CacheUnavailable)?;
-
-    if !matches!(guard.as_ref(), Some(cached) if cached.key == key) {
-        *guard = Some(CachedClient {
-            key: key.clone(),
-            client: connect_config(&config)?,
-        });
-    }
-
-    let result = {
-        let cached = guard.as_mut().ok_or(RemoteStorageError::CacheUnavailable)?;
-        action(&mut cached.client)
-    };
-
-    match result {
-        Ok(value) => Ok(value),
-        Err(RemoteStorageError::Database(_)) => {
-            *guard = Some(CachedClient {
-                key,
-                client: connect_config(&config)?,
-            });
-            let cached = guard.as_mut().ok_or(RemoteStorageError::CacheUnavailable)?;
-            action(&mut cached.client)
-        }
-        Err(err) => Err(err),
-    }
+    let pool = cached_pool(&config)?;
+    with_pooled_connection(&pool, &mut action)
 }
 
 pub fn test_connection(storage: &Storage) -> RemoteResult<String> {
@@ -403,37 +459,35 @@ fn row_to_memo(row: &Row) -> Memo {
 }
 
 pub fn insert_clipboard(storage: &Storage, entry: &ClipboardEntry) -> RemoteResult<bool> {
-    let _ = ensure_schema(storage);
-    let mut client = connect(storage)?;
     let uuid = Uuid::new_v4().to_string();
     let category_tags = normalize_category_tags(entry.category_tags.clone());
     let category = category_tags.first().cloned().unwrap_or(Category::Text);
     let category_tags = category_tags_json(&category_tags);
-    let rows = client.execute(
-        "INSERT INTO superclipboard.clipboard_entries
-         (uuid, category, category_tags, content_type, content, preview, hash, pinned, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT(hash) DO NOTHING",
-        &[
-            &uuid,
-            &category.to_string(),
-            &category_tags,
-            &entry.content_type,
-            &entry.content,
-            &entry.preview,
-            &entry.hash,
-            &entry.pinned,
-            &entry.created_at.to_rfc3339(),
-        ],
-    )?;
-    Ok(rows > 0)
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "INSERT INTO superclipboard.clipboard_entries
+             (uuid, category, category_tags, content_type, content, preview, hash, pinned, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT(hash) DO NOTHING",
+            &[
+                &uuid,
+                &category.to_string(),
+                &category_tags,
+                &entry.content_type,
+                &entry.content,
+                &entry.preview,
+                &entry.hash,
+                &entry.pinned,
+                &entry.created_at.to_rfc3339(),
+            ],
+        )? > 0)
+    })
 }
 
 pub fn query_clipboard(
     storage: &Storage,
     filter: &QueryFilter,
 ) -> RemoteResult<Vec<ClipboardEntry>> {
-    let _ = ensure_schema(storage);
     let mut sql = String::from(
         "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
          FROM superclipboard.clipboard_entries WHERE archived_at IS NULL AND deleted_at IS NULL",
@@ -473,7 +527,6 @@ pub fn query_clipboard(
 }
 
 pub fn get_clipboard_by_id(storage: &Storage, id: i64) -> RemoteResult<Option<ClipboardEntry>> {
-    let _ = ensure_schema(storage);
     with_client(storage, |client| {
         let row = client.query_opt(
             "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
@@ -485,63 +538,64 @@ pub fn get_clipboard_by_id(storage: &Storage, id: i64) -> RemoteResult<Option<Cl
 }
 
 pub fn delete_clipboard(storage: &Storage, id: i64, archive: bool) -> RemoteResult<bool> {
-    let mut client = connect(storage)?;
-    let rows = if archive {
-        client.execute(
-            "UPDATE superclipboard.clipboard_entries SET archived_at = now()::text, version = version + 1 WHERE id = $1 AND archived_at IS NULL",
-            &[&id],
-        )?
-    } else {
-        client.execute(
-            "UPDATE superclipboard.clipboard_entries SET deleted_at = now()::text, version = version + 1 WHERE id = $1",
-            &[&id],
-        )?
-    };
-    Ok(rows > 0)
+    with_client(storage, |client| {
+        let rows = if archive {
+            client.execute(
+                "UPDATE superclipboard.clipboard_entries SET archived_at = now()::text, version = version + 1 WHERE id = $1 AND archived_at IS NULL",
+                &[&id],
+            )?
+        } else {
+            client.execute(
+                "UPDATE superclipboard.clipboard_entries SET deleted_at = now()::text, version = version + 1 WHERE id = $1",
+                &[&id],
+            )?
+        };
+        Ok(rows > 0)
+    })
 }
 
 pub fn toggle_clipboard_pin(storage: &Storage, id: i64) -> RemoteResult<bool> {
-    let mut client = connect(storage)?;
-    let row = client.query_one(
-        "UPDATE superclipboard.clipboard_entries SET pinned = NOT pinned, version = version + 1 WHERE id = $1 RETURNING pinned",
-        &[&id],
-    )?;
-    Ok(row.get("pinned"))
+    with_client(storage, |client| {
+        Ok(client
+            .query_one(
+                "UPDATE superclipboard.clipboard_entries SET pinned = NOT pinned, version = version + 1 WHERE id = $1 RETURNING pinned",
+                &[&id],
+            )?
+            .get("pinned"))
+    })
 }
 
 pub fn update_clipboard(storage: &Storage, id: i64, content: &str) -> RemoteResult<bool> {
-    let _ = ensure_schema(storage);
-    let mut client = connect(storage)?;
-    let current = client.query_opt(
-        "SELECT content, original_content FROM superclipboard.clipboard_entries WHERE id = $1",
-        &[&id],
-    )?;
-    let Some(row) = current else {
-        return Ok(false);
-    };
-    let current_content: String = row.get("content");
-    let original_content: Option<String> = row.get("original_content");
-    let original = original_content.unwrap_or(current_content);
-    let preview = if content.chars().count() > 200 {
-        content.chars().take(200).collect::<String>()
-    } else {
-        content.to_string()
-    };
-    let now = Utc::now().to_rfc3339();
-    let categories = classify_text_tags(content);
-    let category = categories.first().cloned().unwrap_or(Category::Text);
-    let category_tags = category_tags_json(&categories);
-    let rows = client.execute(
-        "UPDATE superclipboard.clipboard_entries
-         SET category = $1, category_tags = $2, content = $3, preview = $4, original_content = $5, updated_at = $6, version = version + 1
-         WHERE id = $7",
-        &[&category.to_string(), &category_tags, &content, &preview, &original, &now, &id],
-    )?;
-    Ok(rows > 0)
+    with_client(storage, |client| {
+        let current = client.query_opt(
+            "SELECT content, original_content FROM superclipboard.clipboard_entries WHERE id = $1",
+            &[&id],
+        )?;
+        let Some(row) = current else {
+            return Ok(false);
+        };
+        let current_content: String = row.get("content");
+        let original_content: Option<String> = row.get("original_content");
+        let original = original_content.unwrap_or(current_content);
+        let preview = if content.chars().count() > 200 {
+            content.chars().take(200).collect::<String>()
+        } else {
+            content.to_string()
+        };
+        let now = Utc::now().to_rfc3339();
+        let categories = classify_text_tags(content);
+        let category = categories.first().cloned().unwrap_or(Category::Text);
+        let category_tags = category_tags_json(&categories);
+        Ok(client.execute(
+            "UPDATE superclipboard.clipboard_entries
+             SET category = $1, category_tags = $2, content = $3, preview = $4, original_content = $5, updated_at = $6, version = version + 1
+             WHERE id = $7",
+            &[&category.to_string(), &category_tags, &content, &preview, &original, &now, &id],
+        )? > 0)
+    })
 }
 
 pub fn stats(storage: &Storage) -> RemoteResult<RemoteStats> {
-    let _ = ensure_schema(storage);
     with_client(storage, |client| {
         let row = client.query_one(
             "
@@ -582,28 +636,27 @@ pub fn stats(storage: &Storage) -> RemoteResult<RemoteStats> {
 }
 
 pub fn clear_clipboard_unpinned(storage: &Storage, archive: bool) -> RemoteResult<u64> {
-    let mut client = connect(storage)?;
-    let rows = if archive {
-        client.execute(
-            "UPDATE superclipboard.clipboard_entries SET archived_at = now()::text, version = version + 1
-             WHERE pinned = false AND archived_at IS NULL AND deleted_at IS NULL",
-            &[],
-        )?
-    } else {
-        client.execute(
-            "UPDATE superclipboard.clipboard_entries SET deleted_at = now()::text, version = version + 1
-             WHERE pinned = false AND deleted_at IS NULL",
-            &[],
-        )?
-    };
-    Ok(rows)
+    with_client(storage, |client| {
+        if archive {
+            Ok(client.execute(
+                "UPDATE superclipboard.clipboard_entries SET archived_at = now()::text, version = version + 1
+                 WHERE pinned = false AND archived_at IS NULL AND deleted_at IS NULL",
+                &[],
+            )?)
+        } else {
+            Ok(client.execute(
+                "UPDATE superclipboard.clipboard_entries SET deleted_at = now()::text, version = version + 1
+                 WHERE pinned = false AND deleted_at IS NULL",
+                &[],
+            )?)
+        }
+    })
 }
 
 pub fn query_archived_clipboard(
     storage: &Storage,
     filter: &QueryFilter,
 ) -> RemoteResult<Vec<ClipboardEntry>> {
-    let _ = ensure_schema(storage);
     let mut sql = String::from(
         "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
          FROM superclipboard.clipboard_entries WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
@@ -647,12 +700,12 @@ pub fn clipboard_archive_count(storage: &Storage) -> RemoteResult<i64> {
 }
 
 pub fn unarchive_clipboard(storage: &Storage, id: i64) -> RemoteResult<bool> {
-    let mut client = connect(storage)?;
-    Ok(client
-        .execute(
+    with_client(storage, |client| {
+        Ok(client.execute(
             "UPDATE superclipboard.clipboard_entries SET archived_at = NULL, version = version + 1 WHERE id = $1",
             &[&id],
         )? > 0)
+    })
 }
 
 pub fn permanent_delete_clipboard(storage: &Storage, id: i64) -> RemoteResult<bool> {
@@ -660,12 +713,13 @@ pub fn permanent_delete_clipboard(storage: &Storage, id: i64) -> RemoteResult<bo
 }
 
 pub fn purge_old_clipboard_archives(storage: &Storage, days: i64) -> RemoteResult<u64> {
-    let mut client = connect(storage)?;
-    Ok(client.execute(
-        "UPDATE superclipboard.clipboard_entries SET deleted_at = now()::text, version = version + 1
-         WHERE archived_at IS NOT NULL AND deleted_at IS NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
-        &[&days],
-    )?)
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "UPDATE superclipboard.clipboard_entries SET deleted_at = now()::text, version = version + 1
+             WHERE archived_at IS NOT NULL AND deleted_at IS NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
+            &[&days],
+        )?)
+    })
 }
 
 pub fn query_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
@@ -692,16 +746,17 @@ pub fn query_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<M
 }
 
 pub fn create_memo(storage: &Storage, title: &str, body: &str, tags: &str) -> RemoteResult<Memo> {
-    let mut client = connect(storage)?;
     let uuid = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let row = client.query_one(
-        "INSERT INTO superclipboard.memos (uuid, title, body, tags, sort_order, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM superclipboard.memos), $5, $5)
-         RETURNING id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at",
-        &[&uuid, &title, &body, &tags, &now],
-    )?;
-    Ok(row_to_memo(&row))
+    with_client(storage, |client| {
+        let row = client.query_one(
+            "INSERT INTO superclipboard.memos (uuid, title, body, tags, sort_order, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM superclipboard.memos), $5, $5)
+             RETURNING id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at",
+            &[&uuid, &title, &body, &tags, &now],
+        )?;
+        Ok(row_to_memo(&row))
+    })
 }
 
 pub fn update_memo(
@@ -711,39 +766,40 @@ pub fn update_memo(
     body: &str,
     tags: &str,
 ) -> RemoteResult<bool> {
-    let mut client = connect(storage)?;
     let now = Utc::now().to_rfc3339();
-    Ok(client
-        .execute(
+    with_client(storage, |client| {
+        Ok(client.execute(
             "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, updated_at = $4, version = version + 1 WHERE id = $5",
             &[&title, &body, &tags, &now, &id],
         )? > 0)
+    })
 }
 
 pub fn delete_memo(storage: &Storage, id: i64, archive: bool) -> RemoteResult<bool> {
-    let mut client = connect(storage)?;
-    let rows = if archive {
-        client.execute(
-            "UPDATE superclipboard.memos SET archived_at = now()::text, version = version + 1 WHERE id = $1 AND archived_at IS NULL",
-            &[&id],
-        )?
-    } else {
-        client.execute(
-            "UPDATE superclipboard.memos SET deleted_at = now()::text, version = version + 1 WHERE id = $1",
-            &[&id],
-        )?
-    };
-    Ok(rows > 0)
+    with_client(storage, |client| {
+        let rows = if archive {
+            client.execute(
+                "UPDATE superclipboard.memos SET archived_at = now()::text, version = version + 1 WHERE id = $1 AND archived_at IS NULL",
+                &[&id],
+            )?
+        } else {
+            client.execute(
+                "UPDATE superclipboard.memos SET deleted_at = now()::text, version = version + 1 WHERE id = $1",
+                &[&id],
+            )?
+        };
+        Ok(rows > 0)
+    })
 }
 
 pub fn toggle_memo_pin(storage: &Storage, id: i64) -> RemoteResult<bool> {
-    let mut client = connect(storage)?;
-    Ok(client
-        .query_one(
+    with_client(storage, |client| {
+        Ok(client.query_one(
             "UPDATE superclipboard.memos SET pinned = NOT pinned, version = version + 1 WHERE id = $1 RETURNING pinned",
             &[&id],
         )?
         .get("pinned"))
+    })
 }
 
 pub fn memo_count(storage: &Storage) -> RemoteResult<i64> {
@@ -758,16 +814,17 @@ pub fn memo_count(storage: &Storage) -> RemoteResult<i64> {
 }
 
 pub fn reorder_memos(storage: &Storage, orders: &[(i64, i64)]) -> RemoteResult<()> {
-    let mut client = connect(storage)?;
-    let mut tx = client.transaction()?;
-    for (id, sort_order) in orders {
-        tx.execute(
-            "UPDATE superclipboard.memos SET sort_order = $1, version = version + 1 WHERE id = $2",
-            &[sort_order, id],
-        )?;
-    }
-    tx.commit()?;
-    Ok(())
+    with_client(storage, |client| {
+        let mut tx = client.transaction()?;
+        for (id, sort_order) in orders {
+            tx.execute(
+                "UPDATE superclipboard.memos SET sort_order = $1, version = version + 1 WHERE id = $2",
+                &[sort_order, id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    })
 }
 
 pub fn query_archived_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
@@ -805,11 +862,12 @@ pub fn memo_archive_count(storage: &Storage) -> RemoteResult<i64> {
 }
 
 pub fn unarchive_memo(storage: &Storage, id: i64) -> RemoteResult<bool> {
-    let mut client = connect(storage)?;
-    Ok(client.execute(
-        "UPDATE superclipboard.memos SET archived_at = NULL, version = version + 1 WHERE id = $1",
-        &[&id],
-    )? > 0)
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "UPDATE superclipboard.memos SET archived_at = NULL, version = version + 1 WHERE id = $1",
+            &[&id],
+        )? > 0)
+    })
 }
 
 pub fn permanent_delete_memo(storage: &Storage, id: i64) -> RemoteResult<bool> {
@@ -817,12 +875,13 @@ pub fn permanent_delete_memo(storage: &Storage, id: i64) -> RemoteResult<bool> {
 }
 
 pub fn purge_old_memo_archives(storage: &Storage, days: i64) -> RemoteResult<u64> {
-    let mut client = connect(storage)?;
-    Ok(client.execute(
-        "UPDATE superclipboard.memos SET deleted_at = now()::text, version = version + 1
-         WHERE archived_at IS NOT NULL AND deleted_at IS NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
-        &[&days],
-    )?)
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "UPDATE superclipboard.memos SET deleted_at = now()::text, version = version + 1
+             WHERE archived_at IS NOT NULL AND deleted_at IS NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
+            &[&days],
+        )?)
+    })
 }
 
 pub fn archive_memo(storage: &Storage, id: i64) -> RemoteResult<bool> {
@@ -837,6 +896,25 @@ pub fn archive_clipboard(storage: &Storage, id: i64) -> RemoteResult<bool> {
 mod tests {
     use super::*;
     use crate::storage::Storage;
+
+    #[test]
+    fn cache_key_is_stable_without_exposing_credentials() {
+        let config = RemoteDbConfig {
+            url: "postgresql://user:secret@example.test/database".to_string(),
+            ssl_mode: "require".to_string(),
+        };
+        let key = config.cache_key();
+        assert_eq!(key, config.cache_key());
+        assert!(!key.contains("secret"));
+        assert_ne!(
+            key,
+            RemoteDbConfig {
+                url: "postgresql://user:other@example.test/database".to_string(),
+                ssl_mode: "require".to_string(),
+            }
+            .cache_key()
+        );
+    }
 
     #[test]
     #[ignore]

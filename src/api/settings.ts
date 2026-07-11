@@ -5,9 +5,19 @@ export async function getSetting(key: string): Promise<string | null> {
   return invoke('get_setting', { key });
 }
 
+/** Read multiple settings with one IPC call. Missing keys are omitted. */
+export async function getSettings(keys: string[]): Promise<Record<string, string>> {
+  return invoke('get_settings', { keys });
+}
+
 /** Set a user setting value */
 export async function setSetting(key: string, value: string): Promise<void> {
   return invoke('set_setting', { key, value });
+}
+
+/** Persist multiple settings atomically with one IPC call. */
+export async function setSettings(values: Record<string, string>): Promise<void> {
+  return invoke('set_settings', { values });
 }
 
 /** Check if auto-start on boot is enabled */

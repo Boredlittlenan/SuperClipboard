@@ -10,7 +10,6 @@ import {
   setShortcutRecording,
   checkUpdate,
   openUrl,
-  getSetting,
   setSetting,
   setAlwaysOnTop,
 } from '../api/settings';
@@ -19,6 +18,8 @@ import type { ThemeMode } from '../types';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { formatShortcutLabel } from '../utils';
+import { useAppSettings } from '../hooks/useAppSettings';
+import { SettingRow, ToggleSettingRow } from './settings/SettingRow';
 
 const LANGUAGES: { value: Locale; labelKey: 'langZhCN' | 'langEn' }[] = [
   { value: 'zh-CN', labelKey: 'langZhCN' },
@@ -70,43 +71,30 @@ function shortcutParts(modifiers: Set<string>, mainKey: string): string[] {
 
 interface SettingsButtonProps {
   onShortcutChange?: (shortcut: string) => void;
-  onMemoEnabledChange?: (enabled: boolean) => void;
-  onMemoColorChange?: (color: string | null) => void;
-  onRawPreviewChange?: (enabled: boolean) => void;
-  onThemeModeChange?: (mode: ThemeMode) => void;
-  onThemeAccentChange?: (accent: string) => void;
-  onArchiveEnabledChange?: (enabled: boolean) => void;
   onVersionTitleTrigger?: (clickCount: number) => void;
-  onExperimentalFeaturesEnabledChange?: (enabled: boolean) => void;
-  onCategoryTabSortingEnabledChange?: (enabled: boolean) => void;
 }
 
 export default function SettingsButton({
   onShortcutChange,
-  onMemoEnabledChange,
-  onMemoColorChange,
-  onRawPreviewChange,
-  onThemeModeChange,
-  onThemeAccentChange,
-  onArchiveEnabledChange,
   onVersionTitleTrigger,
-  onExperimentalFeaturesEnabledChange,
-  onCategoryTabSortingEnabledChange,
 }: SettingsButtonProps) {
   const { t, locale, setLocale } = useI18n();
+  const { settings, setAppSetting } = useAppSettings();
+  const {
+    memoEnabled,
+    memoColor,
+    alwaysOnTop,
+    rawPreview,
+    themeMode,
+    themeAccent,
+    autoUpdate,
+    experimentalFeaturesEnabled,
+    categoryTabSortingEnabled,
+    archiveEnabled,
+  } = settings;
   const [open, setOpen] = useState(false);
   const [autostart, setAutostart] = useState(false);
-  const [memoEnabled, setMemoEnabledState] = useState(false);
-  const [alwaysOnTop, setAlwaysOnTopState] = useState(false);
-  const [rawPreview, setRawPreviewState] = useState(false);
-  const [themeMode, setThemeModeState] = useState<ThemeMode>('system');
-  const [themeAccent, setThemeAccentState] = useState('default');
-  const [autoUpdate, setAutoUpdate] = useState(true);
-  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabled] = useState(false);
-  const [categoryTabSortingEnabled, setCategoryTabSortingEnabled] = useState(true);
-  const [archiveEnabled, setArchiveEnabledState] = useState(false);
   const [appVersion, setAppVersion] = useState('');
-  const [memoColor, setMemoColor] = useState<string | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [hexInput, setHexInput] = useState('');
   const [shortcut, setShortcutState] = useState('Alt+X');
@@ -173,60 +161,11 @@ export default function SettingsButton({
         setShortcutState(s);
         onShortcutChange?.(s);
       }).catch(console.error);
-      getSetting('memo_enabled').then((v) => {
-        setMemoEnabledState(v === 'true');
-        onMemoEnabledChange?.(v === 'true');
-      }).catch(console.error);
-      getSetting('always_on_top').then((v) => {
-        setAlwaysOnTopState(v === null ? false : v === 'true');
-      }).catch(console.error);
-      getSetting('raw_preview').then((v) => {
-        setRawPreviewState(v === 'true');
-      }).catch(console.error);
-      getSetting('theme_mode').then((v) => {
-        const mode = v === 'light' || v === 'dark' || v === 'system' ? v : 'system';
-        setThemeModeState(mode);
-        onThemeModeChange?.(mode);
-      }).catch(console.error);
-      getSetting('theme_accent').then((v) => {
-        const accent = v === 'sakura' ? 'sakura' : 'default';
-        setThemeAccentState(accent);
-        onThemeAccentChange?.(accent);
-      }).catch(console.error);
-      getSetting('auto_update').then((v) => {
-        setAutoUpdate(v === null ? true : v === 'true');
-      }).catch(console.error);
-      getSetting('experimental_features_enabled').then((v) => {
-        const enabled = v === 'true';
-        setExperimentalFeaturesEnabled(enabled);
-        onExperimentalFeaturesEnabledChange?.(enabled);
-      }).catch(console.error);
-      getSetting('category_tab_sorting_enabled').then((v) => {
-        const enabled = v === null ? true : v === 'true';
-        setCategoryTabSortingEnabled(enabled);
-        onCategoryTabSortingEnabledChange?.(enabled);
-      }).catch(console.error);
-      getSetting('archive_enabled').then((v) => {
-        setArchiveEnabledState(v === 'true');
-        onArchiveEnabledChange?.(v === 'true');
-      }).catch(console.error);
-      getSetting('memo_color').then((v) => {
-        setMemoColor(v);
-        setHexInput(v || '');
-      }).catch(console.error);
+      setHexInput(memoColor || '');
       setShowColorPicker(false);
       getVersion().then(setAppVersion).catch(console.error);
     }
-  }, [
-    open,
-    onMemoEnabledChange,
-    onShortcutChange,
-    onThemeModeChange,
-    onThemeAccentChange,
-    onArchiveEnabledChange,
-    onExperimentalFeaturesEnabledChange,
-    onCategoryTabSortingEnabledChange,
-  ]);
+  }, [memoColor, onShortcutChange, open]);
 
   // Close panel when clicking outside
   useEffect(() => {
@@ -335,79 +274,53 @@ export default function SettingsButton({
   }, [autostart]);
 
   const handleMemoToggle = useCallback(async () => {
-    const newValue = !memoEnabled;
-    await setSetting('memo_enabled', newValue ? 'true' : 'false');
-    setMemoEnabledState(newValue);
-    onMemoEnabledChange?.(newValue);
-  }, [memoEnabled, onMemoEnabledChange]);
+    await setAppSetting('memoEnabled', !memoEnabled);
+  }, [memoEnabled, setAppSetting]);
 
   const handleMemoColorChange = useCallback(async (color: string) => {
     if (!/^#[0-9a-fA-F]{6}$/.test(color)) return;
-    await setSetting('memo_color', color);
-    setMemoColor(color);
+    await setAppSetting('memoColor', color);
     setHexInput(color);
-    onMemoColorChange?.(color);
-  }, [onMemoColorChange]);
+  }, [setAppSetting]);
 
   const handleMemoColorReset = useCallback(async () => {
-    await setSetting('memo_color', '');
-    setMemoColor(null);
+    await setAppSetting('memoColor', null);
     setHexInput('');
-    onMemoColorChange?.(null);
-  }, [onMemoColorChange]);
+  }, [setAppSetting]);
 
   const handleAlwaysOnTopToggle = useCallback(async () => {
     const newValue = !alwaysOnTop;
     await setAlwaysOnTop(newValue);
-    await setSetting('always_on_top', newValue ? 'true' : 'false');
-    setAlwaysOnTopState(newValue);
-  }, [alwaysOnTop]);
+    await setAppSetting('alwaysOnTop', newValue);
+  }, [alwaysOnTop, setAppSetting]);
 
   const handleRawPreviewToggle = useCallback(async () => {
-    const newValue = !rawPreview;
-    await setSetting('raw_preview', newValue ? 'true' : 'false');
-    setRawPreviewState(newValue);
-    onRawPreviewChange?.(newValue);
-  }, [rawPreview, onRawPreviewChange]);
+    await setAppSetting('rawPreview', !rawPreview);
+  }, [rawPreview, setAppSetting]);
 
   const handleThemeModeChange = useCallback(async (mode: ThemeMode) => {
-    await setSetting('theme_mode', mode);
-    setThemeModeState(mode);
-    onThemeModeChange?.(mode);
-  }, [onThemeModeChange]);
+    await setAppSetting('themeMode', mode);
+  }, [setAppSetting]);
 
   const handleThemeAccentChange = useCallback(async (accent: string) => {
-    await setSetting('theme_accent', accent);
-    setThemeAccentState(accent);
-    onThemeAccentChange?.(accent);
-  }, [onThemeAccentChange]);
+    await setAppSetting('themeAccent', accent === 'sakura' ? 'sakura' : 'default');
+  }, [setAppSetting]);
 
   const handleAutoUpdateToggle = useCallback(async () => {
-    const newValue = !autoUpdate;
-    await setSetting('auto_update', newValue ? 'true' : 'false');
-    setAutoUpdate(newValue);
-  }, [autoUpdate]);
+    await setAppSetting('autoUpdate', !autoUpdate);
+  }, [autoUpdate, setAppSetting]);
 
   const handleExperimentalFeaturesToggle = useCallback(async () => {
-    const newValue = !experimentalFeaturesEnabled;
-    await setSetting('experimental_features_enabled', newValue ? 'true' : 'false');
-    setExperimentalFeaturesEnabled(newValue);
-    onExperimentalFeaturesEnabledChange?.(newValue);
-  }, [experimentalFeaturesEnabled, onExperimentalFeaturesEnabledChange]);
+    await setAppSetting('experimentalFeaturesEnabled', !experimentalFeaturesEnabled);
+  }, [experimentalFeaturesEnabled, setAppSetting]);
 
   const handleArchiveToggle = useCallback(async () => {
-    const newValue = !archiveEnabled;
-    await setSetting('archive_enabled', newValue ? 'true' : 'false');
-    setArchiveEnabledState(newValue);
-    onArchiveEnabledChange?.(newValue);
-  }, [archiveEnabled, onArchiveEnabledChange]);
+    await setAppSetting('archiveEnabled', !archiveEnabled);
+  }, [archiveEnabled, setAppSetting]);
 
   const handleCategoryTabSortingToggle = useCallback(async () => {
-    const newValue = !categoryTabSortingEnabled;
-    await setSetting('category_tab_sorting_enabled', newValue ? 'true' : 'false');
-    setCategoryTabSortingEnabled(newValue);
-    onCategoryTabSortingEnabledChange?.(newValue);
-  }, [categoryTabSortingEnabled, onCategoryTabSortingEnabledChange]);
+    await setAppSetting('categoryTabSortingEnabled', !categoryTabSortingEnabled);
+  }, [categoryTabSortingEnabled, setAppSetting]);
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateStatus('checking');
@@ -484,8 +397,7 @@ export default function SettingsButton({
           <div style={styles.sectionHeader}>{t.systemSettings}</div>
 
           {/* Shortcut section */}
-          <div style={styles.compactRow} title={t.shortcutDesc}>
-            <span style={styles.rowLabel}>{t.shortcut}</span>
+          <SettingRow label={t.shortcut} title={t.shortcutDesc}>
             <button
               ref={recorderRef}
               style={{
@@ -497,12 +409,11 @@ export default function SettingsButton({
             >
               {recording ? t.shortcutRecording : formatShortcutLabel(shortcut)}
             </button>
-          </div>
+          </SettingRow>
           {error && <span style={styles.errorText}>{error}</span>}
 
           {/* Theme mode */}
-          <div style={styles.compactRow} title={t.themeModeDesc}>
-            <span style={styles.rowLabel}>{t.themeMode}</span>
+          <SettingRow label={t.themeMode} title={t.themeModeDesc}>
             <div style={styles.themeSegmented}>
               <button
                 style={{
@@ -532,11 +443,10 @@ export default function SettingsButton({
                 {t.themeSystem}
               </button>
             </div>
-          </div>
+          </SettingRow>
 
           {/* Theme accent */}
-          <div style={styles.compactRow} title={t.themeColorDesc}>
-            <span style={styles.rowLabel}>{t.themeColor}</span>
+          <SettingRow label={t.themeColor} title={t.themeColorDesc}>
             <div style={styles.colorOptions}>
               <button
                 style={{
@@ -561,99 +471,35 @@ export default function SettingsButton({
                 <span>{t.themeSakura}</span>
               </button>
             </div>
-          </div>
+          </SettingRow>
 
           {/* Autostart */}
-          <div style={styles.compactRow} title={t.autostartDesc}>
-            <span style={styles.rowLabel}>{t.autostart}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(autostart ? styles.toggleOn : {}) }}
-              onClick={handleAutostartToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(autostart ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
+          <ToggleSettingRow label={t.autostart} title={t.autostartDesc} checked={autostart} onChange={handleAutostartToggle} />
 
           {/* Always on top */}
-          <div style={styles.compactRow} title={t.alwaysOnTopDesc}>
-            <span style={styles.rowLabel}>{t.alwaysOnTop}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(alwaysOnTop ? styles.toggleOn : {}) }}
-              onClick={handleAlwaysOnTopToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(alwaysOnTop ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
+          <ToggleSettingRow label={t.alwaysOnTop} title={t.alwaysOnTopDesc} checked={alwaysOnTop} onChange={handleAlwaysOnTopToggle} />
 
           {/* Raw preview */}
-          <div style={styles.compactRow} title={t.rawPreviewDesc}>
-            <span style={styles.rowLabel}>{t.rawPreview}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(rawPreview ? styles.toggleOn : {}) }}
-              onClick={handleRawPreviewToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(rawPreview ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
+          <ToggleSettingRow label={t.rawPreview} title={t.rawPreviewDesc} checked={rawPreview} onChange={handleRawPreviewToggle} />
 
           {/* Auto update */}
-          <div style={styles.compactRow} title={t.autoUpdateDesc}>
-            <span style={styles.rowLabel}>{t.autoUpdate}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(autoUpdate ? styles.toggleOn : {}) }}
-              onClick={handleAutoUpdateToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(autoUpdate ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
+          <ToggleSettingRow label={t.autoUpdate} title={t.autoUpdateDesc} checked={autoUpdate} onChange={handleAutoUpdateToggle} />
 
           {/* Experimental features */}
-          <div style={styles.compactRow} title={t.experimentalFeaturesDesc}>
-            <span style={styles.rowLabel}>{t.experimentalFeatures}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(experimentalFeaturesEnabled ? styles.toggleOn : {}) }}
-              onClick={handleExperimentalFeaturesToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(experimentalFeaturesEnabled ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
+          <ToggleSettingRow label={t.experimentalFeatures} title={t.experimentalFeaturesDesc} checked={experimentalFeaturesEnabled} onChange={handleExperimentalFeaturesToggle} />
 
           {/* Feature Settings header */}
           <div style={styles.sectionHeader}>{t.featureSettings}</div>
 
           {/* Category tab sorting */}
-          <div style={styles.compactRow} title={t.categoryTabSortingDesc}>
-            <span style={styles.rowLabel}>{t.categoryTabSorting}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(categoryTabSortingEnabled ? styles.toggleOn : {}) }}
-              onClick={handleCategoryTabSortingToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(categoryTabSortingEnabled ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
+          <ToggleSettingRow label={t.categoryTabSorting} title={t.categoryTabSortingDesc} checked={categoryTabSortingEnabled} onChange={handleCategoryTabSortingToggle} />
 
           {/* Memo */}
-          <div style={styles.compactRow} title={t.memoSettingDesc}>
-            <span style={styles.rowLabel}>{t.memoSetting}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(memoEnabled ? styles.toggleOn : {}) }}
-              onClick={handleMemoToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(memoEnabled ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
+          <ToggleSettingRow label={t.memoSetting} title={t.memoSettingDesc} checked={memoEnabled} onChange={handleMemoToggle} />
 
           {/* Memo color picker (only when memo is enabled) */}
           {memoEnabled && (
-            <div style={{ ...styles.compactRow, position: 'relative' }} title={t.memoColorDesc}>
-              <span style={styles.rowLabel}>{t.memoColor}</span>
+            <SettingRow label={t.memoColor} title={t.memoColorDesc}>
               <div ref={colorRef} style={{ position: 'relative' }}>
                 <button
                   style={styles.memoColorBtn}
@@ -703,20 +549,11 @@ export default function SettingsButton({
                   </div>
                 )}
               </div>
-            </div>
+            </SettingRow>
           )}
 
           {/* Archive */}
-          <div style={styles.compactRow} title={t.archiveSettingDesc}>
-            <span style={styles.rowLabel}>{t.archiveSetting}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(archiveEnabled ? styles.toggleOn : {}) }}
-              onClick={handleArchiveToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(archiveEnabled ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
+          <ToggleSettingRow label={t.archiveSetting} title={t.archiveSettingDesc} checked={archiveEnabled} onChange={handleArchiveToggle} />
 
           {/* Divider */}
           <div style={styles.divider} />
@@ -839,17 +676,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: '4px',
   },
-  compactRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '4px 0',
-  },
-  rowLabel: {
-    fontSize: '12px',
-    color: 'var(--text-primary)',
-    flex: 1,
-  },
   divider: {
     height: '1px',
     background: 'var(--border)',
@@ -968,34 +794,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '10px',
     color: '#e74c3c',
     marginTop: '2px',
-  },
-  toggle: {
-    position: 'relative',
-    width: '34px',
-    height: '18px',
-    border: 'none',
-    borderRadius: '9px',
-    background: 'var(--border)',
-    cursor: 'pointer',
-    padding: 0,
-    transition: 'background 0.2s',
-    flexShrink: 0,
-  },
-  toggleOn: {
-    background: 'var(--accent)',
-  },
-  toggleKnob: {
-    position: 'absolute',
-    top: '2px',
-    left: '2px',
-    width: '14px',
-    height: '14px',
-    borderRadius: '50%',
-    background: '#ffffff',
-    transition: 'transform 0.2s',
-  },
-  toggleKnobOn: {
-    transform: 'translateX(16px)',
   },
   updateBtn: {
     width: '100%',

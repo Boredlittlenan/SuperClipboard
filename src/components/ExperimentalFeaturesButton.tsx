@@ -1,55 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type React from 'react';
 import { FlaskConical } from 'lucide-react';
-import { getSetting, setSetting } from '../api/settings';
 import { useI18n } from '../i18n';
+import { useAppSettings } from '../hooks/useAppSettings';
+import { ToggleSettingRow } from './settings/SettingRow';
 
-const SETTING_KEYS = {
-  clipboardMultiTag: 'clipboard_multi_tag_enabled',
-  hideEntryColorStrip: 'hide_entry_color_strip_enabled',
-  categoryTabSelectedColors: 'category_tab_selected_colors_enabled',
-  modernUi: 'modern_ui_enabled',
-};
-
-interface ExperimentalFeaturesButtonProps {
-  onClipboardMultiTagChange?: (enabled: boolean) => void;
-  onHideEntryColorStripChange?: (enabled: boolean) => void;
-  onCategoryTabSelectedColorsChange?: (enabled: boolean) => void;
-  onModernUiChange?: (enabled: boolean) => void;
-}
-
-export default function ExperimentalFeaturesButton({ onClipboardMultiTagChange, onHideEntryColorStripChange, onCategoryTabSelectedColorsChange, onModernUiChange }: ExperimentalFeaturesButtonProps) {
+export default function ExperimentalFeaturesButton() {
   const { t } = useI18n();
+  const { settings, setAppSetting } = useAppSettings();
+  const {
+    clipboardMultiTagEnabled,
+    hideEntryColorStripEnabled,
+    categoryTabSelectedColorsEnabled,
+    modernUiEnabled,
+  } = settings;
   const [open, setOpen] = useState(false);
-  const [clipboardMultiTagEnabled, setClipboardMultiTagEnabled] = useState(false);
-  const [hideEntryColorStripEnabled, setHideEntryColorStripEnabled] = useState(false);
-  const [categoryTabSelectedColorsEnabled, setCategoryTabSelectedColorsEnabled] = useState(false);
-  const [modernUiEnabled, setModernUiEnabled] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    Promise.all([
-      getSetting(SETTING_KEYS.clipboardMultiTag),
-      getSetting(SETTING_KEYS.hideEntryColorStrip),
-      getSetting(SETTING_KEYS.categoryTabSelectedColors),
-      getSetting(SETTING_KEYS.modernUi),
-    ])
-      .then(([multiTagValue, hideStripValue, categoryTabColorsValue, modernUiValue]) => {
-        const multiTagEnabled = multiTagValue === 'true';
-        const hideStripEnabled = hideStripValue === 'true';
-        const categoryTabColorsEnabled = categoryTabColorsValue === 'true';
-        const modernEnabled = modernUiValue === 'true';
-        setClipboardMultiTagEnabled(multiTagEnabled);
-        setHideEntryColorStripEnabled(hideStripEnabled);
-        setCategoryTabSelectedColorsEnabled(categoryTabColorsEnabled);
-        setModernUiEnabled(modernEnabled);
-        onClipboardMultiTagChange?.(multiTagEnabled);
-        onHideEntryColorStripChange?.(hideStripEnabled);
-        onCategoryTabSelectedColorsChange?.(categoryTabColorsEnabled);
-        onModernUiChange?.(modernEnabled);
-      })
-      .catch(console.error);
-  }, [onClipboardMultiTagChange, onCategoryTabSelectedColorsChange, onHideEntryColorStripChange, onModernUiChange]);
 
   useEffect(() => {
     if (!open) return;
@@ -65,32 +31,20 @@ export default function ExperimentalFeaturesButton({ onClipboardMultiTagChange, 
   }, [open]);
 
   const handleClipboardMultiTagToggle = useCallback(async () => {
-    const nextEnabled = !clipboardMultiTagEnabled;
-    await setSetting(SETTING_KEYS.clipboardMultiTag, nextEnabled ? 'true' : 'false');
-    setClipboardMultiTagEnabled(nextEnabled);
-    onClipboardMultiTagChange?.(nextEnabled);
-  }, [clipboardMultiTagEnabled, onClipboardMultiTagChange]);
+    await setAppSetting('clipboardMultiTagEnabled', !clipboardMultiTagEnabled);
+  }, [clipboardMultiTagEnabled, setAppSetting]);
 
   const handleModernUiToggle = useCallback(async () => {
-    const nextEnabled = !modernUiEnabled;
-    await setSetting(SETTING_KEYS.modernUi, nextEnabled ? 'true' : 'false');
-    setModernUiEnabled(nextEnabled);
-    onModernUiChange?.(nextEnabled);
-  }, [modernUiEnabled, onModernUiChange]);
+    await setAppSetting('modernUiEnabled', !modernUiEnabled);
+  }, [modernUiEnabled, setAppSetting]);
 
   const handleHideEntryColorStripToggle = useCallback(async () => {
-    const nextEnabled = !hideEntryColorStripEnabled;
-    await setSetting(SETTING_KEYS.hideEntryColorStrip, nextEnabled ? 'true' : 'false');
-    setHideEntryColorStripEnabled(nextEnabled);
-    onHideEntryColorStripChange?.(nextEnabled);
-  }, [hideEntryColorStripEnabled, onHideEntryColorStripChange]);
+    await setAppSetting('hideEntryColorStripEnabled', !hideEntryColorStripEnabled);
+  }, [hideEntryColorStripEnabled, setAppSetting]);
 
   const handleCategoryTabSelectedColorsToggle = useCallback(async () => {
-    const nextEnabled = !categoryTabSelectedColorsEnabled;
-    await setSetting(SETTING_KEYS.categoryTabSelectedColors, nextEnabled ? 'true' : 'false');
-    setCategoryTabSelectedColorsEnabled(nextEnabled);
-    onCategoryTabSelectedColorsChange?.(nextEnabled);
-  }, [categoryTabSelectedColorsEnabled, onCategoryTabSelectedColorsChange]);
+    await setAppSetting('categoryTabSelectedColorsEnabled', !categoryTabSelectedColorsEnabled);
+  }, [categoryTabSelectedColorsEnabled, setAppSetting]);
 
   return (
     <div style={styles.wrapper} ref={panelRef}>
@@ -109,46 +63,10 @@ export default function ExperimentalFeaturesButton({ onClipboardMultiTagChange, 
       {open && (
         <div className="glass-menu-panel" style={styles.panel}>
           <div style={styles.panelTitle}>{t.experimentalFeatures}</div>
-          <div style={styles.compactRow} title={t.modernUiDesc}>
-            <span style={styles.rowLabel}>{t.modernUi}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(modernUiEnabled ? styles.toggleOn : {}) }}
-              onClick={handleModernUiToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(modernUiEnabled ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
-          <div style={styles.compactRow} title={t.clipboardMultiTagDesc}>
-            <span style={styles.rowLabel}>{t.clipboardMultiTag}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(clipboardMultiTagEnabled ? styles.toggleOn : {}) }}
-              onClick={handleClipboardMultiTagToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(clipboardMultiTagEnabled ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
-          <div style={styles.compactRow} title={t.hideEntryColorStripDesc}>
-            <span style={styles.rowLabel}>{t.hideEntryColorStrip}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(hideEntryColorStripEnabled ? styles.toggleOn : {}) }}
-              onClick={handleHideEntryColorStripToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(hideEntryColorStripEnabled ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
-          <div style={styles.compactRow} title={t.categoryTabSelectedColorsDesc}>
-            <span style={styles.rowLabel}>{t.categoryTabSelectedColors}</span>
-            <button
-              className="settings-toggle"
-              style={{ ...styles.toggle, ...(categoryTabSelectedColorsEnabled ? styles.toggleOn : {}) }}
-              onClick={handleCategoryTabSelectedColorsToggle}
-            >
-              <div style={{ ...styles.toggleKnob, ...(categoryTabSelectedColorsEnabled ? styles.toggleKnobOn : {}) }} />
-            </button>
-          </div>
+          <ToggleSettingRow label={t.modernUi} title={t.modernUiDesc} checked={modernUiEnabled} onChange={handleModernUiToggle} />
+          <ToggleSettingRow label={t.clipboardMultiTag} title={t.clipboardMultiTagDesc} checked={clipboardMultiTagEnabled} onChange={handleClipboardMultiTagToggle} />
+          <ToggleSettingRow label={t.hideEntryColorStrip} title={t.hideEntryColorStripDesc} checked={hideEntryColorStripEnabled} onChange={handleHideEntryColorStripToggle} />
+          <ToggleSettingRow label={t.categoryTabSelectedColors} title={t.categoryTabSelectedColorsDesc} checked={categoryTabSelectedColorsEnabled} onChange={handleCategoryTabSelectedColorsToggle} />
         </div>
       )}
     </div>
@@ -199,44 +117,5 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '10px',
     paddingBottom: '8px',
     borderBottom: '1px solid var(--border)',
-  },
-  compactRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '4px 0',
-  },
-  rowLabel: {
-    fontSize: '12px',
-    color: 'var(--text-primary)',
-    flex: 1,
-  },
-  toggle: {
-    position: 'relative',
-    width: '34px',
-    height: '18px',
-    border: 'none',
-    borderRadius: '9px',
-    background: 'var(--border)',
-    cursor: 'pointer',
-    padding: 0,
-    transition: 'background 0.2s',
-    flexShrink: 0,
-  },
-  toggleOn: {
-    background: 'var(--accent)',
-  },
-  toggleKnob: {
-    position: 'absolute',
-    top: '2px',
-    left: '2px',
-    width: '14px',
-    height: '14px',
-    borderRadius: '50%',
-    background: '#ffffff',
-    transition: 'transform 0.2s',
-  },
-  toggleKnobOn: {
-    transform: 'translateX(16px)',
   },
 };

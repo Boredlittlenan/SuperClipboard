@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 use thiserror::Error;
@@ -981,6 +982,19 @@ impl Storage {
         Ok(value)
     }
 
+    /// Read a group of settings while holding the database lock once.
+    pub fn get_settings(&self, keys: &[String]) -> Result<HashMap<String, String>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut statement = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
+        let mut values = HashMap::with_capacity(keys.len());
+        for key in keys {
+            if let Ok(value) = statement.query_row(params![key], |row| row.get::<_, String>(0)) {
+                values.insert(key.clone(), value);
+            }
+        }
+        Ok(values)
+    }
+
     /// Insert or update a setting value
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
@@ -989,6 +1003,23 @@ impl Storage {
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![key, value],
         )?;
+        Ok(())
+    }
+
+    /// Persist a group of settings atomically.
+    pub fn set_settings(&self, values: &HashMap<String, String>) -> Result<(), StorageError> {
+        let mut conn = self.conn.lock().unwrap();
+        let transaction = conn.transaction()?;
+        {
+            let mut statement = transaction.prepare(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            )?;
+            for (key, value) in values {
+                statement.execute(params![key, value])?;
+            }
+        }
+        transaction.commit()?;
         Ok(())
     }
 }
@@ -1000,6 +1031,32 @@ mod tests {
 
     fn temp_db_path() -> std::path::PathBuf {
         std::env::temp_dir().join(format!("superclipboard-storage-{}.db", Uuid::new_v4()))
+    }
+
+    #[test]
+    fn settings_batch_round_trips_atomically() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let values = HashMap::from([
+            ("theme_mode".to_string(), "dark".to_string()),
+            ("memo_enabled".to_string(), "true".to_string()),
+        ]);
+
+        storage.set_settings(&values).unwrap();
+        let loaded = storage
+            .get_settings(&[
+                "theme_mode".to_string(),
+                "memo_enabled".to_string(),
+                "missing".to_string(),
+            ])
+            .unwrap();
+
+        assert_eq!(loaded.get("theme_mode").map(String::as_str), Some("dark"));
+        assert_eq!(loaded.get("memo_enabled").map(String::as_str), Some("true"));
+        assert!(!loaded.contains_key("missing"));
+
+        drop(storage);
+        let _ = std::fs::remove_file(db_path);
     }
 
     #[test]

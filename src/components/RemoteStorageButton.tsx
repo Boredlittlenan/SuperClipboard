@@ -3,13 +3,13 @@ import { getVersion } from '@tauri-apps/api/app';
 import { Database, Network, Trash2 } from 'lucide-react';
 import {
   createBackup,
-  getSetting,
+  getSettings,
   getStorageStatus,
   initializeRemoteStorage,
   listBackups,
   openBackupFolder,
   restoreBackup,
-  setSetting,
+  setSettings,
   testRemoteStorage,
 } from '../api/settings';
 import type { BackupFileInfo, StorageStatusInfo } from '../api/settings';
@@ -253,7 +253,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
   const persistedSettingsRef = useRef<StoredSettingsPayload | null>(null);
 
   const writeSettings = useCallback(async (payload: StoredSettingsPayload) => {
-    await Promise.all(Object.entries(payload).map(([key, value]) => setSetting(key, value)));
+    await setSettings(payload);
   }, []);
 
   const refreshBackups = useCallback(async () => {
@@ -277,11 +277,12 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
 
   const persistProfiles = useCallback(async (items: RemoteDbProfile[]) => {
     setProfiles(items);
-    await setSetting(SETTING_KEYS.profiles, JSON.stringify(items));
+    await setSettings({ [SETTING_KEYS.profiles]: JSON.stringify(items) });
   }, []);
 
   const readProfiles = useCallback(async () => {
-    return parseProfiles(await getSetting(SETTING_KEYS.profiles));
+    const values = await getSettings([SETTING_KEYS.profiles]);
+    return parseProfiles(values[SETTING_KEYS.profiles]);
   }, []);
 
   const buildSettingsPayload = useCallback((ready: boolean): StoredSettingsPayload => ({
@@ -316,19 +317,17 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
   }, []);
 
   const loadSettings = useCallback(async () => {
-    const [mode, connMode, savedUrl, savedHost, savedPort, savedDatabase, savedUsername, savedPassword, savedSslMode, ready, savedProfiles] = await Promise.all([
-      getSetting(SETTING_KEYS.storageMode),
-      getSetting(SETTING_KEYS.connectionMode),
-      getSetting(SETTING_KEYS.url),
-      getSetting(SETTING_KEYS.host),
-      getSetting(SETTING_KEYS.port),
-      getSetting(SETTING_KEYS.database),
-      getSetting(SETTING_KEYS.username),
-      getSetting(SETTING_KEYS.password),
-      getSetting(SETTING_KEYS.sslMode),
-      getSetting(SETTING_KEYS.ready),
-      getSetting(SETTING_KEYS.profiles),
-    ]);
+    const values = await getSettings(Object.values(SETTING_KEYS));
+    const mode = values[SETTING_KEYS.storageMode];
+    const connMode = values[SETTING_KEYS.connectionMode];
+    const savedUrl = values[SETTING_KEYS.url];
+    const savedHost = values[SETTING_KEYS.host];
+    const savedPort = values[SETTING_KEYS.port];
+    const savedDatabase = values[SETTING_KEYS.database];
+    const savedUsername = values[SETTING_KEYS.username];
+    const savedPassword = values[SETTING_KEYS.password];
+    const savedSslMode = values[SETTING_KEYS.sslMode];
+    const ready = values[SETTING_KEYS.ready];
     const loadedStorageMode = mode === 'remote' ? 'remote' : 'local';
     const loadedRemoteActive = loadedStorageMode === 'remote' && ready === 'true';
     const persistedPayload: StoredSettingsPayload = {
@@ -347,7 +346,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
     persistedSettingsRef.current = persistedPayload;
     setActiveStorageMode(loadedRemoteActive ? 'remote' : 'local');
     applyPayloadToForm(persistedPayload);
-    const loadedProfiles = parseProfiles(savedProfiles);
+    const loadedProfiles = parseProfiles(values[SETTING_KEYS.profiles]);
     setProfiles(loadedProfiles);
     setSelectedProfileId(loadedRemoteActive ? profileIdForPayload(loadedProfiles, persistedPayload) : '');
     setSaveState('idle');
