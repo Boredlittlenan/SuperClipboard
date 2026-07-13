@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Memo, MemoFilter } from '../types';
+import type { UpdateResult } from './clipboard';
 
 export type MemoAutoTagType = 'image' | 'email' | 'path' | 'link' | 'code';
 
@@ -15,8 +16,14 @@ export async function createMemo(title: string, body: string, tags: string): Pro
   return invoke('create_memo', { title, body, tags });
 }
 
-export async function updateMemo(id: number, title: string, body: string, tags: string): Promise<boolean> {
-  return invoke('update_memo', { id, title, body, tags });
+export async function updateMemo(
+  id: number,
+  title: string,
+  body: string,
+  tags: string,
+  expectedVersion?: number,
+): Promise<UpdateResult> {
+  return invoke('update_memo', { id, title, body, tags, expectedVersion });
 }
 
 export async function deleteMemo(id: number, archive?: boolean): Promise<boolean> {

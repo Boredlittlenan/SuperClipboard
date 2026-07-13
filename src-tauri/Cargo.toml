@@ -1,6 +1,6 @@
 [package]
 name = "superclipboard"
-version = "3.1.0"
+version = "3.2.0"
 description = "A lightweight clipboard manager with smart categorization"
 authors = [""]
 edition = "2021"
@@ -40,6 +40,8 @@ postgres-native-tls = "0.5"
 native-tls = "0.2"
 r2d2 = "0.8"
 r2d2_postgres = "0.18"
+fallible-iterator = "0.2"
+tokio = { version = "1", features = ["sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
 

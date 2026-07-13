@@ -13,6 +13,7 @@ export interface ClipboardEntry {
   original_content: string | null;
   updated_at: string | null;
   archived_at: string | null;
+  version: number;
 }
 
 export interface QueryFilter {
@@ -48,6 +49,7 @@ export interface Memo {
   created_at: string;
   updated_at: string;
   archived_at?: string | null;
+  version: number;
 }
 
 export interface MemoFilter {

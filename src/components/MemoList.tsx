@@ -144,9 +144,11 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   const [expandedMemoIds, setExpandedMemoIds] = useState<Set<number>>(() => new Set());
   const [autoTagTypesByMemoId, setAutoTagTypesByMemoId] = useState<Record<number, MemoAutoTagType[]>>({});
   const [fetchNonce, setFetchNonce] = useState(0);
+  const [editConflictMessage, setEditConflictMessage] = useState('');
 
   const editingItemRef = useRef<HTMLDivElement>(null);
   const editingIdRef = useRef<number | null>(null);
+  const editingVersionRef = useRef(1);
   const newMemoIdRef = useRef<number | null>(null);
   const fetchRequestRef = useRef(0);
   const fetchInFlightRef = useRef(false);
@@ -223,12 +225,15 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   // ─── Editing handlers ─────────────────────────────────────
   const startEditing = useCallback((memo: Memo) => {
     editingIdRef.current = memo.id;
+    editingVersionRef.current = memo.version;
+    setEditConflictMessage('');
     setEditingId(memo.id);
     setEditDraft({ title: memo.title, body: memo.body, tags: memo.tags });
   }, []);
 
   const stopEditing = useCallback(() => {
     editingIdRef.current = null;
+    editingVersionRef.current = 1;
     newMemoIdRef.current = null;
     setEditingId(null);
     setEditDraft(null);
@@ -262,12 +267,31 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
         });
         void refreshTotalCount();
       } else {
-        const updated = await updateMemo(id, editDraft.title, editDraft.body, finalTags);
-        if (!updated) throw new Error('Memo update failed');
+        const result = await updateMemo(
+          id,
+          editDraft.title,
+          editDraft.body,
+          finalTags,
+          editingVersionRef.current,
+        );
+        if (result.conflict) {
+          await fetchMemos();
+          stopEditing();
+          setEditConflictMessage(t.editConflict);
+          return;
+        }
+        if (!result.updated) throw new Error('Memo update failed');
         const updatedAt = new Date().toISOString();
         setMemos(prev => prev.map(m =>
           m.id === id
-            ? { ...m, title: editDraft.title, body: editDraft.body, tags: finalTags, updated_at: updatedAt }
+            ? {
+                ...m,
+                title: editDraft.title,
+                body: editDraft.body,
+                tags: finalTags,
+                updated_at: updatedAt,
+                version: m.version + 1,
+              }
             : m
         ));
         setAutoTagTypesByMemoId(prev => ({ ...prev, [id]: autoTagTypes }));
@@ -277,7 +301,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       console.error('Failed to save memo:', err);
       setSavingMemo(false);
     }
-  }, [editDraft, refreshTotalCount, savingMemo, stopEditing, t]);
+  }, [editDraft, fetchMemos, refreshTotalCount, savingMemo, stopEditing, t]);
 
   const handleCancelEditing = useCallback(async () => {
     const id = editingIdRef.current;
@@ -733,9 +757,10 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   // ─── Main render ──────────────────────────────────────────
   return (
     <div style={styles.container}>
-      <div style={{ padding: '8px 12px', flexShrink: 0 }}>
-        <button className="memo-new-button" style={styles.newBtn} onClick={handleCreate}><Plus size={14} strokeWidth={2.25} /> {t.memoNew}</button>
-      </div>
+        <div style={{ padding: '8px 12px', flexShrink: 0 }}>
+          <button className="memo-new-button" style={styles.newBtn} onClick={handleCreate}><Plus size={14} strokeWidth={2.25} /> {t.memoNew}</button>
+          {editConflictMessage && <div style={styles.editConflict}>{editConflictMessage}</div>}
+        </div>
       <div style={styles.list}>
         {pinnedMemos.map(m => renderMemoItem(m, false))}
         {unpinnedMemos.map(m => renderMemoItem(m, true))}
@@ -784,6 +809,12 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '4px',
     minHeight: '34px',
     padding: '8px 0',
+  },
+  editConflict: {
+    marginTop: '6px',
+    color: 'var(--danger)',
+    fontSize: '11px',
+    lineHeight: 1.4,
   },
   list: {
     flex: 1,

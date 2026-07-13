@@ -4251,13 +4251,14 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "superclipboard"
-version = "3.1.0"
+version = "3.2.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
  "chrono",
  "enigo",
  "env_logger",
+ "fallible-iterator 0.2.0",
  "hex",
  "image",
  "log",
@@ -4279,6 +4280,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "thiserror 2.0.18",
+ "tokio",
  "url",
  "urlencoding",
  "uuid",

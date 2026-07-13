@@ -28,6 +28,7 @@ export interface Translations {
   delete: string;
   edit: string;
   save: string;
+  editConflict: string;
   cancel: string;
   openInBrowser: string;
   restore: string;
@@ -211,6 +212,7 @@ export const zhCN: Translations = {
   delete: '删除',
   edit: '编辑',
   save: '保存',
+  editConflict: '内容已被其他设备修改，已刷新最新内容，请重新编辑后再保存',
   cancel: '取消',
   openInBrowser: '在浏览器中打开',
   restore: '恢复',
@@ -389,6 +391,7 @@ export const en: Translations = {
   delete: 'Delete',
   edit: 'Edit',
   save: 'Save',
+  editConflict: 'This item changed on another device. The latest content has been refreshed; review and save again.',
   cancel: 'Cancel',
   openInBrowser: 'Open in browser',
   restore: 'Restore',

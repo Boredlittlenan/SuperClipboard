@@ -12,8 +12,7 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_3.1.0_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_3.1.0_x64_en-US.msi`: MSI package
+- The next release is `3.2.0`; download the currently published installer from the release page above.
 
 ## Highlights
 
@@ -36,7 +35,7 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `3.1.0`
+- Version: `3.2.0`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - UI style: classic UI by default, with Modern UI available in Experimental Features
@@ -75,6 +74,8 @@ The storage entry is always available next to Settings. The panel supports two m
 
 External databases that connect and switch successfully appear under Saved Connections, with up to 12 profiles retained. Select a profile to refill the form or choose Use to test and switch immediately. Deleting a saved connection removes only the local profile; it never deletes the external database or its data.
 
+Remote clients listen for PostgreSQL change notifications and refresh the active list after a short debounce, so changes made from another device appear without switching tabs. When two devices edit the same clipboard entry or memo, the later save is rejected if its displayed version is stale; the app refreshes the latest content instead of silently overwriting it.
+
 Backup / Restore is shown only in Local mode. Backups use the `.scbackup` package format with source version, data manifest, and checksum metadata. Cross-version restore is not guaranteed.
 
 ### Experimental Features
@@ -102,7 +103,7 @@ SuperClipboard is source-available for non-commercial use only. Commercial use i
 
 ## Tech Stack
 
-- Backend: Rust, Tauri v2, SQLite (`rusqlite`), PostgreSQL with `r2d2`, `arboard`
+- Backend: Rust, Tauri v2, SQLite (`rusqlite`), PostgreSQL with `r2d2`, `LISTEN / NOTIFY`, `arboard`
 - Frontend: React 19, TypeScript, Vite 8
 - Platform target: Windows x64
 
@@ -131,6 +132,7 @@ src-tauri/
     classifier.rs       # Content type classification
     storage.rs          # SQLite storage layer
     remote_storage.rs   # External PostgreSQL storage layer
+    storage_backend.rs  # Unified local / external storage dispatch
     autostart.rs        # Windows auto-start registry integration
     window_position.rs  # Default window positioning and work-area clamping
     lib.rs              # Tauri commands and app setup
@@ -141,5 +143,6 @@ src/
   hooks/                # Shared application hooks
   i18n/                 # Translations and i18n context
   settings/             # Typed settings schema and context
+  storage/              # External storage profile utilities
   types/                # TypeScript types
 ```

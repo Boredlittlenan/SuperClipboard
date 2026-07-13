@@ -65,6 +65,8 @@ pub struct ClipboardEntry {
     pub updated_at: Option<String>, // Timestamp of last edit (null = never edited)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<String>, // Timestamp of archival (null = not archived)
+    #[serde(default = "default_record_version")]
+    pub version: i64,
 }
 
 /// Query filter for listing entries
@@ -89,6 +91,12 @@ pub struct Memo {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<String>,
+    #[serde(default = "default_record_version")]
+    pub version: i64,
+}
+
+fn default_record_version() -> i64 {
+    1
 }
 
 /// Query filter for listing memos
@@ -97,6 +105,29 @@ pub struct MemoFilter {
     pub search: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateResult {
+    pub updated: bool,
+    pub conflict: bool,
+}
+
+impl UpdateResult {
+    pub fn updated(updated: bool) -> Self {
+        Self {
+            updated,
+            conflict: false,
+        }
+    }
+
+    pub fn conflict() -> Self {
+        Self {
+            updated: false,
+            conflict: true,
+        }
+    }
 }
 
 fn category_from_str(value: &str) -> Category {
@@ -175,6 +206,7 @@ fn map_row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry>
         original_content,
         updated_at,
         archived_at,
+        version: 1,
     })
 }
 
@@ -190,6 +222,7 @@ fn map_row_to_memo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memo> {
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
         archived_at: row.get(8)?,
+        version: 1,
     })
 }
 
@@ -1079,6 +1112,7 @@ mod tests {
             original_content: None,
             updated_at: None,
             archived_at: None,
+            version: 1,
         };
 
         source.insert(&entry).unwrap();
@@ -1139,6 +1173,7 @@ mod tests {
             original_content: None,
             updated_at: None,
             archived_at: None,
+            version: 1,
         };
 
         storage.insert(&entry).unwrap();

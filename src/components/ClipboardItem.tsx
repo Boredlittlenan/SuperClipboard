@@ -4,13 +4,14 @@ import { Archive, ExternalLink, Pencil, Pin, RotateCcw, Trash2 } from 'lucide-re
 import type { ClipboardEntry } from '../types';
 import { getArchiveDaysRemaining, getArchiveTone, getCategoryColor, getCategoryLabel, formatRelativeTime } from '../utils';
 import { useI18n } from '../i18n';
+import type { UpdateResult } from '../api/clipboard';
 
 interface Props {
   entry: ClipboardEntry;
   onCopy: (id: number, useOriginal?: boolean) => void;
   onDelete: (id: number) => void;
   onTogglePin: (id: number) => void;
-  onEdit: (id: number, content: string) => Promise<void>;
+  onEdit: (id: number, content: string, expectedVersion: number) => Promise<UpdateResult>;
   rawPreview?: boolean;
   isArchive?: boolean;
   archiveEnabled?: boolean;
@@ -25,6 +26,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   const [editContent, setEditContent] = useState(entry.content);
   const [showOriginal, setShowOriginal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState('');
   const { t } = useI18n();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -59,6 +61,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   const handleEditClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setEditContent(entry.content);
+    setEditError('');
     setEditing(true);
     setTimeout(() => textareaRef.current?.focus(), 50);
   }, [entry.content]);
@@ -68,19 +71,27 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
     if (saving) return;
     setSaving(true);
     try {
-      await onEdit(entry.id, editContent);
-      setEditing(false);
+      const result = await onEdit(entry.id, editContent, entry.version);
+      if (result.conflict) {
+        setEditError(t.editConflict);
+        setEditing(false);
+      } else if (result.updated) {
+        setEditing(false);
+      } else {
+        throw new Error('Clipboard entry update failed');
+      }
     } catch (err) {
       console.error('Failed to save edit:', err);
     } finally {
       setSaving(false);
     }
-  }, [entry.id, editContent, onEdit, saving]);
+  }, [entry.id, entry.version, editContent, onEdit, saving, t.editConflict]);
 
   const handleCancel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setEditing(false);
     setEditContent(entry.content);
+    setEditError('');
   }, [entry.content]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -246,6 +257,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
           </div>
         ) : (
           <div className="entry-preview" style={styles.preview}>
+            {editError && <div style={styles.editError}>{editError}</div>}
             {isImage ? (
               <img
                 src={`data:image/png;base64,${entry.content}`}
@@ -398,6 +410,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   preview: {
     overflow: 'hidden',
+  },
+  editError: {
+    marginBottom: '6px',
+    color: 'var(--danger)',
+    fontSize: '11px',
+    lineHeight: 1.4,
   },
   textPreview: {
     margin: 0,

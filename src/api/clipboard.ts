@@ -2,6 +2,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { ClipboardEntry, QueryFilter, Stats } from '../types';
 
+export interface UpdateResult {
+  updated: boolean;
+  conflict: boolean;
+}
+
 /** Fetch clipboard entries with optional filter */
 export async function getEntries(filter?: QueryFilter): Promise<ClipboardEntry[]> {
   return invoke('get_entries', { filter });
@@ -33,8 +38,12 @@ export async function copyToClipboard(id: number, useOriginal = false): Promise<
 }
 
 /** Update a clipboard entry's content */
-export async function updateEntry(id: number, content: string): Promise<boolean> {
-  return invoke('update_entry', { id, content });
+export async function updateEntry(
+  id: number,
+  content: string,
+  expectedVersion?: number,
+): Promise<UpdateResult> {
+  return invoke('update_entry', { id, content, expectedVersion });
 }
 
 /** Archive a clipboard entry */

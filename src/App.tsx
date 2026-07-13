@@ -388,6 +388,30 @@ function AppContent() {
     };
   }, []);
 
+  // Coalesce PostgreSQL LISTEN/NOTIFY events before refreshing the active view.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let refreshTimer: number | undefined;
+    listen<string>('remote-storage-changed', () => {
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer);
+      }
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined;
+        emitAppEvent('storage:changed');
+      }, 150);
+    }).then((handler) => {
+      unlisten = handler;
+    }).catch(console.error);
+
+    return () => {
+      unlisten?.();
+      if (refreshTimer !== undefined) {
+        window.clearTimeout(refreshTimer);
+      }
+    };
+  }, []);
+
   // Keyboard shortcut: focus search with Ctrl+F
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -467,14 +491,10 @@ function AppContent() {
   );
 
   const handleEdit = useCallback(
-    async (id: number, content: string) => {
-      try {
-        await updateEntry(id, content);
-        fetchEntries();
-        fetchStats();
-      } catch (err) {
-        console.error('Failed to update entry:', err);
-      }
+    async (id: number, content: string, expectedVersion: number) => {
+      const result = await updateEntry(id, content, expectedVersion);
+      await Promise.all([fetchEntries(), fetchStats()]);
+      return result;
     },
     [fetchEntries, fetchStats]
   );

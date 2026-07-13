@@ -79,6 +79,7 @@ impl ClipboardMonitor {
                                         original_content: None,
                                         updated_at: None,
                                         archived_at: None,
+                                        version: 1,
                                     };
 
                                     let insert_result = if remote_storage::is_remote_mode(&storage)
@@ -133,6 +134,7 @@ impl ClipboardMonitor {
                             original_content: None,
                             updated_at: None,
                             archived_at: None,
+                            version: 1,
                         };
 
                         let insert_result = if remote_storage::is_remote_mode(&storage) {

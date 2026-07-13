@@ -1,12 +1,14 @@
 use crate::classifier::{classify_text_tags, Category};
-use crate::storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage};
+use crate::storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage, UpdateResult};
 use chrono::{DateTime, Utc};
+use fallible_iterator::FallibleIterator;
 use native_tls::TlsConnector;
 use postgres::types::ToSql;
 use postgres::{Client, NoTls, Row};
 use postgres_native_tls::MakeTlsConnector;
-use r2d2::{Pool, PooledConnection};
+use r2d2::{CustomizeConnection, Pool, PooledConnection};
 use r2d2_postgres::PostgresConnectionManager;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
@@ -14,6 +16,7 @@ use uuid::Uuid;
 
 const DEFAULT_PORT: &str = "5432";
 const DEFAULT_SSL_MODE: &str = "prefer";
+const REMOTE_SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Error)]
 pub enum RemoteStorageError {
@@ -27,6 +30,8 @@ pub enum RemoteStorageError {
     InvalidUrl(String),
     #[error("Remote storage client cache is unavailable")]
     CacheUnavailable,
+    #[error("Remote storage schema version {0} is newer than this app supports")]
+    SchemaTooNew(i64),
     #[error("Remote storage connection pool error: {0}")]
     Pool(#[from] r2d2::Error),
 }
@@ -47,6 +52,15 @@ impl RemoteDbConfig {
 
 type NoTlsManager = PostgresConnectionManager<NoTls>;
 type NativeTlsManager = PostgresConnectionManager<MakeTlsConnector>;
+
+#[derive(Debug)]
+struct RemoteConnectionCustomizer;
+
+impl CustomizeConnection<Client, postgres::Error> for RemoteConnectionCustomizer {
+    fn on_acquire(&self, client: &mut Client) -> Result<(), postgres::Error> {
+        client.batch_execute("SET statement_timeout = '8000ms'; SET lock_timeout = '3000ms';")
+    }
+}
 
 #[derive(Clone)]
 enum RemotePool {
@@ -172,7 +186,7 @@ fn remote_config(storage: &Storage) -> RemoteResult<RemoteDbConfig> {
             port,
             database
         );
-        url.push_str(&format!("?sslmode={}&connect_timeout=5", ssl_mode));
+        url.push_str(&format!("?sslmode={}&connect_timeout=4", ssl_mode));
         return Ok(RemoteDbConfig { url, ssl_mode });
     }
 
@@ -190,21 +204,22 @@ fn remote_config(storage: &Storage) -> RemoteResult<RemoteDbConfig> {
     if !url.contains("connect_timeout=") {
         let separator = if url.contains('?') { '&' } else { '?' };
         url.push(separator);
-        url.push_str("connect_timeout=5");
+        url.push_str("connect_timeout=4");
     }
     Ok(RemoteDbConfig { url, ssl_mode })
 }
 
 fn pool_builder<M>() -> r2d2::Builder<M>
 where
-    M: r2d2::ManageConnection,
+    M: r2d2::ManageConnection<Connection = Client, Error = postgres::Error>,
 {
     Pool::builder()
         .max_size(4)
-        .connection_timeout(Duration::from_secs(6))
+        .connection_timeout(Duration::from_secs(4))
         .idle_timeout(Some(Duration::from_secs(10 * 60)))
         .max_lifetime(Some(Duration::from_secs(30 * 60)))
         .test_on_check_out(true)
+        .connection_customizer(Box::new(RemoteConnectionCustomizer))
 }
 
 fn build_no_tls_pool(config: &RemoteDbConfig) -> RemoteResult<RemotePool> {
@@ -231,6 +246,51 @@ fn build_pool(config: &RemoteDbConfig) -> RemoteResult<RemotePool> {
     }
 
     build_no_tls_pool(config)
+}
+
+fn connect_direct(config: &RemoteDbConfig) -> RemoteResult<Client> {
+    match config.ssl_mode.as_str() {
+        "disable" => Ok(Client::connect(&config.url, NoTls)?),
+        "prefer" => {
+            let connector = MakeTlsConnector::new(TlsConnector::builder().build()?);
+            match Client::connect(&config.url, connector) {
+                Ok(client) => Ok(client),
+                Err(_) => Ok(Client::connect(&config.url, NoTls)?),
+            }
+        }
+        _ => {
+            let connector = MakeTlsConnector::new(TlsConnector::builder().build()?);
+            Ok(Client::connect(&config.url, connector)?)
+        }
+    }
+}
+
+pub fn listen_for_changes(
+    storage: &Storage,
+    stop: &AtomicBool,
+    mut on_change: impl FnMut(&str),
+) -> RemoteResult<()> {
+    let config = remote_config(storage)?;
+    let mut client = connect_direct(&config)?;
+    client.batch_execute("LISTEN superclipboard_changes")?;
+    while !stop.load(Ordering::Relaxed) {
+        let notification = {
+            let mut notifications = client.notifications();
+            let next = notifications.timeout_iter(Duration::from_secs(1)).next()?;
+            next
+        };
+        match notification {
+            Some(notification) => on_change(notification.payload()),
+            None if client.is_closed() => {
+                return Err(RemoteStorageError::InvalidUrl(
+                    "Remote notification connection closed".to_string(),
+                ));
+            }
+            None => {}
+        }
+    }
+
+    Ok(())
 }
 
 fn test_pool_checkout(pool: &RemotePool) -> RemoteResult<()> {
@@ -307,7 +367,29 @@ pub fn test_connection(storage: &Storage) -> RemoteResult<String> {
 
 pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
     with_client(storage, |client| {
-        client.batch_execute(
+        let mut transaction = client.transaction()?;
+        transaction.batch_execute(
+            "
+            SELECT pg_advisory_xact_lock(78242351);
+            CREATE SCHEMA IF NOT EXISTS superclipboard;
+            CREATE TABLE IF NOT EXISTS superclipboard.schema_migrations (
+                version BIGINT PRIMARY KEY,
+                description TEXT NOT NULL,
+                applied_at TEXT NOT NULL DEFAULT now()::text
+            );
+            ",
+        )?;
+        let applied_version: i64 = transaction
+            .query_one(
+                "SELECT COALESCE(MAX(version), 0) FROM superclipboard.schema_migrations",
+                &[],
+            )?
+            .get(0);
+        if applied_version > REMOTE_SCHEMA_VERSION {
+            return Err(RemoteStorageError::SchemaTooNew(applied_version));
+        }
+
+        transaction.batch_execute(
         "
         CREATE SCHEMA IF NOT EXISTS superclipboard;
 
@@ -400,6 +482,20 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
         FOR EACH ROW EXECUTE FUNCTION superclipboard.notify_change('memo');
         ",
         )?;
+
+        if applied_version < 1 {
+            transaction.execute(
+                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+                &[&1_i64, &"initial clipboard and memo schema"],
+            )?;
+        }
+        if applied_version < 2 {
+            transaction.execute(
+                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+                &[&2_i64, &"sync events, notifications, and optimistic record versions"],
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     })
 }
@@ -441,6 +537,7 @@ fn row_to_entry(row: &Row) -> ClipboardEntry {
         original_content: row.get("original_content"),
         updated_at: row.get("updated_at"),
         archived_at: row.get("archived_at"),
+        version: row.get("version"),
     }
 }
 
@@ -455,6 +552,7 @@ fn row_to_memo(row: &Row) -> Memo {
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         archived_at: row.get("archived_at"),
+        version: row.get("version"),
     }
 }
 
@@ -489,7 +587,7 @@ pub fn query_clipboard(
     filter: &QueryFilter,
 ) -> RemoteResult<Vec<ClipboardEntry>> {
     let mut sql = String::from(
-        "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
+        "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
          FROM superclipboard.clipboard_entries WHERE archived_at IS NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -529,7 +627,7 @@ pub fn query_clipboard(
 pub fn get_clipboard_by_id(storage: &Storage, id: i64) -> RemoteResult<Option<ClipboardEntry>> {
     with_client(storage, |client| {
         let row = client.query_opt(
-            "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
+            "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
              FROM superclipboard.clipboard_entries WHERE id = $1 AND deleted_at IS NULL",
             &[&id],
         )?;
@@ -565,14 +663,19 @@ pub fn toggle_clipboard_pin(storage: &Storage, id: i64) -> RemoteResult<bool> {
     })
 }
 
-pub fn update_clipboard(storage: &Storage, id: i64, content: &str) -> RemoteResult<bool> {
+pub fn update_clipboard(
+    storage: &Storage,
+    id: i64,
+    content: &str,
+    expected_version: Option<i64>,
+) -> RemoteResult<UpdateResult> {
     with_client(storage, |client| {
         let current = client.query_opt(
             "SELECT content, original_content FROM superclipboard.clipboard_entries WHERE id = $1",
             &[&id],
         )?;
         let Some(row) = current else {
-            return Ok(false);
+            return Ok(UpdateResult::updated(false));
         };
         let current_content: String = row.get("content");
         let original_content: Option<String> = row.get("original_content");
@@ -586,12 +689,35 @@ pub fn update_clipboard(storage: &Storage, id: i64, content: &str) -> RemoteResu
         let categories = classify_text_tags(content);
         let category = categories.first().cloned().unwrap_or(Category::Text);
         let category_tags = category_tags_json(&categories);
-        Ok(client.execute(
-            "UPDATE superclipboard.clipboard_entries
-             SET category = $1, category_tags = $2, content = $3, preview = $4, original_content = $5, updated_at = $6, version = version + 1
-             WHERE id = $7",
-            &[&category.to_string(), &category_tags, &content, &preview, &original, &now, &id],
-        )? > 0)
+        let rows = if let Some(expected_version) = expected_version {
+            client.execute(
+                "UPDATE superclipboard.clipboard_entries
+                 SET category = $1, category_tags = $2, content = $3, preview = $4, original_content = $5, updated_at = $6, version = version + 1
+                 WHERE id = $7 AND version = $8",
+                &[&category.to_string(), &category_tags, &content, &preview, &original, &now, &id, &expected_version],
+            )?
+        } else {
+            client.execute(
+                "UPDATE superclipboard.clipboard_entries
+                 SET category = $1, category_tags = $2, content = $3, preview = $4, original_content = $5, updated_at = $6, version = version + 1
+                 WHERE id = $7",
+                &[&category.to_string(), &category_tags, &content, &preview, &original, &now, &id],
+            )?
+        };
+        if rows > 0 {
+            return Ok(UpdateResult::updated(true));
+        }
+        let exists = client
+            .query_opt(
+                "SELECT 1 FROM superclipboard.clipboard_entries WHERE id = $1",
+                &[&id],
+            )?
+            .is_some();
+        Ok(if exists {
+            UpdateResult::conflict()
+        } else {
+            UpdateResult::updated(false)
+        })
     })
 }
 
@@ -658,7 +784,7 @@ pub fn query_archived_clipboard(
     filter: &QueryFilter,
 ) -> RemoteResult<Vec<ClipboardEntry>> {
     let mut sql = String::from(
-        "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at
+        "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
          FROM superclipboard.clipboard_entries WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -724,7 +850,7 @@ pub fn purge_old_clipboard_archives(storage: &Storage, days: i64) -> RemoteResul
 
 pub fn query_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
     let mut sql = String::from(
-        "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at
+        "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at, version
          FROM superclipboard.memos WHERE archived_at IS NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -752,7 +878,7 @@ pub fn create_memo(storage: &Storage, title: &str, body: &str, tags: &str) -> Re
         let row = client.query_one(
             "INSERT INTO superclipboard.memos (uuid, title, body, tags, sort_order, created_at, updated_at)
              VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM superclipboard.memos), $5, $5)
-             RETURNING id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at",
+             RETURNING id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at, version",
             &[&uuid, &title, &body, &tags, &now],
         )?;
         Ok(row_to_memo(&row))
@@ -765,13 +891,32 @@ pub fn update_memo(
     title: &str,
     body: &str,
     tags: &str,
-) -> RemoteResult<bool> {
+    expected_version: Option<i64>,
+) -> RemoteResult<UpdateResult> {
     let now = Utc::now().to_rfc3339();
     with_client(storage, |client| {
-        Ok(client.execute(
-            "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, updated_at = $4, version = version + 1 WHERE id = $5",
-            &[&title, &body, &tags, &now, &id],
-        )? > 0)
+        let rows = if let Some(expected_version) = expected_version {
+            client.execute(
+                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, updated_at = $4, version = version + 1 WHERE id = $5 AND version = $6",
+                &[&title, &body, &tags, &now, &id, &expected_version],
+            )?
+        } else {
+            client.execute(
+                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, updated_at = $4, version = version + 1 WHERE id = $5",
+                &[&title, &body, &tags, &now, &id],
+            )?
+        };
+        if rows > 0 {
+            return Ok(UpdateResult::updated(true));
+        }
+        let exists = client
+            .query_opt("SELECT 1 FROM superclipboard.memos WHERE id = $1", &[&id])?
+            .is_some();
+        Ok(if exists {
+            UpdateResult::conflict()
+        } else {
+            UpdateResult::updated(false)
+        })
     })
 }
 
@@ -829,7 +974,7 @@ pub fn reorder_memos(storage: &Storage, orders: &[(i64, i64)]) -> RemoteResult<(
 
 pub fn query_archived_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
     let mut sql = String::from(
-        "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at
+        "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at, version
          FROM superclipboard.memos WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -947,6 +1092,28 @@ mod tests {
         let memos = query_memos(&storage, &MemoFilter::default()).expect("query remote memos");
         assert!(memos.iter().any(|item| item.id == memo.id));
 
+        let conflict = update_memo(
+            &storage,
+            memo.id,
+            "Codex remote smoke",
+            "stale update",
+            "smoke",
+            Some(memo.version + 1),
+        )
+        .expect("detect remote memo conflict");
+        assert!(conflict.conflict);
+
+        let updated = update_memo(
+            &storage,
+            memo.id,
+            "Codex remote smoke",
+            "updated remote mode test body",
+            "smoke",
+            Some(memo.version),
+        )
+        .expect("update remote memo");
+        assert!(updated.updated);
+
         assert!(delete_memo(&storage, memo.id, false).expect("delete remote memo"));
 
         let entry = ClipboardEntry {
@@ -962,6 +1129,7 @@ mod tests {
             original_content: None,
             updated_at: None,
             archived_at: None,
+            version: 1,
         };
         assert!(insert_clipboard(&storage, &entry).expect("insert remote clipboard"));
 

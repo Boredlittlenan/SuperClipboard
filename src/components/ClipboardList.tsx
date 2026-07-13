@@ -1,13 +1,14 @@
 import type { ClipboardEntry } from '../types';
 import ClipboardItem from './ClipboardItem';
 import { useI18n } from '../i18n';
+import type { UpdateResult } from '../api/clipboard';
 
 interface Props {
   entries: ClipboardEntry[];
   onCopy: (id: number, useOriginal?: boolean) => void;
   onDelete: (id: number) => void;
   onTogglePin: (id: number) => void;
-  onEdit: (id: number, content: string) => Promise<void>;
+  onEdit: (id: number, content: string, expectedVersion: number) => Promise<UpdateResult>;
   rawPreview: boolean;
   loading: boolean;
   isArchive?: boolean;
