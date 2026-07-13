@@ -12,7 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- The next release is `3.2.0`; download the currently published installer from the release page above.
+- `SuperClipboard_3.2.0_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_3.2.0_x64_en-US.msi`: MSI package
 
 ## Highlights
 
