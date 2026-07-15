@@ -13,7 +13,7 @@ use thiserror::Error;
 const CLIPBOARD_QUERY_LIMIT: i64 = 50;
 const MEMO_QUERY_LIMIT: i64 = 100;
 const MAX_QUERY_LIMIT: i64 = 500;
-const SCHEMA_VERSION: &str = "5";
+const SCHEMA_VERSION: &str = "6";
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -465,6 +465,34 @@ impl Storage {
             }
         }
 
+        if applied_version < 6 {
+            let memo_rows = {
+                let mut statement =
+                    conn.prepare("SELECT id, title, body, tags, auto_tags FROM memos")?;
+                let rows = statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                        ))
+                    })?
+                    .collect::<SqlResult<Vec<_>>>()?;
+                rows
+            };
+            for (id, title, body, tags, auto_tags) in memo_rows {
+                let tags = memo_tags::manual_only(&tags);
+                let auto_tags = serde_json::from_str::<Vec<String>>(&auto_tags).unwrap_or_default();
+                let search_text = memo_search_text(&title, &body, &tags, &auto_tags);
+                conn.execute(
+                    "UPDATE memos SET tags = ?1, search_text = ?2 WHERE id = ?3",
+                    params![tags, search_text, id],
+                )?;
+            }
+        }
+
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -661,7 +689,8 @@ impl Storage {
             } else {
                 memo.auto_tags.clone()
             };
-            let search_text = memo_search_text(&memo.title, &memo.body, &memo.tags, &auto_tags);
+            let tags = memo_tags::manual_only(&memo.tags);
+            let search_text = memo_search_text(&memo.title, &memo.body, &tags, &auto_tags);
             tx.execute(
                 "INSERT INTO memos
                  (id, title, body, tags, auto_tags, search_text, pinned, sort_order, created_at, updated_at, archived_at)
@@ -670,7 +699,7 @@ impl Storage {
                     memo.id,
                     memo.title,
                     memo.body,
-                    memo.tags,
+                    tags,
                     serde_json::to_string(&auto_tags)?,
                     search_text,
                     memo.pinned as i32,
@@ -972,7 +1001,8 @@ impl Storage {
         auto_tags: &[String],
     ) -> Result<Memo, StorageError> {
         let conn = self.conn.lock().unwrap();
-        let search_text = memo_search_text(title, body, tags, auto_tags);
+        let tags = memo_tags::manual_only(tags);
+        let search_text = memo_search_text(title, body, &tags, auto_tags);
         let auto_tags = serde_json::to_string(auto_tags)?;
         conn.execute(
             "INSERT INTO memos (title, body, tags, auto_tags, search_text, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM memos))",
@@ -997,7 +1027,8 @@ impl Storage {
         auto_tags: &[String],
     ) -> Result<bool, StorageError> {
         let conn = self.conn.lock().unwrap();
-        let search_text = memo_search_text(title, body, tags, auto_tags);
+        let tags = memo_tags::manual_only(tags);
+        let search_text = memo_search_text(title, body, &tags, auto_tags);
         let auto_tags = serde_json::to_string(auto_tags)?;
         let rows = conn.execute(
             "UPDATE memos SET title = ?1, body = ?2, tags = ?3, auto_tags = ?4, search_text = ?5, updated_at = datetime('now') WHERE id = ?6",
@@ -1322,6 +1353,42 @@ mod tests {
         let migrated = Storage::new(&db_path).unwrap();
         let memos = migrated.get_memos(&MemoFilter::default()).unwrap();
         assert_eq!(memos.len(), 1);
+        assert_eq!(memos[0].auto_tags, vec!["email".to_string()]);
+        assert_eq!(
+            migrated.get_setting("schema_version").unwrap().as_deref(),
+            Some(SCHEMA_VERSION),
+        );
+
+        drop(migrated);
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn schema_migration_separates_localized_auto_tags_from_manual_tags() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let memo = storage
+            .create_memo(
+                "Contact",
+                "user@example.com",
+                "project",
+                &["email".to_string()],
+            )
+            .unwrap();
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE memos SET tags = ?1 WHERE id = ?2",
+                params!["project,EMAIL,邮箱", memo.id],
+            )
+            .unwrap();
+        }
+        storage.set_setting("schema_version", "5").unwrap();
+        drop(storage);
+
+        let migrated = Storage::new(&db_path).unwrap();
+        let memos = migrated.get_memos(&MemoFilter::default()).unwrap();
+        assert_eq!(memos[0].tags, "project");
         assert_eq!(memos[0].auto_tags, vec!["email".to_string()]);
         assert_eq!(
             migrated.get_setting("schema_version").unwrap().as_deref(),

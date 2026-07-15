@@ -1,11 +1,17 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { ClipboardEntry, QueryFilter, Stats } from '../types';
+import { createEntryContentLoader } from './entryContentLoader';
 
 export interface UpdateResult {
   updated: boolean;
   conflict: boolean;
 }
+
+const loadEntryContent = createEntryContentLoader(
+  (id) => invoke<string | null>('get_entry_content', { id }),
+  1,
+);
 
 /** Fetch clipboard entries with optional filter */
 export async function getEntries(filter?: QueryFilter): Promise<ClipboardEntry[]> {
@@ -14,7 +20,7 @@ export async function getEntries(filter?: QueryFilter): Promise<ClipboardEntry[]
 
 /** Fetch deferred clipboard content, currently used for remote image previews. */
 export async function getEntryContent(id: number): Promise<string | null> {
-  return invoke('get_entry_content', { id });
+  return loadEntryContent(id);
 }
 
 /** Delete a clipboard entry by ID (optionally archive instead of hard delete) */

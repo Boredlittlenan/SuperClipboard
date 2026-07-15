@@ -1,5 +1,30 @@
 use crate::classifier::{self, Category};
 
+const GENERATED_TAG_ALIASES: &[&str] = &[
+    "image", "图片", "email", "邮箱", "path", "路径", "link", "链接", "code", "代码",
+];
+
+fn is_generated_label(tag: &str) -> bool {
+    GENERATED_TAG_ALIASES
+        .iter()
+        .any(|alias| tag.eq_ignore_ascii_case(alias) || tag == *alias)
+}
+
+pub fn manual_only(tags: &str) -> String {
+    let mut result = Vec::new();
+    for tag in tags.split(',').map(str::trim).filter(|tag| !tag.is_empty()) {
+        if is_generated_label(tag)
+            || result
+                .iter()
+                .any(|existing: &&str| existing.eq_ignore_ascii_case(tag))
+        {
+            continue;
+        }
+        result.push(tag);
+    }
+    result.join(",")
+}
+
 fn body_has_image(body: &str) -> bool {
     body.contains("![image](data:image/")
         || body.contains("![image](http://")
@@ -61,5 +86,13 @@ mod tests {
     fn keeps_image_signal() {
         let tags = infer("", "note\n![image](data:image/png;base64,abc)");
         assert_eq!(tags.first().map(String::as_str), Some("image"));
+    }
+
+    #[test]
+    fn separates_manual_tags_from_localized_auto_tag_labels() {
+        assert_eq!(
+            manual_only("project,EMAIL,邮箱,Link,链接,CODE,代码,Project"),
+            "project"
+        );
     }
 }

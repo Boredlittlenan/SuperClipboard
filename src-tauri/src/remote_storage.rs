@@ -4,13 +4,14 @@ use crate::search_index::{clipboard_search_text, memo_search_text};
 use crate::storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage, UpdateResult};
 use chrono::{DateTime, Utc};
 use fallible_iterator::FallibleIterator;
+use log::warn;
 use native_tls::TlsConnector;
 use postgres::types::ToSql;
 use postgres::{Client, NoTls, Row};
 use postgres_native_tls::MakeTlsConnector;
 use r2d2::{CustomizeConnection, Pool, PooledConnection};
 use r2d2_postgres::PostgresConnectionManager;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
@@ -18,7 +19,7 @@ use uuid::Uuid;
 
 const DEFAULT_PORT: &str = "5432";
 const DEFAULT_SSL_MODE: &str = "prefer";
-const REMOTE_SCHEMA_VERSION: i64 = 4;
+const REMOTE_SCHEMA_VERSION: i64 = 5;
 const REMOTE_SCHEMA_CACHE_PREFIX: &str = "remote_schema_version_";
 const REMOTE_SEARCH_BACKFILL_SQL: &str = r#"
     UPDATE superclipboard.clipboard_entries
@@ -103,10 +104,19 @@ enum RemotePool {
 
 struct CachedPool {
     key: String,
+    generation: u64,
+    pool: RemotePool,
+}
+
+#[derive(Clone)]
+struct PoolSnapshot {
+    key: String,
+    generation: u64,
     pool: RemotePool,
 }
 
 static POOL_CACHE: OnceLock<Mutex<Option<CachedPool>>> = OnceLock::new();
+static NEXT_POOL_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub struct RemoteStats {
@@ -230,7 +240,10 @@ fn remote_config(storage: &Storage) -> RemoteResult<RemoteDbConfig> {
             port,
             database
         );
-        url.push_str(&format!("?sslmode={}&connect_timeout=4", ssl_mode));
+        url.push_str(&format!(
+            "?sslmode={}&connect_timeout=4&keepalives_idle=15",
+            ssl_mode
+        ));
         return Ok(RemoteDbConfig { url, ssl_mode });
     }
 
@@ -250,6 +263,11 @@ fn remote_config(storage: &Storage) -> RemoteResult<RemoteDbConfig> {
         url.push(separator);
         url.push_str("connect_timeout=4");
     }
+    if !url.contains("keepalives_idle=") {
+        let separator = if url.contains('?') { '&' } else { '?' };
+        url.push(separator);
+        url.push_str("keepalives_idle=15");
+    }
     Ok(RemoteDbConfig { url, ssl_mode })
 }
 
@@ -259,9 +277,10 @@ where
 {
     Pool::builder()
         .max_size(4)
-        .connection_timeout(Duration::from_secs(4))
-        .idle_timeout(Some(Duration::from_secs(10 * 60)))
-        .max_lifetime(Some(Duration::from_secs(30 * 60)))
+        .min_idle(Some(0))
+        .connection_timeout(Duration::from_secs(3))
+        .idle_timeout(Some(Duration::from_secs(5 * 60)))
+        .max_lifetime(Some(Duration::from_secs(15 * 60)))
         .test_on_check_out(true)
         .connection_customizer(Box::new(RemoteConnectionCustomizer))
 }
@@ -349,7 +368,7 @@ fn test_pool_checkout(pool: &RemotePool) -> RemoteResult<()> {
     Ok(())
 }
 
-fn cached_pool(config: &RemoteDbConfig) -> RemoteResult<RemotePool> {
+fn cached_pool(config: &RemoteDbConfig) -> RemoteResult<PoolSnapshot> {
     let key = config.cache_key();
     let cache = POOL_CACHE.get_or_init(|| Mutex::new(None));
     let mut guard = cache
@@ -359,14 +378,35 @@ fn cached_pool(config: &RemoteDbConfig) -> RemoteResult<RemotePool> {
     if !matches!(guard.as_ref(), Some(cached) if cached.key == key) {
         *guard = Some(CachedPool {
             key,
+            generation: NEXT_POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
             pool: build_pool(config)?,
         });
     }
 
     guard
         .as_ref()
-        .map(|cached| cached.pool.clone())
+        .map(|cached| PoolSnapshot {
+            key: cached.key.clone(),
+            generation: cached.generation,
+            pool: cached.pool.clone(),
+        })
         .ok_or(RemoteStorageError::CacheUnavailable)
+}
+
+fn invalidate_pool_snapshot(snapshot: &PoolSnapshot) {
+    let Some(cache) = POOL_CACHE.get() else {
+        return;
+    };
+    let Ok(mut guard) = cache.lock() else {
+        return;
+    };
+    if matches!(
+        guard.as_ref(),
+        Some(cached)
+            if cached.key == snapshot.key && cached.generation == snapshot.generation
+    ) {
+        *guard = None;
+    }
 }
 
 pub fn invalidate_pool() {
@@ -377,18 +417,33 @@ pub fn invalidate_pool() {
     }
 }
 
+enum PooledActionError {
+    Checkout(r2d2::Error),
+    Operation(RemoteStorageError),
+}
+
+fn pool_state(pool: &RemotePool) -> (u32, u32) {
+    let state = match pool {
+        RemotePool::NoTls(pool) => pool.state(),
+        RemotePool::NativeTls(pool) => pool.state(),
+    };
+    (state.connections, state.idle_connections)
+}
+
 fn with_pooled_connection<T>(
     pool: &RemotePool,
     action: &mut impl FnMut(&mut Client) -> RemoteResult<T>,
-) -> RemoteResult<T> {
+) -> Result<T, PooledActionError> {
     match pool {
         RemotePool::NoTls(pool) => {
-            let mut client: PooledConnection<NoTlsManager> = pool.get()?;
-            action(&mut client)
+            let mut client: PooledConnection<NoTlsManager> =
+                pool.get().map_err(PooledActionError::Checkout)?;
+            action(&mut client).map_err(PooledActionError::Operation)
         }
         RemotePool::NativeTls(pool) => {
-            let mut client: PooledConnection<NativeTlsManager> = pool.get()?;
-            action(&mut client)
+            let mut client: PooledConnection<NativeTlsManager> =
+                pool.get().map_err(PooledActionError::Checkout)?;
+            action(&mut client).map_err(PooledActionError::Operation)
         }
     }
 }
@@ -398,8 +453,31 @@ fn with_client<T>(
     mut action: impl FnMut(&mut Client) -> RemoteResult<T>,
 ) -> RemoteResult<T> {
     let config = remote_config(storage)?;
-    let pool = cached_pool(&config)?;
-    with_pooled_connection(&pool, &mut action)
+    let snapshot = cached_pool(&config)?;
+    match with_pooled_connection(&snapshot.pool, &mut action) {
+        Ok(value) => Ok(value),
+        Err(PooledActionError::Operation(error)) => Err(error),
+        Err(PooledActionError::Checkout(error)) => {
+            let (connections, idle_connections) = pool_state(&snapshot.pool);
+            warn!(
+                "Remote pool checkout failed for generation {} (connections: {}, idle: {}); rebuilding once: {}",
+                snapshot.generation, connections, idle_connections, error
+            );
+            invalidate_pool_snapshot(&snapshot);
+
+            let current_config = remote_config(storage)?;
+            if current_config.cache_key() != snapshot.key {
+                return Err(RemoteStorageError::Pool(error));
+            }
+
+            let retry_snapshot = cached_pool(&current_config)?;
+            match with_pooled_connection(&retry_snapshot.pool, &mut action) {
+                Ok(value) => Ok(value),
+                Err(PooledActionError::Operation(error)) => Err(error),
+                Err(PooledActionError::Checkout(error)) => Err(RemoteStorageError::Pool(error)),
+            }
+        }
+    }
 }
 
 pub fn test_connection(storage: &Storage) -> RemoteResult<String> {
@@ -581,6 +659,30 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
             transaction.execute(
                 "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
                 &[&4_i64, &"search text excludes embedded image data"],
+            )?;
+        }
+        if applied_version < 5 {
+            let rows = transaction.query(
+                "SELECT id, title, body, tags, auto_tags FROM superclipboard.memos",
+                &[],
+            )?;
+            for row in rows {
+                let id: i64 = row.get("id");
+                let title: String = row.get("title");
+                let body: String = row.get("body");
+                let tags = memo_tags::manual_only(row.get::<_, String>("tags").as_str());
+                let auto_tags =
+                    serde_json::from_str::<Vec<String>>(row.get::<_, String>("auto_tags").as_str())
+                        .unwrap_or_default();
+                let search_text = memo_search_text(&title, &body, &tags, &auto_tags);
+                transaction.execute(
+                    "UPDATE superclipboard.memos SET tags = $1, search_text = $2 WHERE id = $3",
+                    &[&tags, &search_text, &id],
+                )?;
+            }
+            transaction.execute(
+                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+                &[&5_i64, &"separate manual memo tags from localized auto tags"],
             )?;
         }
         transaction.commit()?;
@@ -999,7 +1101,8 @@ pub fn create_memo(
 ) -> RemoteResult<Memo> {
     let uuid = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let search_text = memo_search_text(title, body, tags, auto_tags);
+    let tags = memo_tags::manual_only(tags);
+    let search_text = memo_search_text(title, body, &tags, auto_tags);
     let auto_tags = serde_json::to_string(auto_tags).unwrap_or_else(|_| "[]".to_string());
     with_client(storage, |client| {
         let row = client.query_one(
@@ -1022,7 +1125,8 @@ pub fn update_memo(
     expected_version: Option<i64>,
 ) -> RemoteResult<UpdateResult> {
     let now = Utc::now().to_rfc3339();
-    let search_text = memo_search_text(title, body, tags, auto_tags);
+    let tags = memo_tags::manual_only(tags);
+    let search_text = memo_search_text(title, body, &tags, auto_tags);
     let auto_tags = serde_json::to_string(auto_tags).unwrap_or_else(|_| "[]".to_string());
     with_client(storage, |client| {
         let rows = if let Some(expected_version) = expected_version {
@@ -1229,11 +1333,12 @@ mod tests {
             &storage,
             &memo_token,
             &format!("remote mode test body\n![image](data:image/png;base64,{memo_payload})"),
-            "smoke",
+            "smoke,EMAIL,邮箱",
             &["image".to_string()],
         )
         .expect("create remote memo");
         assert!(memo.id > 0);
+        assert_eq!(memo.tags, "smoke");
 
         let memos = query_memos(
             &storage,

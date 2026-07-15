@@ -17,6 +17,12 @@ import { useI18n } from '../i18n';
 import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
 import { useMemoReorder } from '../hooks/useMemoReorder';
 import { usePaginatedMemos } from '../hooks/usePaginatedMemos';
+import {
+  manualMemoTags,
+  visibleMemoTags,
+  type MemoTagLabels,
+} from '../memoTagPresentation';
+import { orderMemosForDisplay } from '../memoListOrdering';
 import { formatRelativeTime, getCategoryColor } from '../utils';
 import MemoRichEditor from './MemoRichEditor';
 import {
@@ -28,16 +34,6 @@ import {
 const MEMO_COLLAPSE_TEXT_LIMIT = 300;
 const MEMO_COLLAPSE_LINE_LIMIT = 5;
 
-type MemoTagLabels = Record<MemoAutoTagType, string>;
-
-const AUTO_TAG_ALIASES: Record<MemoAutoTagType, string[]> = {
-  image: ['image', '图片'],
-  email: ['email', '邮箱'],
-  path: ['path', '路径'],
-  link: ['link', '链接'],
-  code: ['code', '代码'],
-};
-
 const AUTO_TAG_CATEGORY: Record<MemoAutoTagType, Parameters<typeof getCategoryColor>[0]> = {
   image: 'image',
   email: 'email',
@@ -45,10 +41,6 @@ const AUTO_TAG_CATEGORY: Record<MemoAutoTagType, Parameters<typeof getCategoryCo
   link: 'link',
   code: 'code',
 };
-
-function normalizeTag(tag: string): string {
-  return tag.trim().toLocaleLowerCase();
-}
 
 function getMemoTagLabels(t: ReturnType<typeof useI18n>['t']): MemoTagLabels {
   return {
@@ -58,30 +50,6 @@ function getMemoTagLabels(t: ReturnType<typeof useI18n>['t']): MemoTagLabels {
     link: t.tabLink,
     code: t.tabCode,
   };
-}
-
-function getAutoMemoTagType(tag: string, detectedTypes: MemoAutoTagType[], labels: MemoTagLabels): MemoAutoTagType | null {
-  const key = normalizeTag(tag);
-  for (const type of detectedTypes) {
-    const knownLabels = [...AUTO_TAG_ALIASES[type], labels[type]];
-    if (knownLabels.some(label => normalizeTag(label) === key)) return type;
-  }
-  return null;
-}
-
-function isKnownAutoTagLabel(tag: string, labels: MemoTagLabels): boolean {
-  const key = normalizeTag(tag);
-  return (Object.keys(AUTO_TAG_ALIASES) as MemoAutoTagType[]).some((type) => {
-    const knownLabels = [...AUTO_TAG_ALIASES[type], labels[type]];
-    return knownLabels.some(label => normalizeTag(label) === key);
-  });
-}
-
-function filterStaleAutoTags(tags: string, detectedTypes: MemoAutoTagType[], labels: MemoTagLabels): string[] {
-  return splitTags(tags).filter((tag) => {
-    if (getAutoMemoTagType(tag, detectedTypes, labels)) return true;
-    return !isKnownAutoTagLabel(tag, labels);
-  });
 }
 
 function isMemoBodyCollapsible(body: string): boolean {
@@ -102,29 +70,6 @@ function getMemoEditorHeight(body: string): number {
   return 120;
 }
 
-function splitTags(tags: string): string[] {
-  return tags
-    .split(',')
-    .map(tag => tag.trim())
-    .filter(Boolean);
-}
-
-function mergeTags(manualTags: string, autoTags: string[]): string {
-  const seen = new Set<string>();
-  const merged: string[] = [];
-  for (const tag of [...splitTags(manualTags), ...autoTags]) {
-    const key = tag.toLocaleLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(tag);
-  }
-  return merged.join(',');
-}
-
-function inferMemoTags(types: MemoAutoTagType[], labels: MemoTagLabels): string[] {
-  return types.map(type => labels[type]);
-}
-
 interface Props {
   searchQuery: string;
   archiveEnabled?: boolean;
@@ -142,6 +87,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   const [savingMemo, setSavingMemo] = useState(false);
   const [expandedMemoIds, setExpandedMemoIds] = useState<Set<number>>(() => new Set());
   const [editConflictMessage, setEditConflictMessage] = useState('');
+  const [newMemoId, setNewMemoId] = useState<number | null>(null);
 
   const editingItemRef = useRef<HTMLDivElement>(null);
   const editingIdRef = useRef<number | null>(null);
@@ -185,13 +131,14 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     editingVersionRef.current = memo.version;
     setEditConflictMessage('');
     setEditingId(memo.id);
-    setEditDraft({ title: memo.title, body: memo.body, tags: memo.tags });
+    setEditDraft({ title: memo.title, body: memo.body, tags: manualMemoTags(memo.tags) });
   }, []);
 
   const stopEditing = useCallback(() => {
     editingIdRef.current = null;
     editingVersionRef.current = 1;
     newMemoIdRef.current = null;
+    setNewMemoId(null);
     setEditingId(null);
     setEditDraft(null);
     setSavingMemo(false);
@@ -208,12 +155,8 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     setSavingMemo(true);
     try {
       const autoTagTypes = await inferMemoTagTypes(editDraft.title, editDraft.body);
-      const memoTagLabels = getMemoTagLabels(t);
-      const finalTags = mergeTags(
-        filterStaleAutoTags(editDraft.tags, autoTagTypes, memoTagLabels).join(','),
-        inferMemoTags(autoTagTypes, memoTagLabels)
-      );
-      const hasContent = editDraft.title.trim() || editDraft.body.trim() || editDraft.tags.trim();
+      const finalTags = manualMemoTags(editDraft.tags);
+      const hasContent = editDraft.title.trim() || editDraft.body.trim() || finalTags.trim();
       if (!hasContent && newMemoIdRef.current === id) {
         await deleteMemo(id);
         setMemos(prev => prev.filter(m => m.id !== id));
@@ -307,6 +250,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       setMemos(prev => [newMemo, ...prev]);
       void refreshTotalCount();
       newMemoIdRef.current = newMemo.id;
+      setNewMemoId(newMemo.id);
       editingIdRef.current = newMemo.id;
       startEditing(newMemo);
     } catch (err) {
@@ -358,8 +302,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   } = useMemoReorder(memos, setMemos, canDrag, fetchMemos);
 
   // ─── Render helpers ───────────────────────────────────────
-  const pinnedMemos = memos.filter(m => m.pinned);
-  const unpinnedMemos = memos.filter(m => !m.pinned);
+  const displayedMemos = orderMemosForDisplay(memos, newMemoId);
 
   const renderMemoItem = (memo: Memo, draggable: boolean) => {
     const isEditing = editingId === memo.id;
@@ -370,7 +313,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     const canExpand = !isEditing && isMemoBodyCollapsible(memo.body);
     const memoTagLabels = getMemoTagLabels(t);
     const detectedAutoTagTypes = memo.auto_tags ?? [];
-    const visibleTags = filterStaleAutoTags(memo.tags, detectedAutoTagTypes, memoTagLabels);
+    const displayedTags = visibleMemoTags(memo.tags, detectedAutoTagTypes, memoTagLabels);
 
     return (
       <div
@@ -544,15 +487,10 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                   {memo.pinned && <Pin size={12} style={styles.pinBadge} />}
                 </div>
                 <div style={styles.timestampRight}>
-                  {visibleTags.length > 0 && (
+                  {displayedTags.length > 0 && (
                     <div style={styles.tags}>
-                      {visibleTags.map((tag, i) => {
-                        const autoTagType = getAutoMemoTagType(
-                          tag,
-                          detectedAutoTagTypes,
-                          memoTagLabels
-                        );
-                        const color = autoTagType ? getCategoryColor(AUTO_TAG_CATEGORY[autoTagType]) : null;
+                      {displayedTags.map((tag, i) => {
+                        const color = tag.type ? getCategoryColor(AUTO_TAG_CATEGORY[tag.type]) : null;
                         return (
                           <span key={i} style={{
                             ...styles.tag,
@@ -560,7 +498,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                               borderColor: `${color}55`,
                               color,
                             } : styles.manualTag),
-                          }}>{tag.trim()}</span>
+                          }}>{tag.label}</span>
                         );
                       })}
                     </div>
@@ -613,8 +551,10 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
           {editConflictMessage && <div style={styles.editConflict}>{editConflictMessage}</div>}
         </div>
       <div ref={listRef} style={styles.list}>
-        {pinnedMemos.map(m => renderMemoItem(m, false))}
-        {unpinnedMemos.map(m => renderMemoItem(m, true))}
+        {displayedMemos.map(m => renderMemoItem(
+          m,
+          !m.pinned && m.id !== newMemoId,
+        ))}
         <div ref={loadMoreRef} style={styles.loadMore} aria-hidden={!loadingMore}>
           {loadingMore && <div style={styles.loadMoreSpinner} />}
         </div>
@@ -880,7 +820,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     textTransform: 'uppercase' as const,
     letterSpacing: '0.5px',
-    border: '1px solid transparent',
+    borderWidth: '1px',
+    borderStyle: 'solid',
+    borderColor: 'transparent',
     background: 'transparent',
     lineHeight: 1,
   },
