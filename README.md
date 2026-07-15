@@ -8,6 +8,17 @@ Chinese display name: `超级剪贴板`.
 
 [Website](https://boredlittlenan.github.io/SuperClipboard/) · [Latest Release](https://github.com/Boredlittlenan/SuperClipboard/releases/latest) · [Version Notes](VERSIONS.md) · [Changelog](CHANGELOG.md)
 
+## Built with OpenAI Codex and GPT-5.6
+
+SuperClipboard 3.x is a human-directed rebuild developed in close collaboration with **OpenAI Codex and GPT-5.6**. An earlier C# prototype established the original idea, but limited experience and development time kept it from reaching the intended quality. Codex made it possible to revisit that idea with a more efficient Rust and Tauri architecture, even though Rust was new to the creator when the rebuild began.
+
+- **Architecture and planning:** Codex and GPT-5.6 helped translate product requirements into the Rust/Tauri backend, React frontend, unified local/external storage boundary, and versioned database migration design.
+- **Implementation:** They assisted with Rust, React, TypeScript, SQLite, and PostgreSQL code, including clipboard monitoring, memo editing, classification, search indexing, connection management, and bilingual UI work.
+- **Debugging and optimization:** They were used to investigate Windows window and tray behavior, WebView rendering differences, remote-storage latency, concurrency issues, and large Base64 image handling.
+- **Quality and delivery:** They helped create regression tests, run lint/build/Clippy checks, maintain documentation, prepare installers, and verify GitHub Releases and the project website.
+
+The product vision, requirements, interface decisions, hands-on testing, and final approval remained human-led throughout the project. Codex and GPT-5.6 were development collaborators, not runtime dependencies: SuperClipboard does not call OpenAI services or send clipboard and memo content to OpenAI while the application is running.
+
 ## Download
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
@@ -18,7 +29,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 ## Highlights
 
 - Smart categorization for text, links, images, code, emails, and file paths
-- Local SQLite history with SHA-256 deduplication and indexed search
+- Local SQLite history with SHA-256 deduplication and a compact search index that excludes image Base64 payloads
 - Pin, edit, copy, delete, and restore clipboard entries
 - Optional memo module with title, rich body, pasted image preview, tags, pinning, search, and drag sorting
 - Optional recycle bin with separate Clipboard and Memos views and 30-day cleanup
@@ -26,6 +37,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Theme mode switcher with System / Light / Dark and independent accent colors
 - Storage settings with Local / External PostgreSQL modes, fast switching among saved connections, and `.scbackup` local backup/restore tools
 - External PostgreSQL operations use a bounded connection pool and background blocking tasks to keep remote search, counts, and list switching responsive
+- Local and external searches use the same readable-text index, so memo text and image metadata remain searchable without scanning embedded image data
 - Experimental features panel for optional Modern UI, clipboard multi-tag display, and color-strip hiding
 - First launch follows the system language, with Chinese and English UI available
 - Built-in update check through GitHub Releases with release notes preview
@@ -136,6 +148,7 @@ src-tauri/
     classifier.rs       # Content type classification
     storage.rs          # SQLite storage layer
     remote_storage.rs   # External PostgreSQL storage layer
+    search_index.rs     # Readable search text extraction without image Base64
     storage_backend.rs  # Unified local / external storage dispatch
     commands/           # Clipboard and memo Tauri commands
     memo_tags.rs        # Persisted memo auto-tag inference

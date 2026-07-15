@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useI18n } from '../i18n';
 
 export interface ConfirmDialogState {
@@ -21,7 +22,7 @@ export default function ConfirmDialog({ dialog, onClose }: Props) {
     onClose();
   };
 
-  return (
+  const content = (
     <div className="dialog-backdrop" onMouseDown={() => resolve(false)}>
       <div className="confirm-dialog" onMouseDown={(e) => e.stopPropagation()}>
         <div className="confirm-dialog-title">{dialog.title}</div>
@@ -40,4 +41,7 @@ export default function ConfirmDialog({ dialog, onClose }: Props) {
       </div>
     </div>
   );
+
+  const portalTarget = document.querySelector<HTMLElement>('.app-root');
+  return portalTarget ? createPortal(content, portalTarget) : content;
 }

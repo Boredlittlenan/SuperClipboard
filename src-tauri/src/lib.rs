@@ -5,6 +5,7 @@ mod clipboard;
 mod commands;
 mod memo_tags;
 mod remote_storage;
+mod search_index;
 mod storage;
 mod storage_backend;
 mod update;
@@ -882,6 +883,17 @@ pub fn run() {
             let storage = Arc::new(Storage::new(&db_path).expect("Failed to initialize storage"));
             if is_new_database {
                 initialize_first_run_defaults(storage.as_ref());
+            }
+
+            // Remote writes can begin as soon as clipboard monitoring starts, so schema
+            // migrations must finish before the monitor and notification listener run.
+            if remote_storage::is_remote_mode(storage.as_ref())
+                && !remote_storage::is_schema_current(storage.as_ref())
+            {
+                info!("Checking remote storage schema before startup");
+                if let Err(error) = remote_storage::ensure_schema(storage.as_ref()) {
+                    warn!("Failed to initialize remote storage schema: {error:?}");
+                }
             }
 
             // Start clipboard monitor

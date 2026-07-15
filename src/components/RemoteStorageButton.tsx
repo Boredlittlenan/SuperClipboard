@@ -716,14 +716,14 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
               </div>
             </>
           )}
-
-          {deleteProfileDialog && (
-            <ConfirmDialog
-              dialog={deleteProfileDialog}
-              onClose={() => setDeleteProfileTarget(null)}
-            />
-          )}
         </FloatingMenuPanel>
+      )}
+
+      {deleteProfileDialog && (
+        <ConfirmDialog
+          dialog={deleteProfileDialog}
+          onClose={() => setDeleteProfileTarget(null)}
+        />
       )}
     </div>
   );

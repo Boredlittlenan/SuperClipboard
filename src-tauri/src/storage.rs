@@ -1,5 +1,6 @@
 use crate::classifier::{classify_text_tags, Category};
 use crate::memo_tags;
+use crate::search_index::{clipboard_search_text, memo_search_text};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use thiserror::Error;
 const CLIPBOARD_QUERY_LIMIT: i64 = 50;
 const MEMO_QUERY_LIMIT: i64 = 100;
 const MAX_QUERY_LIMIT: i64 = 500;
-const SCHEMA_VERSION: &str = "4";
+const SCHEMA_VERSION: &str = "5";
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -297,6 +298,7 @@ impl Storage {
                 content_type TEXT   NOT NULL,
                 content     TEXT    NOT NULL,
                 preview     TEXT    NOT NULL DEFAULT '',
+                search_text TEXT    NOT NULL DEFAULT '',
                 hash        TEXT    NOT NULL UNIQUE,
                 pinned      INTEGER NOT NULL DEFAULT 0,
                 created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -319,6 +321,7 @@ impl Storage {
                 body       TEXT    NOT NULL DEFAULT '',
                 tags       TEXT    NOT NULL DEFAULT '',
                 auto_tags  TEXT    NOT NULL DEFAULT '[]',
+                search_text TEXT   NOT NULL DEFAULT '',
                 pinned     INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT    NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -360,6 +363,11 @@ impl Storage {
         let _ = conn.execute_batch(
             "ALTER TABLE clipboard_entries ADD COLUMN category_tags TEXT NOT NULL DEFAULT '[]'",
         );
+        let _ = conn.execute_batch(
+            "ALTER TABLE clipboard_entries ADD COLUMN search_text TEXT NOT NULL DEFAULT ''",
+        );
+        let _ =
+            conn.execute_batch("ALTER TABLE memos ADD COLUMN search_text TEXT NOT NULL DEFAULT ''");
 
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_clipboard_active_order
@@ -402,6 +410,61 @@ impl Storage {
             }
         }
 
+        if applied_version < 5 {
+            let clipboard_rows = {
+                let mut statement = conn.prepare(
+                    "SELECT id, category, category_tags, content_type, content, preview FROM clipboard_entries",
+                )?;
+                let rows = statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                        ))
+                    })?
+                    .collect::<SqlResult<Vec<_>>>()?;
+                rows
+            };
+            for (id, category, category_tags, content_type, content, preview) in clipboard_rows {
+                let tags =
+                    category_tags_from_json(category_from_str(&category), Some(category_tags));
+                let search_text = clipboard_search_text(&content_type, &content, &preview, &tags);
+                conn.execute(
+                    "UPDATE clipboard_entries SET search_text = ?1 WHERE id = ?2",
+                    params![search_text, id],
+                )?;
+            }
+
+            let memo_rows = {
+                let mut statement =
+                    conn.prepare("SELECT id, title, body, tags, auto_tags FROM memos")?;
+                let rows = statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                        ))
+                    })?
+                    .collect::<SqlResult<Vec<_>>>()?;
+                rows
+            };
+            for (id, title, body, tags, auto_tags) in memo_rows {
+                let auto_tags = serde_json::from_str::<Vec<String>>(&auto_tags).unwrap_or_default();
+                let search_text = memo_search_text(&title, &body, &tags, &auto_tags);
+                conn.execute(
+                    "UPDATE memos SET search_text = ?1 WHERE id = ?2",
+                    params![search_text, id],
+                )?;
+            }
+        }
+
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -430,17 +493,24 @@ impl Storage {
         let conn = self.conn.lock().unwrap();
         let category_tags = normalize_category_tags(entry.category_tags.clone());
         let category = category_tags.first().cloned().unwrap_or(Category::Text);
+        let search_text = clipboard_search_text(
+            &entry.content_type,
+            &entry.content,
+            &entry.preview,
+            &category_tags,
+        );
         let category_tags = category_tags_json(&category_tags)?;
         let result = conn.execute(
             "INSERT OR IGNORE INTO clipboard_entries 
-             (category, category_tags, content_type, content, preview, hash, pinned, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (category, category_tags, content_type, content, preview, search_text, hash, pinned, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 category.to_string(),
                 category_tags,
                 entry.content_type,
                 entry.content,
                 entry.preview,
+                search_text,
                 entry.hash,
                 entry.pinned as i32,
                 entry.created_at.to_rfc3339(),
@@ -464,7 +534,7 @@ impl Storage {
         }
 
         if let Some(ref search) = filter.search {
-            append_token_search(&mut sql, &mut param_values, search, &["content", "preview"]);
+            append_token_search(&mut sql, &mut param_values, search, &["search_text"]);
         }
 
         sql.push_str(" ORDER BY pinned DESC, created_at DESC");
@@ -552,22 +622,29 @@ impl Storage {
         tx.execute("DELETE FROM settings", [])?;
 
         for entry in &backup.clipboard_entries {
+            let category_tags = normalize_category_tags(entry.category_tags.clone());
+            let search_text = clipboard_search_text(
+                &entry.content_type,
+                &entry.content,
+                &entry.preview,
+                &category_tags,
+            );
             tx.execute(
                 "INSERT INTO clipboard_entries
-                 (id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 (id, category, category_tags, content_type, content, preview, search_text, hash, pinned, created_at, original_content, updated_at, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     entry.id,
-                    entry
-                        .category_tags
+                    category_tags
                         .first()
                         .cloned()
                         .unwrap_or(entry.category.clone())
                         .to_string(),
-                    category_tags_json(&entry.category_tags)?,
+                    category_tags_json(&category_tags)?,
                     entry.content_type,
                     entry.content,
                     entry.preview,
+                    search_text,
                     entry.hash,
                     entry.pinned as i32,
                     entry.created_at.to_rfc3339(),
@@ -584,16 +661,18 @@ impl Storage {
             } else {
                 memo.auto_tags.clone()
             };
+            let search_text = memo_search_text(&memo.title, &memo.body, &memo.tags, &auto_tags);
             tx.execute(
                 "INSERT INTO memos
-                 (id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 (id, title, body, tags, auto_tags, search_text, pinned, sort_order, created_at, updated_at, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     memo.id,
                     memo.title,
                     memo.body,
                     memo.tags,
                     serde_json::to_string(&auto_tags)?,
+                    search_text,
                     memo.pinned as i32,
                     memo.sort_order,
                     memo.created_at,
@@ -681,12 +760,13 @@ impl Storage {
         };
         let categories = classify_text_tags(new_content);
         let category = categories.first().cloned().unwrap_or(Category::Text);
+        let search_text = clipboard_search_text("text/plain", new_content, &preview, &categories);
         let category_tags = category_tags_json(&categories)?;
         let now = Utc::now().to_rfc3339();
 
         let rows = conn.execute(
-            "UPDATE clipboard_entries SET category = ?1, category_tags = ?2, content = ?3, preview = ?4, original_content = ?5, updated_at = ?6 WHERE id = ?7",
-            params![category.to_string(), category_tags, new_content, preview, original, now, id],
+            "UPDATE clipboard_entries SET category = ?1, category_tags = ?2, content = ?3, preview = ?4, search_text = ?5, original_content = ?6, updated_at = ?7 WHERE id = ?8",
+            params![category.to_string(), category_tags, new_content, preview, search_text, original, now, id],
         )?;
         Ok(rows > 0)
     }
@@ -794,7 +874,7 @@ impl Storage {
         }
 
         if let Some(ref search) = filter.search {
-            append_token_search(&mut sql, &mut param_values, search, &["content", "preview"]);
+            append_token_search(&mut sql, &mut param_values, search, &["search_text"]);
         }
 
         sql.push_str(" ORDER BY archived_at DESC");
@@ -857,12 +937,7 @@ impl Storage {
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref search) = filter.search {
-            append_token_search(
-                &mut sql,
-                &mut param_values,
-                search,
-                &["title", "body", "tags"],
-            );
+            append_token_search(&mut sql, &mut param_values, search, &["search_text"]);
         }
 
         sql.push_str(" ORDER BY pinned DESC, sort_order DESC");
@@ -897,10 +972,11 @@ impl Storage {
         auto_tags: &[String],
     ) -> Result<Memo, StorageError> {
         let conn = self.conn.lock().unwrap();
+        let search_text = memo_search_text(title, body, tags, auto_tags);
         let auto_tags = serde_json::to_string(auto_tags)?;
         conn.execute(
-            "INSERT INTO memos (title, body, tags, auto_tags, sort_order) VALUES (?1, ?2, ?3, ?4, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM memos))",
-            params![title, body, tags, auto_tags],
+            "INSERT INTO memos (title, body, tags, auto_tags, search_text, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM memos))",
+            params![title, body, tags, auto_tags, search_text],
         )?;
         let id = conn.last_insert_rowid();
         let memo = conn.query_row(
@@ -921,10 +997,11 @@ impl Storage {
         auto_tags: &[String],
     ) -> Result<bool, StorageError> {
         let conn = self.conn.lock().unwrap();
+        let search_text = memo_search_text(title, body, tags, auto_tags);
         let auto_tags = serde_json::to_string(auto_tags)?;
         let rows = conn.execute(
-            "UPDATE memos SET title = ?1, body = ?2, tags = ?3, auto_tags = ?4, updated_at = datetime('now') WHERE id = ?5",
-            params![title, body, tags, auto_tags, id],
+            "UPDATE memos SET title = ?1, body = ?2, tags = ?3, auto_tags = ?4, search_text = ?5, updated_at = datetime('now') WHERE id = ?6",
+            params![title, body, tags, auto_tags, search_text, id],
         )?;
         Ok(rows > 0)
     }
@@ -1013,12 +1090,7 @@ impl Storage {
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref search) = filter.search {
-            append_token_search(
-                &mut sql,
-                &mut param_values,
-                search,
-                &["title", "body", "tags"],
-            );
+            append_token_search(&mut sql, &mut param_values, search, &["search_text"]);
         }
 
         sql.push_str(" ORDER BY archived_at DESC");
@@ -1254,6 +1326,134 @@ mod tests {
         assert_eq!(
             migrated.get_setting("schema_version").unwrap().as_deref(),
             Some(SCHEMA_VERSION),
+        );
+
+        drop(migrated);
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn search_ignores_embedded_image_payloads() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let image_payload = "iVBORw0KGgoSEARCHPAYLOAD123456";
+        let entry = ClipboardEntry {
+            id: 0,
+            category: Category::Image,
+            category_tags: vec![Category::Image],
+            content_type: "image/png".to_string(),
+            content: image_payload.to_string(),
+            preview: "[Image 640x480]".to_string(),
+            hash: Storage::hash_content(image_payload),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        storage.insert(&entry).unwrap();
+        storage
+            .create_memo(
+                "Meeting note",
+                "before image\n![image](data:image/png;base64,iVBORw0KGgoMEMOPAYLOAD123456)\nafter image",
+                "project",
+                &["image".to_string()],
+            )
+            .unwrap();
+
+        assert!(storage
+            .query(&QueryFilter {
+                search: Some("SEARCHPAYLOAD".to_string()),
+                ..Default::default()
+            })
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            storage
+                .query(&QueryFilter {
+                    search: Some("图片 640x480".to_string()),
+                    ..Default::default()
+                })
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(storage
+            .get_memos(&MemoFilter {
+                search: Some("MEMOPAYLOAD".to_string()),
+                ..Default::default()
+            })
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            storage
+                .get_memos(&MemoFilter {
+                    search: Some("before after project 图片".to_string()),
+                    ..Default::default()
+                })
+                .unwrap()
+                .len(),
+            1
+        );
+
+        drop(storage);
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn schema_migration_backfills_search_text() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let entry = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Link],
+            content_type: "text/plain".to_string(),
+            content: "https://migration.example.com".to_string(),
+            preview: "https://migration.example.com".to_string(),
+            hash: Storage::hash_content("https://migration.example.com"),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        storage.insert(&entry).unwrap();
+        storage
+            .create_memo("Migration", "searchable history", "legacy", &[])
+            .unwrap();
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute("UPDATE clipboard_entries SET search_text = ''", [])
+                .unwrap();
+            conn.execute("UPDATE memos SET search_text = ''", [])
+                .unwrap();
+        }
+        storage.set_setting("schema_version", "4").unwrap();
+        drop(storage);
+
+        let migrated = Storage::new(&db_path).unwrap();
+        assert_eq!(
+            migrated
+                .query(&QueryFilter {
+                    search: Some("migration.example.com 链接".to_string()),
+                    ..Default::default()
+                })
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            migrated
+                .get_memos(&MemoFilter {
+                    search: Some("searchable legacy".to_string()),
+                    ..Default::default()
+                })
+                .unwrap()
+                .len(),
+            1
         );
 
         drop(migrated);
