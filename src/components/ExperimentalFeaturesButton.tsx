@@ -5,6 +5,7 @@ import { useI18n } from '../i18n';
 import { useAppSettings } from '../hooks/useAppSettings';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { ToggleSettingRow } from './settings/SettingRow';
+import FloatingMenuPanel from './FloatingMenuPanel';
 
 export default function ExperimentalFeaturesButton() {
   const { t } = useI18n();
@@ -16,9 +17,10 @@ export default function ExperimentalFeaturesButton() {
     modernUiEnabled,
   } = settings;
   const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  useClickOutside(panelRef, open, () => setOpen(false));
+  useClickOutside(anchorRef, open, () => setOpen(false), false, panelRef);
 
   const handleClipboardMultiTagToggle = useCallback(async () => {
     await setAppSetting('clipboardMultiTagEnabled', !clipboardMultiTagEnabled);
@@ -37,7 +39,7 @@ export default function ExperimentalFeaturesButton() {
   }, [categoryTabSelectedColorsEnabled, setAppSetting]);
 
   return (
-    <div style={styles.wrapper} ref={panelRef}>
+    <div style={styles.wrapper} ref={anchorRef}>
       <button
         className="settings-gear-btn experimental-features-btn"
         style={styles.iconBtn}
@@ -51,13 +53,13 @@ export default function ExperimentalFeaturesButton() {
       </button>
 
       {open && (
-        <div className="glass-menu-panel" style={styles.panel}>
+        <FloatingMenuPanel anchorRef={anchorRef} panelRef={panelRef} style={styles.panel}>
           <div style={styles.panelTitle}>{t.experimentalFeatures}</div>
           <ToggleSettingRow label={t.modernUi} title={t.modernUiDesc} checked={modernUiEnabled} onChange={handleModernUiToggle} />
           <ToggleSettingRow label={t.clipboardMultiTag} title={t.clipboardMultiTagDesc} checked={clipboardMultiTagEnabled} onChange={handleClipboardMultiTagToggle} />
           <ToggleSettingRow label={t.hideEntryColorStrip} title={t.hideEntryColorStripDesc} checked={hideEntryColorStripEnabled} onChange={handleHideEntryColorStripToggle} />
           <ToggleSettingRow label={t.categoryTabSelectedColors} title={t.categoryTabSelectedColorsDesc} checked={categoryTabSelectedColorsEnabled} onChange={handleCategoryTabSelectedColorsToggle} />
-        </div>
+        </FloatingMenuPanel>
       )}
     </div>
   );

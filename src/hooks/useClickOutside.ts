@@ -5,6 +5,7 @@ export function useClickOutside<T extends HTMLElement>(
   enabled: boolean,
   onOutside: () => void,
   defer = false,
+  relatedRef?: RefObject<HTMLElement | null>,
 ): void {
   const onOutsideRef = useRef(onOutside);
 
@@ -16,7 +17,10 @@ export function useClickOutside<T extends HTMLElement>(
     if (!enabled) return;
 
     const handler = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const insidePrimary = ref.current?.contains(target) ?? false;
+      const insideRelated = relatedRef?.current?.contains(target) ?? false;
+      if (!insidePrimary && !insideRelated) {
         onOutsideRef.current();
       }
     };
@@ -28,5 +32,5 @@ export function useClickOutside<T extends HTMLElement>(
       if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener('mousedown', handler);
     };
-  }, [defer, enabled, ref]);
+  }, [defer, enabled, ref, relatedRef]);
 }

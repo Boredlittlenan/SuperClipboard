@@ -29,6 +29,7 @@ import {
   type StoredSettingsPayload,
 } from '../storage/remoteProfiles';
 import ConfirmDialog, { type ConfirmDialogState } from './ConfirmDialog';
+import FloatingMenuPanel from './FloatingMenuPanel';
 
 type StorageMode = 'local' | 'remote';
 type BackupAction = 'idle' | 'creating' | 'restoring';
@@ -82,6 +83,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
   const [profiles, setProfiles] = useState<RemoteDbProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [deleteProfileTarget, setDeleteProfileTarget] = useState<RemoteDbProfile | null>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const persistedSettingsRef = useRef<StoredSettingsPayload | null>(null);
   const storageActionRef = useRef(false);
@@ -214,7 +216,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
     setRestoreConfirming(false);
   }, [open, loadSettings, refreshBackups, refreshStorageStatus, t.backupFailed]);
 
-  useClickOutside(panelRef, open, () => setOpen(false));
+  useClickOutside(anchorRef, open, () => setOpen(false), false, panelRef);
 
   const handleSave = useCallback(async () => {
     if (storageActionRef.current || !persistedSettingsRef.current) return;
@@ -430,7 +432,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
     : t.storageStatusLocal;
 
   return (
-    <div style={styles.wrapper} ref={panelRef}>
+    <div style={styles.wrapper} ref={anchorRef}>
       <button
         className="settings-gear-btn remote-storage-btn"
         style={styles.iconBtn}
@@ -446,7 +448,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
       </button>
 
       {open && (
-        <div className="glass-menu-panel" style={styles.panel}>
+        <FloatingMenuPanel anchorRef={anchorRef} panelRef={panelRef} style={styles.panel}>
           <div style={styles.panelTitle}>
             <span>{t.remoteStorage}</span>
             <span style={styles.headerStatus}>
@@ -721,7 +723,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
               onClose={() => setDeleteProfileTarget(null)}
             />
           )}
-        </div>
+        </FloatingMenuPanel>
       )}
     </div>
   );

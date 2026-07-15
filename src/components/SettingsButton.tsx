@@ -20,6 +20,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { formatShortcutLabel } from '../utils';
 import { useAppSettings } from '../hooks/useAppSettings';
 import { useClickOutside } from '../hooks/useClickOutside';
+import FloatingMenuPanel from './FloatingMenuPanel';
 import { SettingRow, ToggleSettingRow } from './settings/SettingRow';
 
 const LANGUAGES: { value: Locale; labelKey: 'langZhCN' | 'langEn' }[] = [
@@ -105,6 +106,7 @@ export default function SettingsButton({
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'upToDate' | 'hasUpdate' | 'failed'>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const recorderRef = useRef<HTMLButtonElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const colorRef = useRef<HTMLDivElement>(null);
   const keysRef = useRef<{ modifiers: Set<string>; mainKey: string | null }>({
@@ -169,13 +171,13 @@ export default function SettingsButton({
     }
   }, [memoColor, onShortcutChange, open]);
 
-  useClickOutside(panelRef, open, () => {
+  useClickOutside(anchorRef, open, () => {
     setOpen(false);
     setRecording(false);
     setError('');
     setUpdateStatus('idle');
     setShowColorPicker(false);
-  });
+  }, false, panelRef);
   useClickOutside(colorRef, showColorPicker, () => setShowColorPicker(false), true);
 
   // Keyboard capture for shortcut recording
@@ -323,7 +325,7 @@ export default function SettingsButton({
   }, [updateInfo]);
 
   return (
-    <div style={styles.wrapper} ref={panelRef}>
+    <div style={styles.wrapper} ref={anchorRef}>
       {/* Gear button */}
       <button
         className="settings-gear-btn"
@@ -339,7 +341,7 @@ export default function SettingsButton({
 
       {/* Settings dropdown panel */}
       {open && (
-        <div className="glass-menu-panel" style={{ ...styles.panel, width: '260px' }}>
+        <FloatingMenuPanel anchorRef={anchorRef} panelRef={panelRef} style={{ ...styles.panel, width: '260px' }}>
           {/* Title row with version */}
           <div style={styles.panelTitle}>
             <span>{t.settings}</span>
@@ -600,7 +602,7 @@ export default function SettingsButton({
               </div>
             )}
           </div>
-        </div>
+        </FloatingMenuPanel>
       )}
     </div>
   );
