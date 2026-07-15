@@ -1,6 +1,6 @@
 [package]
 name = "superclipboard"
-version = "3.2.0"
+version = "3.3.0"
 description = "A lightweight clipboard manager with smart categorization"
 authors = [""]
 edition = "2021"
@@ -34,6 +34,7 @@ base64 = "0.22"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 thiserror = "2"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+semver = "1"
 open = "5"
 postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 postgres-native-tls = "0.5"

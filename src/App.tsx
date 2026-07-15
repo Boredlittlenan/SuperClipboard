@@ -30,6 +30,7 @@ import ArchivedMemoItem from './components/ArchivedMemoItem';
 import ConfirmDialog, { type ConfirmDialogState } from './components/ConfirmDialog';
 import { emitAppEvent, onAppEvent } from './events/appEvents';
 import { useAppSettings } from './hooks/useAppSettings';
+import { useInfiniteScroll } from './hooks/useInfiniteScroll';
 import AppSettingsProvider from './components/settings/AppSettingsProvider';
 import './App.css';
 
@@ -38,6 +39,18 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+const CLIPBOARD_PAGE_SIZE = 50;
+
+function buildClipboardFilter(activeTab: FilterTab, searchQuery: string, offset = 0): QueryFilter {
+  const filter: QueryFilter = { limit: CLIPBOARD_PAGE_SIZE, offset };
+  if (activeTab !== 'all' && activeTab !== 'archive' && activeTab !== 'memo') {
+    filter.category = activeTab;
+  }
+  const search = searchQuery.trim();
+  if (search) filter.search = search;
+  return filter;
 }
 
 function AppContent() {
@@ -60,6 +73,8 @@ function AppContent() {
   } = settings;
   const [titleVariant, setTitleVariant] = useState<'default' | 'xiaonan' | 'yingnan'>('default');
   const [entries, setEntries] = useState<ClipboardEntry[]>([]);
+  const [entriesHasMore, setEntriesHasMore] = useState(false);
+  const [entriesLoadingMore, setEntriesLoadingMore] = useState(false);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState<Stats | null>(null);
@@ -76,6 +91,8 @@ function AppContent() {
   const searchQueryRef = useRef('');
   const [archiveSubTab, setArchiveSubTab] = useState<'clipboard' | 'memos'>('clipboard');
   const [archivedMemos, setArchivedMemos] = useState<Memo[]>([]);
+  const [archivedMemosHasMore, setArchivedMemosHasMore] = useState(false);
+  const [archivedMemosLoadingMore, setArchivedMemosLoadingMore] = useState(false);
   const [memoArchiveCountState, setMemoArchiveCountState] = useState<number>(0);
   const [openedViaShortcut, setOpenedViaShortcut] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
@@ -85,6 +102,11 @@ function AppContent() {
   const fetchEntriesRequestRef = useRef(0);
   const fetchEntriesInFlightRef = useRef(false);
   const fetchEntriesPendingRef = useRef(false);
+  const entriesLoadingMoreRef = useRef(false);
+  const archivedMemosLoadingMoreRef = useRef(false);
+  const archivedMemosRequestRef = useRef(0);
+  const archivedMemoListRef = useRef<HTMLDivElement>(null);
+  const archivedMemoLoadMoreRef = useRef<HTMLDivElement>(null);
   const autoUpdateCheckedRef = useRef(false);
   const resumeRefreshRef = useRef(0);
   const lastWakeCheckRef = useRef(Date.now());
@@ -207,34 +229,31 @@ function AppContent() {
 
   // Fetch entries based on current filter
   const fetchEntries = useCallback(async () => {
+    const requestId = ++fetchEntriesRequestRef.current;
     if (fetchEntriesInFlightRef.current) {
       fetchEntriesPendingRef.current = true;
       return;
     }
     fetchEntriesInFlightRef.current = true;
-    const requestId = ++fetchEntriesRequestRef.current;
     if (activeTab === 'memo') {
       setLoading(false);
+      setEntriesHasMore(false);
       fetchEntriesInFlightRef.current = false;
       return;
     }
-    const filter: QueryFilter = { limit: 100 };
-    if (activeTab !== 'all' && activeTab !== 'archive') {
-      filter.category = activeTab;
-    }
-    if (searchQuery.trim()) {
-      filter.search = searchQuery.trim();
-    }
+    const filter = buildClipboardFilter(activeTab, searchQuery);
     try {
       if (activeTab === 'archive') {
         const data = await getArchivedEntries(filter);
         if (fetchEntriesRequestRef.current === requestId) {
           setEntries(data);
+          setEntriesHasMore(data.length === CLIPBOARD_PAGE_SIZE);
         }
       } else {
         const data = await getEntries(filter);
         if (fetchEntriesRequestRef.current === requestId) {
           setEntries(data);
+          setEntriesHasMore(data.length === CLIPBOARD_PAGE_SIZE);
         }
       }
     } catch (err) {
@@ -251,6 +270,38 @@ function AppContent() {
     }
   }, [activeTab, searchQuery]);
 
+  const loadMoreEntries = useCallback(async () => {
+    if (
+      activeTab === 'memo'
+      || !entriesHasMore
+      || entriesLoadingMoreRef.current
+      || fetchEntriesInFlightRef.current
+    ) return;
+
+    entriesLoadingMoreRef.current = true;
+    setEntriesLoadingMore(true);
+    const requestId = fetchEntriesRequestRef.current;
+    const offset = entries.length;
+    const filter = buildClipboardFilter(activeTab, searchQuery, offset);
+    try {
+      const data = activeTab === 'archive'
+        ? await getArchivedEntries(filter)
+        : await getEntries(filter);
+      if (fetchEntriesRequestRef.current !== requestId) return;
+      setEntries((current) => {
+        if (current.length !== offset) return current;
+        const knownIds = new Set(current.map((entry) => entry.id));
+        return [...current, ...data.filter((entry) => !knownIds.has(entry.id))];
+      });
+      setEntriesHasMore(data.length === CLIPBOARD_PAGE_SIZE);
+    } catch (error) {
+      console.error('Failed to load more entries:', error);
+    } finally {
+      entriesLoadingMoreRef.current = false;
+      setEntriesLoadingMore(false);
+    }
+  }, [activeTab, entries.length, entriesHasMore, searchQuery]);
+
   // Fetch stats
   const fetchStats = useCallback(async () => {
     try {
@@ -264,6 +315,18 @@ function AppContent() {
     }
   }, []);
 
+  const refreshDataOnce = useCallback(() => {
+    if (activeTab !== 'memo') {
+      setLoading(true);
+    }
+    setStorageRevision((value) => value + 1);
+  }, [activeTab]);
+
+  const clearScheduledDataRefreshes = useCallback(() => {
+    resumeRefreshTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    resumeRefreshTimersRef.current = [];
+  }, []);
+
   const scheduleDataRefresh = useCallback((force = false) => {
     const now = Date.now();
     if (!force && now - resumeRefreshRef.current < 1000) {
@@ -271,35 +334,29 @@ function AppContent() {
     }
     resumeRefreshRef.current = now;
 
-    const refresh = () => {
-      if (activeTab !== 'memo') {
-        setLoading(true);
-      }
-      setStorageRevision((value) => value + 1);
-    };
-
-    refresh();
-    resumeRefreshTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    refreshDataOnce();
+    clearScheduledDataRefreshes();
     resumeRefreshTimersRef.current = [
-      window.setTimeout(refresh, 1500),
-      window.setTimeout(refresh, 5000),
+      window.setTimeout(refreshDataOnce, 1500),
+      window.setTimeout(refreshDataOnce, 5000),
     ];
-  }, [activeTab]);
+  }, [clearScheduledDataRefreshes, refreshDataOnce]);
 
   useEffect(() => {
     const offResume = onAppEvent('app:resume', () => scheduleDataRefresh(true));
-    const offClipboard = onAppEvent('clipboard:changed', () => scheduleDataRefresh(true));
+    const offClipboard = onAppEvent('clipboard:changed', refreshDataOnce);
     const offStorage = onAppEvent('storage:changed', () => {
+      clearScheduledDataRefreshes();
       setEntries([]);
       setArchivedMemos([]);
-      scheduleDataRefresh(true);
+      refreshDataOnce();
     });
     return () => {
       offResume();
       offClipboard();
       offStorage();
     };
-  }, [scheduleDataRefresh]);
+  }, [clearScheduledDataRefreshes, refreshDataOnce, scheduleDataRefresh]);
 
   // Listen for window-shown events to track how the window was opened and refresh remote data.
   useEffect(() => {
@@ -348,14 +405,51 @@ function AppContent() {
 
   // Fetch archived memos
   const fetchArchivedMemos = useCallback(async () => {
-    if (!archiveEnabled) return;
+    const requestId = ++archivedMemosRequestRef.current;
+    if (!archiveEnabled) {
+      setArchivedMemos([]);
+      setArchivedMemosHasMore(false);
+      return;
+    }
     try {
-      const data = await getArchivedMemos({ limit: 100 });
+      const data = await getArchivedMemos({ limit: CLIPBOARD_PAGE_SIZE });
+      if (archivedMemosRequestRef.current !== requestId) return;
       setArchivedMemos(data);
+      setArchivedMemosHasMore(data.length === CLIPBOARD_PAGE_SIZE);
     } catch (err) {
       console.error('Failed to fetch archived memos:', err);
     }
   }, [archiveEnabled]);
+
+  const loadMoreArchivedMemos = useCallback(async () => {
+    if (!archivedMemosHasMore || archivedMemosLoadingMoreRef.current) return;
+    archivedMemosLoadingMoreRef.current = true;
+    setArchivedMemosLoadingMore(true);
+    const requestId = archivedMemosRequestRef.current;
+    const offset = archivedMemos.length;
+    try {
+      const data = await getArchivedMemos({ limit: CLIPBOARD_PAGE_SIZE, offset });
+      if (archivedMemosRequestRef.current !== requestId) return;
+      setArchivedMemos((current) => {
+        if (current.length !== offset) return current;
+        const knownIds = new Set(current.map((memo) => memo.id));
+        return [...current, ...data.filter((memo) => !knownIds.has(memo.id))];
+      });
+      setArchivedMemosHasMore(data.length === CLIPBOARD_PAGE_SIZE);
+    } catch (error) {
+      console.error('Failed to load more archived memos:', error);
+    } finally {
+      archivedMemosLoadingMoreRef.current = false;
+      setArchivedMemosLoadingMore(false);
+    }
+  }, [archivedMemos.length, archivedMemosHasMore]);
+
+  useInfiniteScroll(
+    archivedMemoListRef,
+    archivedMemoLoadMoreRef,
+    activeTab === 'archive' && archiveSubTab === 'memos' && archivedMemosHasMore && !archivedMemosLoadingMore,
+    () => { void loadMoreArchivedMemos(); },
+  );
 
   // Fetch visible list when the active filter changes.
   useEffect(() => {
@@ -752,6 +846,9 @@ function AppContent() {
                 showCategoryIndicator={effectiveEntryColorIndicatorEnabled}
                 onRestore={handleRestore}
                 onPermanentDelete={handlePermanentDelete}
+                hasMore={entriesHasMore}
+                loadingMore={entriesLoadingMore}
+                onLoadMore={loadMoreEntries}
               />
             )
           ) : (
@@ -762,7 +859,7 @@ function AppContent() {
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.archiveEmptyHint}</span>
               </div>
             ) : (
-              <div style={{ flex: 1, overflowY: 'auto' }}>
+              <div ref={archivedMemoListRef} style={{ flex: 1, overflowY: 'auto' }}>
                 {archivedMemos.map(memo => (
                   <ArchivedMemoItem
                     key={memo.id}
@@ -771,6 +868,9 @@ function AppContent() {
                     onPermanentDelete={() => handleMemoPermanentDelete(memo.id)}
                   />
                 ))}
+                <div ref={archivedMemoLoadMoreRef} style={{ minHeight: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {archivedMemosLoadingMore && <div style={{ width: '14px', height: '14px', border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />}
+                </div>
               </div>
             )
           )}
@@ -789,6 +889,9 @@ function AppContent() {
           showCategoryIndicator={effectiveEntryColorIndicatorEnabled}
           onRestore={handleRestore}
           onPermanentDelete={handlePermanentDelete}
+          hasMore={entriesHasMore}
+          loadingMore={entriesLoadingMore}
+          onLoadMore={loadMoreEntries}
         />
       )}
 

@@ -1,4 +1,5 @@
 use crate::classifier::{classify_text_tags, Category};
+use crate::memo_tags;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,7 @@ use thiserror::Error;
 const CLIPBOARD_QUERY_LIMIT: i64 = 50;
 const MEMO_QUERY_LIMIT: i64 = 100;
 const MAX_QUERY_LIMIT: i64 = 500;
-const SCHEMA_VERSION: &str = "3";
+const SCHEMA_VERSION: &str = "4";
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -85,6 +86,8 @@ pub struct Memo {
     pub title: String,
     pub body: String,
     pub tags: String,
+    #[serde(default)]
+    pub auto_tags: Vec<String>,
     pub pinned: bool,
     pub sort_order: i64,
     pub created_at: String,
@@ -211,17 +214,19 @@ fn map_row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipboardEntry>
 }
 
 fn map_row_to_memo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memo> {
-    let pinned_int: i32 = row.get(4)?;
+    let pinned_int: i32 = row.get(5)?;
+    let auto_tags_json: String = row.get(4)?;
     Ok(Memo {
         id: row.get(0)?,
         title: row.get(1)?,
         body: row.get(2)?,
         tags: row.get(3)?,
+        auto_tags: serde_json::from_str(&auto_tags_json).unwrap_or_default(),
         pinned: pinned_int != 0,
-        sort_order: row.get(5)?,
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
-        archived_at: row.get(8)?,
+        sort_order: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+        archived_at: row.get(9)?,
         version: 1,
     })
 }
@@ -313,12 +318,19 @@ impl Storage {
                 title      TEXT    NOT NULL DEFAULT '',
                 body       TEXT    NOT NULL DEFAULT '',
                 tags       TEXT    NOT NULL DEFAULT '',
+                auto_tags  TEXT    NOT NULL DEFAULT '[]',
                 pinned     INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT    NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_memos_updated_at ON memos(updated_at DESC);
             ",
+        )?;
+
+        let applied_version = conn.query_row(
+            "SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'), 0)",
+            [],
+            |row| row.get::<_, i64>(0),
         )?;
 
         // Legacy migrations for databases created before explicit schema versioning.
@@ -343,9 +355,52 @@ impl Storage {
 
         // Migration: add archived_at column to memos
         let _ = conn.execute_batch("ALTER TABLE memos ADD COLUMN archived_at TEXT");
+        let _ =
+            conn.execute_batch("ALTER TABLE memos ADD COLUMN auto_tags TEXT NOT NULL DEFAULT '[]'");
         let _ = conn.execute_batch(
             "ALTER TABLE clipboard_entries ADD COLUMN category_tags TEXT NOT NULL DEFAULT '[]'",
         );
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_clipboard_active_order
+                ON clipboard_entries(pinned DESC, created_at DESC)
+                WHERE archived_at IS NULL;
+             CREATE INDEX IF NOT EXISTS idx_clipboard_archive_order
+                ON clipboard_entries(archived_at DESC)
+                WHERE archived_at IS NOT NULL;
+             CREATE INDEX IF NOT EXISTS idx_memos_active_order
+                ON memos(pinned DESC, sort_order DESC)
+                WHERE archived_at IS NULL;
+             CREATE INDEX IF NOT EXISTS idx_memos_archive_order
+                ON memos(archived_at DESC)
+                WHERE archived_at IS NOT NULL;",
+        )?;
+
+        if applied_version < 4 {
+            let memo_rows = {
+                let mut statement = conn.prepare(
+                    "SELECT id, title, body FROM memos WHERE auto_tags = '[]' OR auto_tags = ''",
+                )?;
+                let rows = statement
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    })?
+                    .collect::<SqlResult<Vec<_>>>()?;
+                rows
+            };
+            for (id, title, body) in memo_rows {
+                let auto_tags = serde_json::to_string(&memo_tags::infer(&title, &body))
+                    .unwrap_or_else(|_| "[]".to_string());
+                conn.execute(
+                    "UPDATE memos SET auto_tags = ?1 WHERE id = ?2",
+                    params![auto_tags, id],
+                )?;
+            }
+        }
 
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
@@ -460,7 +515,7 @@ impl Storage {
             .collect::<SqlResult<Vec<_>>>()?;
 
         let mut memo_stmt = conn.prepare(
-            "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at
+            "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at
              FROM memos ORDER BY id ASC",
         )?;
         let memos = memo_stmt
@@ -524,15 +579,21 @@ impl Storage {
         }
 
         for memo in &backup.memos {
+            let auto_tags = if memo.auto_tags.is_empty() {
+                memo_tags::infer(&memo.title, &memo.body)
+            } else {
+                memo.auto_tags.clone()
+            };
             tx.execute(
                 "INSERT INTO memos
-                 (id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 (id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     memo.id,
                     memo.title,
                     memo.body,
                     memo.tags,
+                    serde_json::to_string(&auto_tags)?,
                     memo.pinned as i32,
                     memo.sort_order,
                     memo.created_at,
@@ -792,7 +853,7 @@ impl Storage {
     /// Query memos with optional search filter
     pub fn get_memos(&self, filter: &MemoFilter) -> Result<Vec<Memo>, StorageError> {
         let conn = self.conn.lock().unwrap();
-        let mut sql = String::from("SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at FROM memos WHERE archived_at IS NULL");
+        let mut sql = String::from("SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at FROM memos WHERE archived_at IS NULL");
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref search) = filter.search {
@@ -828,15 +889,22 @@ impl Storage {
     }
 
     /// Create a new memo, returns the created memo
-    pub fn create_memo(&self, title: &str, body: &str, tags: &str) -> Result<Memo, StorageError> {
+    pub fn create_memo(
+        &self,
+        title: &str,
+        body: &str,
+        tags: &str,
+        auto_tags: &[String],
+    ) -> Result<Memo, StorageError> {
         let conn = self.conn.lock().unwrap();
+        let auto_tags = serde_json::to_string(auto_tags)?;
         conn.execute(
-            "INSERT INTO memos (title, body, tags, sort_order) VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM memos))",
-            params![title, body, tags],
+            "INSERT INTO memos (title, body, tags, auto_tags, sort_order) VALUES (?1, ?2, ?3, ?4, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM memos))",
+            params![title, body, tags, auto_tags],
         )?;
         let id = conn.last_insert_rowid();
         let memo = conn.query_row(
-            "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at FROM memos WHERE id = ?1",
+            "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at FROM memos WHERE id = ?1",
             params![id],
             map_row_to_memo,
         )?;
@@ -850,11 +918,13 @@ impl Storage {
         title: &str,
         body: &str,
         tags: &str,
+        auto_tags: &[String],
     ) -> Result<bool, StorageError> {
         let conn = self.conn.lock().unwrap();
+        let auto_tags = serde_json::to_string(auto_tags)?;
         let rows = conn.execute(
-            "UPDATE memos SET title = ?1, body = ?2, tags = ?3, updated_at = datetime('now') WHERE id = ?4",
-            params![title, body, tags, id],
+            "UPDATE memos SET title = ?1, body = ?2, tags = ?3, auto_tags = ?4, updated_at = datetime('now') WHERE id = ?5",
+            params![title, body, tags, auto_tags, id],
         )?;
         Ok(rows > 0)
     }
@@ -939,7 +1009,7 @@ impl Storage {
     /// Query archived memos
     pub fn query_archived_memos(&self, filter: &MemoFilter) -> Result<Vec<Memo>, StorageError> {
         let conn = self.conn.lock().unwrap();
-        let mut sql = String::from("SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at FROM memos WHERE archived_at IS NOT NULL");
+        let mut sql = String::from("SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at FROM memos WHERE archived_at IS NOT NULL");
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref search) = filter.search {
@@ -1076,6 +1146,13 @@ mod tests {
         ]);
 
         storage.set_settings(&values).unwrap();
+        storage.set_setting("language", "zh-CN").unwrap();
+        storage
+            .set_settings(&HashMap::from([
+                ("storage_mode".to_string(), "remote".to_string()),
+                ("remote_db_ready".to_string(), "true".to_string()),
+            ]))
+            .unwrap();
         let loaded = storage
             .get_settings(&[
                 "theme_mode".to_string(),
@@ -1087,6 +1164,10 @@ mod tests {
         assert_eq!(loaded.get("theme_mode").map(String::as_str), Some("dark"));
         assert_eq!(loaded.get("memo_enabled").map(String::as_str), Some("true"));
         assert!(!loaded.contains_key("missing"));
+        assert_eq!(
+            storage.get_setting("language").unwrap().as_deref(),
+            Some("zh-CN"),
+        );
 
         drop(storage);
         let _ = std::fs::remove_file(db_path);
@@ -1117,7 +1198,7 @@ mod tests {
 
         source.insert(&entry).unwrap();
         source
-            .create_memo("Project note", "remember the backup package", "backup")
+            .create_memo("Project note", "remember the backup package", "backup", &[])
             .unwrap();
         source.set_setting("language", "zh-CN").unwrap();
 
@@ -1154,6 +1235,29 @@ mod tests {
 
         std::fs::remove_file(source_path).ok();
         std::fs::remove_file(target_path).ok();
+    }
+
+    #[test]
+    fn schema_migration_backfills_persisted_memo_auto_tags() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        storage
+            .create_memo("Contact", "user@example.com", "", &[])
+            .unwrap();
+        storage.set_setting("schema_version", "3").unwrap();
+        drop(storage);
+
+        let migrated = Storage::new(&db_path).unwrap();
+        let memos = migrated.get_memos(&MemoFilter::default()).unwrap();
+        assert_eq!(memos.len(), 1);
+        assert_eq!(memos[0].auto_tags, vec!["email".to_string()]);
+        assert_eq!(
+            migrated.get_setting("schema_version").unwrap().as_deref(),
+            Some(SCHEMA_VERSION),
+        );
+
+        drop(migrated);
+        std::fs::remove_file(db_path).ok();
     }
 
     #[test]

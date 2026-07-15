@@ -1,10 +1,10 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Archive, ExternalLink, Pencil, Pin, RotateCcw, Trash2 } from 'lucide-react';
+import { Archive, ExternalLink, Image as ImageIcon, Pencil, Pin, RotateCcw, Trash2 } from 'lucide-react';
 import type { ClipboardEntry } from '../types';
 import { getArchiveDaysRemaining, getArchiveTone, getCategoryColor, getCategoryLabel, formatRelativeTime } from '../utils';
 import { useI18n } from '../i18n';
-import type { UpdateResult } from '../api/clipboard';
+import { getEntryContent, type UpdateResult } from '../api/clipboard';
 
 interface Props {
   entry: ClipboardEntry;
@@ -27,8 +27,11 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   const [showOriginal, setShowOriginal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState('');
+  const [imageContent, setImageContent] = useState(entry.category === 'image' ? entry.content : '');
+  const [imageLoading, setImageLoading] = useState(false);
   const { t } = useI18n();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageContainerRef = useRef<HTMLDivElement>(null);
 
   const categoryColor = getCategoryColor(entry.category);
   const categoryTags = multiTagEnabled
@@ -47,6 +50,51 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   const originalContent = entry.original_content;
   const hasOriginal = originalContent != null;
   const archiveDaysRemaining = isArchive && entry.archived_at ? getArchiveDaysRemaining(entry.archived_at) : null;
+
+  useEffect(() => {
+    setImageContent(isImage ? entry.content : '');
+  }, [entry.content, entry.id, isImage]);
+
+  useEffect(() => {
+    if (!isImage || entry.content) return;
+    const container = imageContainerRef.current;
+    if (!container) return;
+    let cancelled = false;
+    let requested = false;
+
+    const loadImage = () => {
+      if (requested) return;
+      requested = true;
+      setImageLoading(true);
+      getEntryContent(entry.id)
+        .then((content) => {
+          if (!cancelled && content) setImageContent(content);
+        })
+        .catch((error) => console.error('Failed to load clipboard image:', error))
+        .finally(() => {
+          if (!cancelled) setImageLoading(false);
+        });
+    };
+
+    if (typeof IntersectionObserver === 'undefined') {
+      loadImage();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const observer = new IntersectionObserver((records) => {
+      if (records.some((record) => record.isIntersecting)) {
+        observer.disconnect();
+        loadImage();
+      }
+    }, { rootMargin: '100px 0px' });
+    observer.observe(container);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [entry.content, entry.id, isImage]);
 
   const handleOpenInBrowser = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -259,11 +307,20 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
           <div className="entry-preview" style={styles.preview}>
             {editError && <div style={styles.editError}>{editError}</div>}
             {isImage ? (
-              <img
-                src={`data:image/png;base64,${entry.content}`}
-                alt="Clipboard image"
-                style={styles.imagePreview}
-              />
+              <div ref={imageContainerRef} style={styles.imageContainer}>
+                {imageContent ? (
+                  <img
+                    src={`data:image/png;base64,${imageContent}`}
+                    alt="Clipboard image"
+                    style={styles.imagePreview}
+                  />
+                ) : (
+                  <div style={styles.imagePlaceholder} aria-label={t.loading}>
+                    <ImageIcon size={22} strokeWidth={1.6} />
+                    {imageLoading && <span>{t.loading}</span>}
+                  </div>
+                )}
+              </div>
             ) : rawPreview ? (
               <pre style={styles.rawPreview}>{entry.content}</pre>
             ) : entry.category === 'code' ? (
@@ -464,6 +521,23 @@ const styles: Record<string, React.CSSProperties> = {
     maxHeight: '120px',
     borderRadius: '4px',
     objectFit: 'contain',
+  },
+  imageContainer: {
+    minHeight: '72px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  imagePlaceholder: {
+    minWidth: '88px',
+    minHeight: '72px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '4px',
+    color: 'var(--text-muted)',
+    fontSize: '10px',
   },
   // Edit mode styles
   editContainer: {

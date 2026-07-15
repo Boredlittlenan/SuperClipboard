@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type React from 'react';
 import { FlaskConical } from 'lucide-react';
 import { useI18n } from '../i18n';
 import { useAppSettings } from '../hooks/useAppSettings';
+import { useClickOutside } from '../hooks/useClickOutside';
 import { ToggleSettingRow } from './settings/SettingRow';
 
 export default function ExperimentalFeaturesButton() {
@@ -17,18 +18,7 @@ export default function ExperimentalFeaturesButton() {
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-
-    const handler = (event: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
+  useClickOutside(panelRef, open, () => setOpen(false));
 
   const handleClipboardMultiTagToggle = useCallback(async () => {
     await setAppSetting('clipboardMultiTagEnabled', !clipboardMultiTagEnabled);
@@ -98,14 +88,10 @@ const styles: Record<string, React.CSSProperties> = {
     width: '220px',
     maxHeight: 'calc(100vh - 48px)',
     overflowY: 'auto',
-    background: 'var(--panel-glass)',
     border: '1px solid var(--apple-separator)',
     borderRadius: '12px',
     padding: '12px',
     zIndex: 1310,
-    boxShadow: '0 18px 46px rgba(15, 23, 42, 0.2), inset 0 1px 0 var(--hairline-highlight)',
-    backdropFilter: 'blur(44px) saturate(1.9)',
-    WebkitBackdropFilter: 'blur(44px) saturate(1.9)',
   },
   panelTitle: {
     display: 'flex',

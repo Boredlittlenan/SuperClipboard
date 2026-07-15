@@ -185,12 +185,19 @@ pub fn get_memos(storage: &Storage, filter: &MemoFilter) -> BackendResult<Vec<Me
     }
 }
 
-pub fn create_memo(storage: &Storage, title: &str, body: &str, tags: &str) -> BackendResult<Memo> {
+pub fn create_memo(
+    storage: &Storage,
+    title: &str,
+    body: &str,
+    tags: &str,
+    auto_tags: &[String],
+) -> BackendResult<Memo> {
     if remote(storage) {
-        remote_storage::create_memo(storage, title, body, tags).map_err(|error| error.to_string())
+        remote_storage::create_memo(storage, title, body, tags, auto_tags)
+            .map_err(|error| error.to_string())
     } else {
         storage
-            .create_memo(title, body, tags)
+            .create_memo(title, body, tags, auto_tags)
             .map_err(|error| error.to_string())
     }
 }
@@ -201,14 +208,15 @@ pub fn update_memo(
     title: &str,
     body: &str,
     tags: &str,
+    auto_tags: &[String],
     expected_version: Option<i64>,
 ) -> BackendResult<UpdateResult> {
     if remote(storage) {
-        remote_storage::update_memo(storage, id, title, body, tags, expected_version)
+        remote_storage::update_memo(storage, id, title, body, tags, auto_tags, expected_version)
             .map_err(|error| error.to_string())
     } else {
         storage
-            .update_memo(id, title, body, tags)
+            .update_memo(id, title, body, tags, auto_tags)
             .map(UpdateResult::updated)
             .map_err(|error| error.to_string())
     }

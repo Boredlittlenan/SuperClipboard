@@ -14,6 +14,7 @@ import {
 } from '../api/settings';
 import type { BackupFileInfo, StorageStatusInfo } from '../api/settings';
 import { useI18n } from '../i18n';
+import { useClickOutside } from '../hooks/useClickOutside';
 import {
   formatProfileTime,
   parseProfiles,
@@ -83,6 +84,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
   const [deleteProfileTarget, setDeleteProfileTarget] = useState<RemoteDbProfile | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const persistedSettingsRef = useRef<StoredSettingsPayload | null>(null);
+  const storageActionRef = useRef(false);
 
   const writeSettings = useCallback(async (payload: StoredSettingsPayload) => {
     await setSettings(payload);
@@ -108,8 +110,8 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
   }, []);
 
   const persistProfiles = useCallback(async (items: RemoteDbProfile[]) => {
-    setProfiles(items);
     await setSettings({ [SETTING_KEYS.profiles]: JSON.stringify(items) });
+    setProfiles(items);
   }, []);
 
   const readProfiles = useCallback(async () => {
@@ -212,18 +214,11 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
     setRestoreConfirming(false);
   }, [open, loadSettings, refreshBackups, refreshStorageStatus, t.backupFailed]);
 
-  useEffect(() => {
-    if (!open) return;
-    const handler = (event: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
+  useClickOutside(panelRef, open, () => setOpen(false));
 
   const handleSave = useCallback(async () => {
+    if (storageActionRef.current || !persistedSettingsRef.current) return;
+    storageActionRef.current = true;
     const previousPayload = persistedSettingsRef.current;
     setSaveState('saving');
     setTestMessage('');
@@ -266,13 +261,20 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
         await writeSettings(previousPayload).catch((restoreErr) => {
           console.error('Failed to restore previous remote storage settings:', restoreErr);
         });
+        applyPayloadToForm(previousPayload);
         setActiveStorageMode(getPayloadActiveMode(previousPayload));
+        setSelectedProfileId(getPayloadActiveMode(previousPayload) === 'remote'
+          ? profileIdForPayload(profiles, previousPayload)
+          : '');
+        await refreshStorageStatus().catch(console.error);
       }
       setSaveState('failed');
       setTestState(storageMode === 'remote' ? 'failed' : 'idle');
       setTestMessage(String(err));
+    } finally {
+      storageActionRef.current = false;
     }
-  }, [buildSettingsPayload, getPayloadActiveMode, onStorageModeChange, persistProfiles, readProfiles, refreshStorageStatus, storageMode, writeSettings]);
+  }, [applyPayloadToForm, buildSettingsPayload, getPayloadActiveMode, onStorageModeChange, persistProfiles, profiles, readProfiles, refreshStorageStatus, storageMode, writeSettings]);
 
   const handleSelectProfile = useCallback((profile: RemoteDbProfile) => {
     setSelectedProfileId(profile.id);
@@ -283,6 +285,8 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
   }, [applyPayloadToForm]);
 
   const handleUseProfile = useCallback(async (profile: RemoteDbProfile) => {
+    if (storageActionRef.current || !persistedSettingsRef.current) return;
+    storageActionRef.current = true;
     const previousPayload = persistedSettingsRef.current;
     setSelectedProfileId(profile.id);
     setSaveState('saving');
@@ -321,10 +325,13 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
         applyPayloadToForm(previousPayload);
         setActiveStorageMode(getPayloadActiveMode(previousPayload));
         setSelectedProfileId(getPayloadActiveMode(previousPayload) === 'remote' ? profileIdForPayload(profiles, previousPayload) : '');
+        await refreshStorageStatus().catch(console.error);
       }
       setSaveState('failed');
       setTestState('failed');
       setTestMessage(String(err));
+    } finally {
+      storageActionRef.current = false;
     }
   }, [applyPayloadToForm, getPayloadActiveMode, onStorageModeChange, persistProfiles, profiles, readProfiles, refreshStorageStatus, writeSettings]);
 
@@ -644,10 +651,7 @@ export default function RemoteStorageButton({ onStorageModeChange }: RemoteStora
 
               <div style={styles.backupPanel} title={t.backupRestoreDesc}>
                 <div style={styles.backupHeader}>
-                  <div style={styles.backupTitleGroup}>
-                    <span style={styles.sectionTitle}>{t.backupRestore}</span>
-                    <span style={styles.betaBadge}>{t.backupBeta}</span>
-                  </div>
+                  <span style={styles.sectionTitle}>{t.backupRestore}</span>
                   <button style={styles.miniTextBtn} onClick={handleOpenBackupFolder}>
                     {t.openBackupFolder}
                   </button>
@@ -748,14 +752,10 @@ const styles: Record<string, React.CSSProperties> = {
     width: '300px',
     maxHeight: 'calc(100vh - 48px)',
     overflowY: 'auto',
-    background: 'var(--panel-glass)',
     border: '1px solid var(--apple-separator)',
     borderRadius: '12px',
     padding: '12px',
     zIndex: 1320,
-    boxShadow: '0 18px 46px rgba(15, 23, 42, 0.2), inset 0 1px 0 var(--hairline-highlight)',
-    backdropFilter: 'blur(44px) saturate(1.9)',
-    WebkitBackdropFilter: 'blur(44px) saturate(1.9)',
   },
   panelTitle: {
     display: 'flex',
@@ -994,21 +994,6 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: '8px',
-  },
-  backupTitleGroup: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    minWidth: 0,
-  },
-  betaBadge: {
-    padding: '1px 5px',
-    borderRadius: '999px',
-    background: 'rgba(245, 158, 11, 0.12)',
-    color: '#b45309',
-    fontSize: '9px',
-    fontWeight: 700,
-    whiteSpace: 'nowrap',
   },
   backupNotice: {
     color: 'var(--text-muted)',

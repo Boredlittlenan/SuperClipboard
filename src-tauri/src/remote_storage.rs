@@ -1,4 +1,5 @@
 use crate::classifier::{classify_text_tags, Category};
+use crate::memo_tags;
 use crate::storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage, UpdateResult};
 use chrono::{DateTime, Utc};
 use fallible_iterator::FallibleIterator;
@@ -16,7 +17,7 @@ use uuid::Uuid;
 
 const DEFAULT_PORT: &str = "5432";
 const DEFAULT_SSL_MODE: &str = "prefer";
-const REMOTE_SCHEMA_VERSION: i64 = 2;
+const REMOTE_SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Error)]
 pub enum RemoteStorageError {
@@ -414,6 +415,9 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
         CREATE INDEX IF NOT EXISTS idx_sc_clipboard_category ON superclipboard.clipboard_entries(category);
         CREATE INDEX IF NOT EXISTS idx_sc_clipboard_created_at ON superclipboard.clipboard_entries(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_sc_clipboard_archived_at ON superclipboard.clipboard_entries(archived_at);
+        CREATE INDEX IF NOT EXISTS idx_sc_clipboard_active_order
+            ON superclipboard.clipboard_entries(pinned DESC, created_at DESC)
+            WHERE archived_at IS NULL AND deleted_at IS NULL;
         ALTER TABLE superclipboard.clipboard_entries
             ADD COLUMN IF NOT EXISTS category_tags TEXT NOT NULL DEFAULT '[]';
 
@@ -423,6 +427,7 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
             title TEXT NOT NULL DEFAULT '',
             body TEXT NOT NULL DEFAULT '',
             tags TEXT NOT NULL DEFAULT '',
+            auto_tags TEXT NOT NULL DEFAULT '[]',
             pinned BOOLEAN NOT NULL DEFAULT false,
             sort_order BIGINT NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
@@ -435,6 +440,11 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
         CREATE INDEX IF NOT EXISTS idx_sc_memos_sort_order ON superclipboard.memos(sort_order DESC);
         CREATE INDEX IF NOT EXISTS idx_sc_memos_updated_at ON superclipboard.memos(updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_sc_memos_archived_at ON superclipboard.memos(archived_at);
+        CREATE INDEX IF NOT EXISTS idx_sc_memos_active_order
+            ON superclipboard.memos(pinned DESC, sort_order DESC)
+            WHERE archived_at IS NULL AND deleted_at IS NULL;
+        ALTER TABLE superclipboard.memos
+            ADD COLUMN IF NOT EXISTS auto_tags TEXT NOT NULL DEFAULT '[]';
 
         CREATE TABLE IF NOT EXISTS superclipboard.sync_events (
             event_id BIGSERIAL PRIMARY KEY,
@@ -495,6 +505,27 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
                 &[&2_i64, &"sync events, notifications, and optimistic record versions"],
             )?;
         }
+        if applied_version < 3 {
+            let rows = transaction.query(
+                "SELECT id, title, body FROM superclipboard.memos WHERE auto_tags = '[]' OR auto_tags = ''",
+                &[],
+            )?;
+            for row in rows {
+                let id: i64 = row.get("id");
+                let title: String = row.get("title");
+                let body: String = row.get("body");
+                let auto_tags = serde_json::to_string(&memo_tags::infer(&title, &body))
+                    .unwrap_or_else(|_| "[]".to_string());
+                transaction.execute(
+                    "UPDATE superclipboard.memos SET auto_tags = $1 WHERE id = $2",
+                    &[&auto_tags, &id],
+                )?;
+            }
+            transaction.execute(
+                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+                &[&3_i64, &"persisted memo auto tags"],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     })
@@ -547,6 +578,8 @@ fn row_to_memo(row: &Row) -> Memo {
         title: row.get("title"),
         body: row.get("body"),
         tags: row.get("tags"),
+        auto_tags: serde_json::from_str::<Vec<String>>(row.get::<_, String>("auto_tags").as_str())
+            .unwrap_or_default(),
         pinned: row.get("pinned"),
         sort_order: row.get("sort_order"),
         created_at: row.get("created_at"),
@@ -587,7 +620,9 @@ pub fn query_clipboard(
     filter: &QueryFilter,
 ) -> RemoteResult<Vec<ClipboardEntry>> {
     let mut sql = String::from(
-        "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
+        "SELECT id, category, category_tags, content_type,
+                CASE WHEN category = 'image' THEN '' ELSE content END AS content,
+                preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
          FROM superclipboard.clipboard_entries WHERE archived_at IS NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -784,7 +819,9 @@ pub fn query_archived_clipboard(
     filter: &QueryFilter,
 ) -> RemoteResult<Vec<ClipboardEntry>> {
     let mut sql = String::from(
-        "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
+        "SELECT id, category, category_tags, content_type,
+                CASE WHEN category = 'image' THEN '' ELSE content END AS content,
+                preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
          FROM superclipboard.clipboard_entries WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -804,6 +841,11 @@ pub fn query_archived_clipboard(
     let limit = filter.limit.unwrap_or(50).clamp(1, 500);
     values.push(Box::new(limit));
     sql.push_str(&format!(" LIMIT ${}", values.len()));
+    let offset = filter.offset.unwrap_or(0).max(0);
+    if offset > 0 {
+        values.push(Box::new(offset));
+        sql.push_str(&format!(" OFFSET ${}", values.len()));
+    }
     let params: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
     with_client(storage, |client| {
         Ok(client
@@ -850,7 +892,7 @@ pub fn purge_old_clipboard_archives(storage: &Storage, days: i64) -> RemoteResul
 
 pub fn query_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
     let mut sql = String::from(
-        "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at, version
+        "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, version
          FROM superclipboard.memos WHERE archived_at IS NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -861,6 +903,11 @@ pub fn query_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<M
     let limit = filter.limit.unwrap_or(100).clamp(1, 500);
     values.push(Box::new(limit));
     sql.push_str(&format!(" LIMIT ${}", values.len()));
+    let offset = filter.offset.unwrap_or(0).max(0);
+    if offset > 0 {
+        values.push(Box::new(offset));
+        sql.push_str(&format!(" OFFSET ${}", values.len()));
+    }
     let params: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
     with_client(storage, |client| {
         Ok(client
@@ -871,15 +918,22 @@ pub fn query_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<M
     })
 }
 
-pub fn create_memo(storage: &Storage, title: &str, body: &str, tags: &str) -> RemoteResult<Memo> {
+pub fn create_memo(
+    storage: &Storage,
+    title: &str,
+    body: &str,
+    tags: &str,
+    auto_tags: &[String],
+) -> RemoteResult<Memo> {
     let uuid = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
+    let auto_tags = serde_json::to_string(auto_tags).unwrap_or_else(|_| "[]".to_string());
     with_client(storage, |client| {
         let row = client.query_one(
-            "INSERT INTO superclipboard.memos (uuid, title, body, tags, sort_order, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM superclipboard.memos), $5, $5)
-             RETURNING id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at, version",
-            &[&uuid, &title, &body, &tags, &now],
+            "INSERT INTO superclipboard.memos (uuid, title, body, tags, auto_tags, sort_order, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM superclipboard.memos), $6, $6)
+             RETURNING id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, version",
+            &[&uuid, &title, &body, &tags, &auto_tags, &now],
         )?;
         Ok(row_to_memo(&row))
     })
@@ -891,19 +945,21 @@ pub fn update_memo(
     title: &str,
     body: &str,
     tags: &str,
+    auto_tags: &[String],
     expected_version: Option<i64>,
 ) -> RemoteResult<UpdateResult> {
     let now = Utc::now().to_rfc3339();
+    let auto_tags = serde_json::to_string(auto_tags).unwrap_or_else(|_| "[]".to_string());
     with_client(storage, |client| {
         let rows = if let Some(expected_version) = expected_version {
             client.execute(
-                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, updated_at = $4, version = version + 1 WHERE id = $5 AND version = $6",
-                &[&title, &body, &tags, &now, &id, &expected_version],
+                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, auto_tags = $4, updated_at = $5, version = version + 1 WHERE id = $6 AND version = $7",
+                &[&title, &body, &tags, &auto_tags, &now, &id, &expected_version],
             )?
         } else {
             client.execute(
-                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, updated_at = $4, version = version + 1 WHERE id = $5",
-                &[&title, &body, &tags, &now, &id],
+                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, auto_tags = $4, updated_at = $5, version = version + 1 WHERE id = $6",
+                &[&title, &body, &tags, &auto_tags, &now, &id],
             )?
         };
         if rows > 0 {
@@ -974,7 +1030,7 @@ pub fn reorder_memos(storage: &Storage, orders: &[(i64, i64)]) -> RemoteResult<(
 
 pub fn query_archived_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
     let mut sql = String::from(
-        "SELECT id, title, body, tags, pinned, sort_order, created_at, updated_at, archived_at, version
+        "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, version
          FROM superclipboard.memos WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -985,6 +1041,11 @@ pub fn query_archived_memos(storage: &Storage, filter: &MemoFilter) -> RemoteRes
     let limit = filter.limit.unwrap_or(100).clamp(1, 500);
     values.push(Box::new(limit));
     sql.push_str(&format!(" LIMIT ${}", values.len()));
+    let offset = filter.offset.unwrap_or(0).max(0);
+    if offset > 0 {
+        values.push(Box::new(offset));
+        sql.push_str(&format!(" OFFSET ${}", values.len()));
+    }
     let params: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
     with_client(storage, |client| {
         Ok(client
@@ -1085,6 +1146,7 @@ mod tests {
             "Codex remote smoke",
             "remote mode test body",
             "smoke",
+            &[],
         )
         .expect("create remote memo");
         assert!(memo.id > 0);
@@ -1098,6 +1160,7 @@ mod tests {
             "Codex remote smoke",
             "stale update",
             "smoke",
+            &[],
             Some(memo.version + 1),
         )
         .expect("detect remote memo conflict");
@@ -1109,6 +1172,7 @@ mod tests {
             "Codex remote smoke",
             "updated remote mode test body",
             "smoke",
+            &[],
             Some(memo.version),
         )
         .expect("update remote memo");

@@ -15,6 +15,8 @@ export default function AppSettingsProvider({ children }: { children: React.Reac
   const [settings, setSettingsState] = useState(defaultSettings);
   const [ready, setReady] = useState(false);
   const settingsRef = useRef(settings);
+  const writeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const settingRevisionRef = useRef<Partial<Record<AppSettingName, number>>>({});
 
   const replaceSettings = useCallback((next: AppSettings) => {
     settingsRef.current = next;
@@ -38,14 +40,18 @@ export default function AppSettingsProvider({ children }: { children: React.Reac
     name: K,
     value: AppSettings[K],
   ) => {
-    const previous = settingsRef.current;
-    replaceSettings({ ...previous, [name]: value });
+    const previousValue = settingsRef.current[name];
+    const revision = (settingRevisionRef.current[name] ?? 0) + 1;
+    settingRevisionRef.current[name] = revision;
+    replaceSettings({ ...settingsRef.current, [name]: value });
     const serialized = serializeAppSetting(name, value);
+    const write = writeQueueRef.current.then(() => setSetting(serialized.key, serialized.value));
+    writeQueueRef.current = write.catch(() => undefined);
     try {
-      await setSetting(serialized.key, serialized.value);
+      await write;
     } catch (error) {
-      if (settingsRef.current[name] === value) {
-        replaceSettings(previous);
+      if (settingRevisionRef.current[name] === revision) {
+        replaceSettings({ ...settingsRef.current, [name]: previousValue });
       }
       throw error;
     }

@@ -1,7 +1,9 @@
+import { useRef } from 'react';
 import type { ClipboardEntry } from '../types';
 import ClipboardItem from './ClipboardItem';
 import { useI18n } from '../i18n';
 import type { UpdateResult } from '../api/clipboard';
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
 
 interface Props {
   entries: ClipboardEntry[];
@@ -17,6 +19,9 @@ interface Props {
   showCategoryIndicator?: boolean;
   onRestore?: (id: number) => void;
   onPermanentDelete?: (id: number) => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 export default function ClipboardList({
@@ -33,8 +38,14 @@ export default function ClipboardList({
   showCategoryIndicator,
   onRestore,
   onPermanentDelete,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
 }: Props) {
   const { t } = useI18n();
+  const listRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  useInfiniteScroll(listRef, loadMoreRef, hasMore && !loadingMore, () => onLoadMore?.());
 
   if (loading && entries.length === 0) {
     return (
@@ -56,7 +67,7 @@ export default function ClipboardList({
   }
 
   return (
-    <div className="clipboard-list" style={styles.list}>
+    <div ref={listRef} className="clipboard-list" style={styles.list}>
       {entries.map((entry) => (
         <ClipboardItem
           key={entry.id}
@@ -74,6 +85,9 @@ export default function ClipboardList({
           onPermanentDelete={onPermanentDelete}
         />
       ))}
+      <div ref={loadMoreRef} style={styles.loadMore} aria-hidden={!loadingMore}>
+        {loadingMore && <div style={styles.loadMoreSpinner} />}
+      </div>
     </div>
   );
 }
@@ -109,6 +123,20 @@ const styles: Record<string, React.CSSProperties> = {
   spinner: {
     width: '24px',
     height: '24px',
+    border: '2px solid var(--border)',
+    borderTopColor: 'var(--accent)',
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
+  },
+  loadMore: {
+    minHeight: '18px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadMoreSpinner: {
+    width: '14px',
+    height: '14px',
     border: '2px solid var(--border)',
     borderTopColor: 'var(--accent)',
     borderRadius: '50%',

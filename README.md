@@ -12,8 +12,8 @@ Chinese display name: `超级剪贴板`.
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_3.2.0_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_3.2.0_x64_en-US.msi`: MSI package
+- `SuperClipboard_3.3.0_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_3.3.0_x64_en-US.msi`: MSI package
 
 ## Highlights
 
@@ -36,7 +36,7 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `3.2.0`
+- Version: `3.3.0`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - UI style: classic UI by default, with Modern UI available in Experimental Features
@@ -120,6 +120,9 @@ pnpm tauri:dev
 # Build frontend
 pnpm build
 
+# Run frontend tests
+pnpm test
+
 # Build Windows installers
 pnpm tauri:build
 ```
@@ -134,14 +137,18 @@ src-tauri/
     storage.rs          # SQLite storage layer
     remote_storage.rs   # External PostgreSQL storage layer
     storage_backend.rs  # Unified local / external storage dispatch
+    commands/           # Clipboard and memo Tauri commands
+    memo_tags.rs        # Persisted memo auto-tag inference
+    update.rs           # GitHub release checks and semantic version comparison
     autostart.rs        # Windows auto-start registry integration
     window_position.rs  # Default window positioning and work-area clamping
-    lib.rs              # Tauri commands and app setup
+    lib.rs              # App lifecycle and cross-domain coordination
     main.rs             # Entry point
 src/
   components/           # React UI components
   api/                  # Tauri command wrappers
-  hooks/                # Shared application hooks
+  hooks/                # Shared settings, pagination, menu, and reorder hooks
+  test/                 # Frontend test setup
   i18n/                 # Translations and i18n context
   settings/             # Typed settings schema and context
   storage/              # External storage profile utilities

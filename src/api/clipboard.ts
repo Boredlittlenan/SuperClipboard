@@ -12,6 +12,11 @@ export async function getEntries(filter?: QueryFilter): Promise<ClipboardEntry[]
   return invoke('get_entries', { filter });
 }
 
+/** Fetch deferred clipboard content, currently used for remote image previews. */
+export async function getEntryContent(id: number): Promise<string | null> {
+  return invoke('get_entry_content', { id });
+}
+
 /** Delete a clipboard entry by ID (optionally archive instead of hard delete) */
 export async function deleteEntry(id: number, archive?: boolean): Promise<boolean> {
   return invoke('delete_entry', { id, archive });

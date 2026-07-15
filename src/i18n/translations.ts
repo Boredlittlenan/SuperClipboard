@@ -135,7 +135,6 @@ export interface Translations {
   noReleaseNotes: string;
   backupRestore: string;
   backupRestoreDesc: string;
-  backupBeta: string;
   backupCompatibilityNotice: string;
   backupVersionMeta: (backupVersion: string, currentVersion: string) => string;
   unknownVersion: string;
@@ -314,7 +313,6 @@ export const zhCN: Translations = {
   noReleaseNotes: '暂无更新说明',
   backupRestore: '备份/恢复',
   backupRestoreDesc: '导出或恢复本地剪贴板、备忘录和设置',
-  backupBeta: '测试版',
   backupCompatibilityNotice: '备份文件为新版 .scbackup 包。恢复会记录备份创建版本和当前恢复版本，旧 gzip .scbackup / .json 不再读取，跨版本恢复不保证可恢复。',
   backupVersionMeta: (backupVersion, currentVersion) => `备份版本 v${backupVersion} · 当前版本 v${currentVersion}`,
   unknownVersion: '未知',
@@ -493,7 +491,6 @@ export const en: Translations = {
   noReleaseNotes: 'No release notes',
   backupRestore: 'Backup / Restore',
   backupRestoreDesc: 'Export or restore local clipboard, memos, and settings',
-  backupBeta: 'Beta',
   backupCompatibilityNotice: 'New .scbackup package files record source and current app versions. Older gzip .scbackup / .json backups are no longer loaded. Cross-version restore is not guaranteed.',
   backupVersionMeta: (backupVersion, currentVersion) => `Backup v${backupVersion} · Current v${currentVersion}`,
   unknownVersion: 'Unknown',

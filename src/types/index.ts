@@ -44,6 +44,7 @@ export interface Memo {
   title: string;
   body: string;
   tags: string;
+  auto_tags: Array<'image' | 'email' | 'path' | 'link' | 'code'>;
   pinned: boolean;
   sort_order: number;
   created_at: string;

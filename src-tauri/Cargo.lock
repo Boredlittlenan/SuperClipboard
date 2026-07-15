@@ -4251,7 +4251,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "superclipboard"
-version = "3.2.0"
+version = "3.3.0"
 dependencies = [
  "arboard",
  "base64 0.22.1",
@@ -4271,6 +4271,7 @@ dependencies = [
  "regex",
  "reqwest 0.12.28",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",

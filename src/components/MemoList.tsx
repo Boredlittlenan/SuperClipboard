@@ -3,12 +3,10 @@ import type React from 'react';
 import { Archive, GripVertical, NotebookText, Pencil, Pin, Plus, Trash2 } from 'lucide-react';
 import type { Memo } from '../types';
 import {
-  getMemos,
   createMemo,
   updateMemo,
   deleteMemo,
   toggleMemoPin,
-  reorderMemos,
   archiveMemo,
   memoCount,
   memoArchiveCount,
@@ -16,6 +14,9 @@ import {
   type MemoAutoTagType,
 } from '../api/memos';
 import { useI18n } from '../i18n';
+import { useInfiniteScroll } from '../hooks/useInfiniteScroll';
+import { useMemoReorder } from '../hooks/useMemoReorder';
+import { usePaginatedMemos } from '../hooks/usePaginatedMemos';
 import { formatRelativeTime, getCategoryColor } from '../utils';
 import MemoRichEditor from './MemoRichEditor';
 import {
@@ -135,24 +136,20 @@ interface Props {
 
 export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, onCountChange, onTotalCountChange, onArchiveCountChange }: Props) {
   const { t } = useI18n();
-  const [memos, setMemos] = useState<Memo[]>([]);
+  const { memos, setMemos, hasMore, loadingMore, refresh: fetchMemos, loadMore } = usePaginatedMemos(searchQuery, refreshKey);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<{ title: string; body: string; tags: string } | null>(null);
   const [savingMemo, setSavingMemo] = useState(false);
-  const [draggedId, setDraggedId] = useState<number | null>(null);
-  const [dragOverId, setDragOverId] = useState<number | null>(null);
   const [expandedMemoIds, setExpandedMemoIds] = useState<Set<number>>(() => new Set());
-  const [autoTagTypesByMemoId, setAutoTagTypesByMemoId] = useState<Record<number, MemoAutoTagType[]>>({});
-  const [fetchNonce, setFetchNonce] = useState(0);
   const [editConflictMessage, setEditConflictMessage] = useState('');
 
   const editingItemRef = useRef<HTMLDivElement>(null);
   const editingIdRef = useRef<number | null>(null);
   const editingVersionRef = useRef(1);
   const newMemoIdRef = useRef<number | null>(null);
-  const fetchRequestRef = useRef(0);
-  const fetchInFlightRef = useRef(false);
-  const fetchPendingRef = useRef(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  useInfiniteScroll(listRef, loadMoreRef, hasMore && !loadingMore, () => { void loadMore(); });
 
   const refreshTotalCount = useCallback(async () => {
     try {
@@ -171,46 +168,6 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   useEffect(() => {
     onCountChange?.(memos.length);
   }, [memos.length, onCountChange]);
-
-  // ─── Fetch memos ──────────────────────────────────────────
-  const fetchMemos = useCallback(async () => {
-    if (fetchInFlightRef.current) {
-      fetchPendingRef.current = true;
-      return;
-    }
-    fetchInFlightRef.current = true;
-    const requestId = ++fetchRequestRef.current;
-    try {
-      const filter = searchQuery.trim() ? { search: searchQuery.trim(), limit: 100 } : { limit: 100 };
-      const data = await getMemos(filter);
-      if (fetchRequestRef.current !== requestId) return;
-      setMemos(data);
-      const tagTypeEntries = await Promise.all(
-        data.map(async (memo) => {
-          try {
-            return [memo.id, await inferMemoTagTypes(memo.title, memo.body)] as const;
-          } catch (err) {
-            console.error('Failed to infer memo tags:', err);
-            return [memo.id, []] as const;
-          }
-        })
-      );
-      if (fetchRequestRef.current !== requestId) return;
-      setAutoTagTypesByMemoId(Object.fromEntries(tagTypeEntries));
-    } catch (err) {
-      console.error('Failed to fetch memos:', err);
-    } finally {
-      fetchInFlightRef.current = false;
-      if (fetchPendingRef.current) {
-        fetchPendingRef.current = false;
-        setFetchNonce((value) => value + 1);
-      }
-    }
-  }, [searchQuery]);
-
-  useEffect(() => {
-    fetchMemos();
-  }, [fetchMemos, refreshKey, fetchNonce]);
 
   // ─── Auto-scroll editing item into view ───────────────────
   useEffect(() => {
@@ -260,11 +217,6 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       if (!hasContent && newMemoIdRef.current === id) {
         await deleteMemo(id);
         setMemos(prev => prev.filter(m => m.id !== id));
-        setAutoTagTypesByMemoId(prev => {
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
         void refreshTotalCount();
       } else {
         const result = await updateMemo(
@@ -289,19 +241,19 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                 title: editDraft.title,
                 body: editDraft.body,
                 tags: finalTags,
+                auto_tags: autoTagTypes,
                 updated_at: updatedAt,
                 version: m.version + 1,
               }
             : m
         ));
-        setAutoTagTypesByMemoId(prev => ({ ...prev, [id]: autoTagTypes }));
       }
       stopEditing();
     } catch (err) {
       console.error('Failed to save memo:', err);
       setSavingMemo(false);
     }
-  }, [editDraft, fetchMemos, refreshTotalCount, savingMemo, stopEditing, t]);
+  }, [editDraft, fetchMemos, refreshTotalCount, savingMemo, setMemos, stopEditing, t]);
 
   const handleCancelEditing = useCallback(async () => {
     const id = editingIdRef.current;
@@ -321,7 +273,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     } finally {
       stopEditing();
     }
-  }, [refreshTotalCount, stopEditing]);
+  }, [refreshTotalCount, setMemos, stopEditing]);
 
   const expandMemo = useCallback((id: number) => {
     setExpandedMemoIds(prev => {
@@ -374,11 +326,6 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
         await deleteMemo(id);
       }
       setMemos(prev => prev.filter(m => m.id !== id));
-      setAutoTagTypesByMemoId(prev => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
       void refreshTotalCount();
       if (editingId === id) {
         setEditingId(null);
@@ -402,106 +349,13 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
 
   // ─── Pointer-based Drag-and-drop ────────────────────────────
   const canDrag = editingId === null && searchQuery.trim() === '';
-  const [dragGhostPos, setDragGhostPos] = useState<{ x: number; y: number } | null>(null);
-  const [dragGhostContent, setDragGhostContent] = useState<string>('');
-  const dragActiveRef = useRef(false);
-
-  const handlePointerDown = useCallback((e: React.PointerEvent, id: number) => {
-    if (!canDrag) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const memo = memos.find(m => m.id === id);
-    if (!memo) return;
-    dragActiveRef.current = true;
-    setDraggedId(id);
-    setDragGhostPos({ x: e.clientX, y: e.clientY });
-    setDragGhostContent(
-      memo.title || (hasMemoImage(memo.body) ? '[image]' : memo.body.slice(0, 40)) || '(untitled)'
-    );
-  }, [canDrag, memos]);
-
-  useEffect(() => {
-    if (draggedId === null) return;
-
-    const onMove = (e: PointerEvent) => {
-      if (!dragActiveRef.current) return;
-      e.preventDefault();
-      setDragGhostPos({ x: e.clientX, y: e.clientY });
-
-      // Temporarily hide ghost to get element underneath
-      const ghost = document.querySelector('.memo-drag-ghost');
-      if (ghost) (ghost as HTMLElement).style.display = 'none';
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      if (ghost) (ghost as HTMLElement).style.display = '';
-
-      if (el) {
-        const entry = el.closest('.memo-entry[data-memo-id]');
-        if (entry) {
-          const targetId = Number(entry.getAttribute('data-memo-id'));
-          if (targetId && targetId !== draggedId && !memos.find(m => m.id === targetId)?.pinned) {
-            setDragOverId(targetId);
-          } else {
-            setDragOverId(null);
-          }
-        } else {
-          setDragOverId(null);
-        }
-      }
-    };
-
-    const onUp = () => {
-      dragActiveRef.current = false;
-
-      setDraggedId(prevDragged => {
-        setDragOverId(prevOver => {
-          if (prevDragged !== null && prevOver !== null && prevDragged !== prevOver) {
-            const unpinned = memos.filter(m => !m.pinned);
-            const dragIdx = unpinned.findIndex(m => m.id === prevDragged);
-            const dropIdx = unpinned.findIndex(m => m.id === prevOver);
-            if (dragIdx !== -1 && dropIdx !== -1) {
-              const reordered = [...unpinned];
-              const [moved] = reordered.splice(dragIdx, 1);
-              reordered.splice(dropIdx, 0, moved);
-
-              const maxOrder = Math.max(...unpinned.map(m => m.sort_order), 0);
-              const orders = reordered.map((m, i) => ({
-                id: m.id,
-                sort_order: maxOrder - i,
-              }));
-
-              setMemos(prev => {
-                const updated = prev.map(m => {
-                  const found = orders.find(o => o.id === m.id);
-                  return found ? { ...m, sort_order: found.sort_order } : m;
-                });
-                return updated.sort((a, b) => {
-                  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-                  return b.sort_order - a.sort_order;
-                });
-              });
-
-              reorderMemos(orders).catch(err => {
-                console.error('Reorder failed, refreshing:', err);
-                fetchMemos();
-              });
-            }
-          }
-          return null; // reset dragOverId
-        });
-        return null; // reset draggedId
-      });
-
-      setDragGhostPos(null);
-      setDragGhostContent('');
-    };
-
-    document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
-    return () => {
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-    };
-  }, [draggedId, memos, fetchMemos]);
+  const {
+    draggedId,
+    dragOverId,
+    dragGhostPos,
+    dragGhostContent,
+    handlePointerDown,
+  } = useMemoReorder(memos, setMemos, canDrag, fetchMemos);
 
   // ─── Render helpers ───────────────────────────────────────
   const pinnedMemos = memos.filter(m => m.pinned);
@@ -515,11 +369,8 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     const hasImages = hasMemoImage(memo.body);
     const canExpand = !isEditing && isMemoBodyCollapsible(memo.body);
     const memoTagLabels = getMemoTagLabels(t);
-    const hasAutoTagInfo = Object.prototype.hasOwnProperty.call(autoTagTypesByMemoId, memo.id);
-    const detectedAutoTagTypes = autoTagTypesByMemoId[memo.id] ?? [];
-    const visibleTags = hasAutoTagInfo
-      ? filterStaleAutoTags(memo.tags, detectedAutoTagTypes, memoTagLabels)
-      : splitTags(memo.tags);
+    const detectedAutoTagTypes = memo.auto_tags ?? [];
+    const visibleTags = filterStaleAutoTags(memo.tags, detectedAutoTagTypes, memoTagLabels);
 
     return (
       <div
@@ -761,9 +612,12 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
           <button className="memo-new-button" style={styles.newBtn} onClick={handleCreate}><Plus size={14} strokeWidth={2.25} /> {t.memoNew}</button>
           {editConflictMessage && <div style={styles.editConflict}>{editConflictMessage}</div>}
         </div>
-      <div style={styles.list}>
+      <div ref={listRef} style={styles.list}>
         {pinnedMemos.map(m => renderMemoItem(m, false))}
         {unpinnedMemos.map(m => renderMemoItem(m, true))}
+        <div ref={loadMoreRef} style={styles.loadMore} aria-hidden={!loadingMore}>
+          {loadingMore && <div style={styles.loadMoreSpinner} />}
+        </div>
       </div>
       {/* Floating ghost clone that follows cursor during drag */}
       {dragGhostPos && draggedId !== null && (
@@ -820,6 +674,20 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflowY: 'auto',
     overflowX: 'hidden',
+  },
+  loadMore: {
+    minHeight: '18px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadMoreSpinner: {
+    width: '14px',
+    height: '14px',
+    border: '2px solid var(--border)',
+    borderTopColor: 'var(--memo-contrast)',
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
   },
   empty: {
     flex: 1,

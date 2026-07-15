@@ -19,6 +19,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { formatShortcutLabel } from '../utils';
 import { useAppSettings } from '../hooks/useAppSettings';
+import { useClickOutside } from '../hooks/useClickOutside';
 import { SettingRow, ToggleSettingRow } from './settings/SettingRow';
 
 const LANGUAGES: { value: Locale; labelKey: 'langZhCN' | 'langEn' }[] = [
@@ -100,6 +101,7 @@ export default function SettingsButton({
   const [shortcut, setShortcutState] = useState('Alt+X');
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState('');
+  const [languageError, setLanguageError] = useState('');
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'upToDate' | 'hasUpdate' | 'failed'>('idle');
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const recorderRef = useRef<HTMLButtonElement>(null);
@@ -167,34 +169,14 @@ export default function SettingsButton({
     }
   }, [memoColor, onShortcutChange, open]);
 
-  // Close panel when clicking outside
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setRecording(false);
-        setError('');
-        setUpdateStatus('idle');
-        setShowColorPicker(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  // Close color picker when clicking outside it (but inside the panel)
-  useEffect(() => {
-    if (!showColorPicker) return;
-    const handler = (e: MouseEvent) => {
-      if (colorRef.current && !colorRef.current.contains(e.target as Node)) {
-        setShowColorPicker(false);
-      }
-    };
-    // Delay to avoid the same click that opens it
-    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0);
-    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
-  }, [showColorPicker]);
+  useClickOutside(panelRef, open, () => {
+    setOpen(false);
+    setRecording(false);
+    setError('');
+    setUpdateStatus('idle');
+    setShowColorPicker(false);
+  });
+  useClickOutside(colorRef, showColorPicker, () => setShowColorPicker(false), true);
 
   // Keyboard capture for shortcut recording
   useEffect(() => {
@@ -385,12 +367,18 @@ export default function SettingsButton({
                     ...styles.langBtn,
                     ...(locale === value ? styles.langBtnActive : {}),
                   }}
-                  onClick={() => setLocale(value)}
+                  onClick={() => {
+                    setLanguageError('');
+                    void setLocale(value).catch((localeError) => {
+                      setLanguageError(String(localeError));
+                    });
+                  }}
                 >
                   {t[labelKey]}
                 </button>
               ))}
             </div>
+            {languageError && <span style={styles.errorText}>{languageError}</span>}
           </div>
 
           {/* System Settings header */}
@@ -643,14 +631,10 @@ const styles: Record<string, React.CSSProperties> = {
     width: '220px',
     maxHeight: 'calc(100vh - 48px)',
     overflowY: 'auto',
-    background: 'var(--panel-glass)',
     border: '1px solid var(--apple-separator)',
     borderRadius: '12px',
     padding: '12px',
     zIndex: 1300,
-    boxShadow: '0 18px 46px rgba(15, 23, 42, 0.2), inset 0 1px 0 var(--hairline-highlight)',
-    backdropFilter: 'blur(44px) saturate(1.9)',
-    WebkitBackdropFilter: 'blur(44px) saturate(1.9)',
   },
   panelTitle: {
     display: 'flex',

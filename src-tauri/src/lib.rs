@@ -2,22 +2,23 @@ mod autostart;
 mod backup;
 mod classifier;
 mod clipboard;
+mod commands;
+mod memo_tags;
 mod remote_storage;
 mod storage;
 mod storage_backend;
+mod update;
 mod window_position;
 
 use clipboard::ClipboardMonitor;
 use log::{debug, info, warn};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-use storage::{
-    ClipboardEntry, Memo, MemoFilter, QueryFilter, RestoreSummary, Storage, UpdateResult,
-};
+use storage::{RestoreSummary, Storage};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Emitter;
 use tauri::Manager;
@@ -26,22 +27,8 @@ use window_position::{WindowPoint, WindowPositionService, WindowSize};
 /// Current application version
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// GitHub repository owner/name for update checks
-const GITHUB_REPO: &str = "Boredlittlenan/SuperClipboard";
 const DEFAULT_SHORTCUT: &str = "Alt+X";
 const DEFAULT_SETTINGS_VERSION: &str = "2";
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateInfo {
-    pub current_version: String,
-    pub latest_version: String,
-    pub download_url: String,
-    pub has_update: bool,
-    pub release_name: String,
-    pub release_notes: String,
-    pub published_at: String,
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,7 +43,7 @@ pub struct BackupFileInfo {
 
 /// Tauri-managed application state
 pub struct AppState {
-    storage: Arc<Storage>,
+    pub(crate) storage: Arc<Storage>,
     _monitor: std::sync::Mutex<ClipboardMonitor>,
     current_shortcut: std::sync::Mutex<String>,
     shortcut_recording: Arc<AtomicBool>,
@@ -140,7 +127,7 @@ where
     result
 }
 
-async fn run_storage<T, F>(storage: Arc<Storage>, operation: F) -> Result<T, String>
+pub(crate) async fn run_storage<T, F>(storage: Arc<Storage>, operation: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce(&Storage) -> Result<T, String> + Send + 'static,
@@ -494,167 +481,6 @@ fn register_toggle_shortcut(
         })
 }
 
-// ─── Tauri Commands ──────────────────────────────────────────────────
-
-#[tauri::command]
-async fn get_entries(
-    state: tauri::State<'_, AppState>,
-    filter: Option<QueryFilter>,
-) -> Result<Vec<ClipboardEntry>, String> {
-    let filter = filter.unwrap_or_default();
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::get_entries(storage, &filter)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn delete_entry(
-    state: tauri::State<'_, AppState>,
-    id: i64,
-    archive: Option<bool>,
-) -> Result<bool, String> {
-    let archive = archive.unwrap_or(false);
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::delete_entry(storage, id, archive)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn toggle_pin(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::toggle_pin(storage, id)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn update_entry(
-    state: tauri::State<'_, AppState>,
-    id: i64,
-    content: String,
-    expected_version: Option<i64>,
-) -> Result<UpdateResult, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::update_entry(storage, id, &content, expected_version)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
-    run_storage(state.storage.clone(), storage_backend::get_stats).await
-}
-
-#[tauri::command]
-async fn clear_unpinned(
-    state: tauri::State<'_, AppState>,
-    archive: Option<bool>,
-) -> Result<u64, String> {
-    let archive = archive.unwrap_or(false);
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::clear_unpinned(storage, archive)
-    })
-    .await
-}
-
-// ─── Archive Commands ──────────────────────────────────────────
-
-#[tauri::command]
-async fn archive_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::archive_entry(storage, id)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn unarchive_entry(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::unarchive_entry(storage, id)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_archived_entries(
-    state: tauri::State<'_, AppState>,
-    filter: Option<QueryFilter>,
-) -> Result<Vec<ClipboardEntry>, String> {
-    let filter = filter.unwrap_or_default();
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::get_archived_entries(storage, &filter)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn archive_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
-    run_storage(state.storage.clone(), storage_backend::archive_count).await
-}
-
-#[tauri::command]
-async fn permanent_delete(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::permanent_delete(storage, id)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn purge_old_archives(state: tauri::State<'_, AppState>, days: i64) -> Result<u64, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::purge_old_archives(storage, days)
-    })
-    .await
-}
-
-/// Copy a stored entry back to the system clipboard
-#[tauri::command]
-async fn copy_to_clipboard(
-    state: tauri::State<'_, AppState>,
-    id: i64,
-    use_original: Option<bool>,
-) -> Result<bool, String> {
-    let entry = run_storage(state.storage.clone(), move |storage| {
-        storage_backend::get_entry_by_id(storage, id)
-    })
-    .await?;
-
-    if let Some(entry) = entry {
-        let mut clip = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-        match entry.category {
-            classifier::Category::Image => {
-                use base64::Engine;
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(&entry.content)
-                    .map_err(|e| e.to_string())?;
-                let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-                let rgba = img.to_rgba8();
-                let (w, h) = rgba.dimensions();
-                let img_data = arboard::ImageData {
-                    width: w as usize,
-                    height: h as usize,
-                    bytes: rgba.into_raw().into(),
-                };
-                clip.set_image(img_data).map_err(|e| e.to_string())?;
-            }
-            _ => {
-                let text = if use_original.unwrap_or(false) {
-                    entry.original_content.as_deref().unwrap_or(&entry.content)
-                } else {
-                    &entry.content
-                };
-                clip.set_text(text).map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
-
 /// Get a user setting value by key
 #[tauri::command]
 fn get_setting(state: tauri::State<'_, AppState>, key: String) -> Result<Option<String>, String> {
@@ -693,7 +519,9 @@ fn set_setting(
         .set_setting(&key, &value)
         .map_err(|e| e.to_string())?;
     if key == "language" {
-        update_tray_menu(&app, &value).map_err(|e| e.to_string())?;
+        if let Err(error) = update_tray_menu(&app, &value) {
+            warn!("Failed to update tray language: {error}");
+        }
     }
     if setting_affects_remote_pool(&key) {
         remote_storage::invalidate_pool();
@@ -715,7 +543,9 @@ fn set_settings(
         .set_settings(&values)
         .map_err(|e| e.to_string())?;
     if let Some(language) = values.get("language") {
-        update_tray_menu(&app, language).map_err(|e| e.to_string())?;
+        if let Err(error) = update_tray_menu(&app, language) {
+            warn!("Failed to update tray language: {error}");
+        }
     }
     if values.keys().any(|key| setting_affects_remote_pool(key)) {
         remote_storage::invalidate_pool();
@@ -994,211 +824,6 @@ async fn paste_to_active_window(
     Ok(true)
 }
 
-// ─── Memo Commands ──────────────────────────────────────────────
-
-fn memo_body_has_image(body: &str) -> bool {
-    body.contains("![image](data:image/")
-        || body.contains("![image](http://")
-        || body.contains("![image](https://")
-        || body.contains("data:image/")
-}
-
-fn memo_auto_tag_from_category(category: &classifier::Category) -> Option<&'static str> {
-    match category {
-        classifier::Category::Link => Some("link"),
-        classifier::Category::Email => Some("email"),
-        classifier::Category::FilePath => Some("path"),
-        classifier::Category::Code => Some("code"),
-        _ => None,
-    }
-}
-
-#[tauri::command]
-fn infer_memo_tag_types(title: String, body: String) -> Vec<String> {
-    let content = format!("{}\n{}", title, body);
-    let mut tags = Vec::new();
-
-    if memo_body_has_image(&body) {
-        tags.push("image".to_string());
-    }
-
-    for category in classifier::classify_text_tags(&content) {
-        if let Some(tag) = memo_auto_tag_from_category(&category) {
-            if !tags.iter().any(|value| value == tag) {
-                tags.push(tag.to_string());
-            }
-        }
-    }
-
-    tags
-}
-
-#[cfg(test)]
-mod memo_tag_tests {
-    use super::*;
-
-    #[test]
-    fn memo_tags_reuse_clipboard_classifier_without_false_code() {
-        let tags = infer_memo_tag_types(
-            "555".to_string(),
-            "5555 222@123.com https://www.diskgenius.cn/help/restorefile\nhttps://v2rayn.co/"
-                .to_string(),
-        );
-
-        assert!(tags.contains(&"email".to_string()));
-        assert!(tags.contains(&"link".to_string()));
-        assert!(!tags.contains(&"code".to_string()));
-    }
-
-    #[test]
-    fn memo_tags_keep_image_signal() {
-        let tags = infer_memo_tag_types(
-            String::new(),
-            "note\n![image](data:image/png;base64,abc)".to_string(),
-        );
-
-        assert_eq!(tags.first().map(String::as_str), Some("image"));
-    }
-}
-
-#[tauri::command]
-async fn get_memos(
-    state: tauri::State<'_, AppState>,
-    filter: Option<MemoFilter>,
-) -> Result<Vec<Memo>, String> {
-    let filter = filter.unwrap_or_default();
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::get_memos(storage, &filter)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn create_memo(
-    state: tauri::State<'_, AppState>,
-    title: String,
-    body: String,
-    tags: String,
-) -> Result<Memo, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::create_memo(storage, &title, &body, &tags)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn update_memo(
-    state: tauri::State<'_, AppState>,
-    id: i64,
-    title: String,
-    body: String,
-    tags: String,
-    expected_version: Option<i64>,
-) -> Result<UpdateResult, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::update_memo(storage, id, &title, &body, &tags, expected_version)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn delete_memo(
-    state: tauri::State<'_, AppState>,
-    id: i64,
-    archive: Option<bool>,
-) -> Result<bool, String> {
-    let archive = archive.unwrap_or(false);
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::delete_memo(storage, id, archive)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn toggle_memo_pin(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::toggle_memo_pin(storage, id)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn memo_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
-    run_storage(state.storage.clone(), storage_backend::memo_count).await
-}
-
-#[derive(Deserialize)]
-struct ReorderItem {
-    id: i64,
-    sort_order: i64,
-}
-
-#[tauri::command]
-async fn reorder_memos(
-    state: tauri::State<'_, AppState>,
-    orders: Vec<ReorderItem>,
-) -> Result<(), String> {
-    let pairs: Vec<(i64, i64)> = orders.iter().map(|r| (r.id, r.sort_order)).collect();
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::reorder_memos(storage, &pairs)
-    })
-    .await
-}
-
-// ─── Memo Archive Commands ──────────────────────────────────────
-
-#[tauri::command]
-async fn archive_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::archive_memo(storage, id)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn unarchive_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::unarchive_memo(storage, id)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn get_archived_memos(
-    state: tauri::State<'_, AppState>,
-    filter: Option<MemoFilter>,
-) -> Result<Vec<Memo>, String> {
-    let filter = filter.unwrap_or_default();
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::get_archived_memos(storage, &filter)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn memo_archive_count(state: tauri::State<'_, AppState>) -> Result<i64, String> {
-    run_storage(state.storage.clone(), storage_backend::memo_archive_count).await
-}
-
-#[tauri::command]
-async fn permanent_delete_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::permanent_delete_memo(storage, id)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn purge_old_memo_archives(
-    state: tauri::State<'_, AppState>,
-    days: i64,
-) -> Result<u64, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::purge_old_memo_archives(storage, days)
-    })
-    .await
-}
-
 /// Open a URL in the system default browser
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -1225,133 +850,6 @@ async fn get_storage_status(
         Ok(storage_backend::status(storage))
     })
     .await
-}
-
-/// Check for updates from GitHub Releases
-#[tauri::command]
-async fn check_update() -> Result<UpdateInfo, String> {
-    let url = format!(
-        "https://api.github.com/repos/{}/releases/latest",
-        GITHUB_REPO
-    );
-
-    let client = reqwest::Client::builder()
-        .user_agent("SuperClipboard")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    let resp: serde_json::Value = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Network error: {}", e))?
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
-
-    let tag = resp
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("v0.0.0");
-
-    // Strip leading 'v' or 'V' if present
-    let latest = tag
-        .strip_prefix('v')
-        .or_else(|| tag.strip_prefix('V'))
-        .unwrap_or(tag);
-    let current = APP_VERSION;
-
-    let has_update = compare_versions(latest, current);
-
-    let download_url = resp
-        .get("html_url")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&format!(
-            "https://github.com/{}/releases/latest",
-            GITHUB_REPO
-        ))
-        .to_string();
-    let release_name = resp
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or(tag)
-        .to_string();
-    let published_at = resp
-        .get("published_at")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let release_notes = resp
-        .get("body")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .take(8)
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    Ok(UpdateInfo {
-        current_version: current.to_string(),
-        latest_version: latest.to_string(),
-        download_url,
-        has_update,
-        release_name,
-        release_notes,
-        published_at,
-    })
-}
-
-/// Compare two app version strings: returns true if `latest` > `current`.
-///
-/// Historical SuperClipboard releases use decimal-style minor numbers:
-/// `2.2.0` is followed by the user-facing `2.3.0`. Normalize a single-digit
-/// minor segment before comparing so future checks do not regress.
-fn compare_versions(latest: &str, current: &str) -> bool {
-    let parse = |s: &str| -> Vec<u64> {
-        let parts = s.split('.').collect::<Vec<_>>();
-        (0..3)
-            .map(|index| {
-                let raw = parts.get(index).copied().unwrap_or("0");
-                let value = raw.parse::<u64>().unwrap_or(0);
-                if index == 1 && raw.len() == 1 && value > 0 {
-                    value * 10
-                } else {
-                    value
-                }
-            })
-            .collect()
-    };
-    let a = parse(latest);
-    let b = parse(current);
-    for i in 0..3 {
-        let va = a[i];
-        let vb = b[i];
-        if va > vb {
-            return true;
-        }
-        if va < vb {
-            return false;
-        }
-    }
-    false
-}
-
-#[cfg(test)]
-mod version_tests {
-    use super::compare_versions;
-
-    #[test]
-    fn compares_decimal_style_minor_versions() {
-        assert!(compare_versions("2.3.0", "2.2.0"));
-        assert!(!compare_versions("2.2.0", "2.3.0"));
-    }
-
-    #[test]
-    fn keeps_patch_comparison_after_minor_normalization() {
-        assert!(compare_versions("2.3.1", "2.3.0"));
-        assert!(!compare_versions("2.3.0", "2.3.1"));
-    }
 }
 
 // ─── App Setup ───────────────────────────────────────────────────────
@@ -1467,19 +965,20 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_entries,
-            delete_entry,
-            toggle_pin,
-            update_entry,
-            get_stats,
-            clear_unpinned,
-            archive_entry,
-            unarchive_entry,
-            get_archived_entries,
-            archive_count,
-            permanent_delete,
-            purge_old_archives,
-            copy_to_clipboard,
+            commands::clipboard::get_entries,
+            commands::clipboard::get_entry_content,
+            commands::clipboard::delete_entry,
+            commands::clipboard::toggle_pin,
+            commands::clipboard::update_entry,
+            commands::clipboard::get_stats,
+            commands::clipboard::clear_unpinned,
+            commands::clipboard::archive_entry,
+            commands::clipboard::unarchive_entry,
+            commands::clipboard::get_archived_entries,
+            commands::clipboard::archive_count,
+            commands::clipboard::permanent_delete,
+            commands::clipboard::purge_old_archives,
+            commands::clipboard::copy_to_clipboard,
             get_setting,
             get_settings,
             set_setting,
@@ -1489,27 +988,27 @@ pub fn run() {
             get_shortcut,
             set_shortcut,
             set_shortcut_recording,
-            infer_memo_tag_types,
-            get_memos,
-            create_memo,
-            update_memo,
-            delete_memo,
-            toggle_memo_pin,
-            memo_count,
-            reorder_memos,
-            archive_memo,
-            unarchive_memo,
-            get_archived_memos,
-            memo_archive_count,
-            permanent_delete_memo,
-            purge_old_memo_archives,
+            memo_tags::infer_memo_tag_types,
+            commands::memos::get_memos,
+            commands::memos::create_memo,
+            commands::memos::update_memo,
+            commands::memos::delete_memo,
+            commands::memos::toggle_memo_pin,
+            commands::memos::memo_count,
+            commands::memos::reorder_memos,
+            commands::memos::archive_memo,
+            commands::memos::unarchive_memo,
+            commands::memos::get_archived_memos,
+            commands::memos::memo_archive_count,
+            commands::memos::permanent_delete_memo,
+            commands::memos::purge_old_memo_archives,
             set_always_on_top,
             create_backup,
             list_backups,
             restore_backup,
             open_backup_folder,
             paste_to_active_window,
-            check_update,
+            update::check_update,
             open_url,
             test_remote_storage,
             initialize_remote_storage,
