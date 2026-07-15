@@ -29,6 +29,7 @@
   --apple-control-hover: rgba(118, 118, 128, 0.18);
   --panel-glass: rgba(255, 255, 255, 0.74);
   --menu-glass: rgba(255, 255, 255, 0.46);
+  --menu-border: rgba(60, 60, 67, 0.24);
   --tab-glass: rgba(255, 255, 255, 0.38);
 }
 
@@ -61,6 +62,7 @@
   --apple-control-hover: rgba(120, 120, 128, 0.26);
   --panel-glass: rgba(30, 30, 30, 0.74);
   --menu-glass: rgba(24, 24, 24, 0.54);
+  --menu-border: rgba(255, 255, 255, 0.18);
   --tab-glass: rgba(24, 24, 24, 0.44);
 }
 
@@ -625,10 +627,11 @@
 }
 
 .app-root[data-ui-style="modern"] .glass-menu-panel {
+  --border: var(--menu-border);
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.04)),
     var(--menu-glass) !important;
-  border-color: var(--apple-separator) !important;
+  border-color: var(--menu-border) !important;
   box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18), inset 0 1px 0 var(--hairline-highlight) !important;
   backdrop-filter: blur(38px) saturate(1.8) contrast(0.96) !important;
 }
