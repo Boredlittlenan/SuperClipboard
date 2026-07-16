@@ -44,9 +44,14 @@ export function getTabLabel(tab: FilterTab, t: Translations): string {
   return map[tab as Exclude<FilterTab, 'memo' | 'archive'>] ?? tab;
 }
 
+function parseTimestamp(value: string): Date {
+  const legacySqliteTimestamp = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value);
+  return new Date(legacySqliteTimestamp ? `${value.replace(' ', 'T')}Z` : value);
+}
+
 /** Format relative time string using translations */
 export function formatRelativeTime(isoString: string, t: Translations): string {
-  const date = new Date(isoString);
+  const date = parseTimestamp(isoString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
@@ -64,7 +69,7 @@ export function formatRelativeTime(isoString: string, t: Translations): string {
 }
 
 export function getArchiveDaysRemaining(archivedAt: string): number {
-  const archivedDate = new Date(archivedAt);
+  const archivedDate = parseTimestamp(archivedAt);
   const expiryDate = new Date(archivedDate.getTime() + 30 * 24 * 60 * 60 * 1000);
   return Math.max(0, Math.ceil((expiryDate.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
 }

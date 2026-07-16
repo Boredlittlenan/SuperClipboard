@@ -23,6 +23,21 @@ export async function getEntryContent(id: number): Promise<string | null> {
   return loadEntryContent(id);
 }
 
+/** Save an image clipboard entry as a PNG file selected by the user. */
+export async function exportClipboardImage(id: number, path: string): Promise<void> {
+  return invoke('export_clipboard_image', { id, path });
+}
+
+/** Import dropped plain text into the system clipboard and the active storage backend. */
+export async function importDroppedText(text: string): Promise<boolean> {
+  return invoke('import_dropped_text', { text });
+}
+
+/** Import an image data URL dropped onto the app into the system clipboard and history. */
+export async function importDroppedImage(dataUrl: string): Promise<boolean> {
+  return invoke('import_dropped_image', { dataUrl });
+}
+
 /** Delete a clipboard entry by ID (optionally archive instead of hard delete) */
 export async function deleteEntry(id: number, archive?: boolean): Promise<boolean> {
   return invoke('delete_entry', { id, archive });

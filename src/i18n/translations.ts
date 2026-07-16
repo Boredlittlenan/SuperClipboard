@@ -31,6 +31,10 @@ export interface Translations {
   editConflict: string;
   cancel: string;
   openInBrowser: string;
+  exportImage: string;
+  exportImageFailed: string;
+  previewImage: string;
+  closePreview: string;
   restore: string;
   archive: string;
   permanentDelete: string;
@@ -62,6 +66,7 @@ export interface Translations {
   memoTab: string;
   memoSearchPlaceholder: string;
   memoNew: string;
+  memoUntitled: string;
   memoTitlePlaceholder: string;
   memoBodyPlaceholder: string;
   memoTagsPlaceholder: string;
@@ -81,6 +86,11 @@ export interface Translations {
 
   // Toast
   copied: string;
+  dropImportPrompt: string;
+  dropImportHint: string;
+  dropImporting: string;
+  dropImportDone: string;
+  dropImportFailed: string;
 
   // Settings
   settings: string;
@@ -214,6 +224,10 @@ export const zhCN: Translations = {
   editConflict: '内容已被其他设备修改，已刷新最新内容，请重新编辑后再保存',
   cancel: '取消',
   openInBrowser: '在浏览器中打开',
+  exportImage: '另存为图片',
+  exportImageFailed: '图片导出失败，请重试',
+  previewImage: '预览图片',
+  closePreview: '关闭预览',
   restore: '恢复',
   archive: '回收站',
   permanentDelete: '彻底删除',
@@ -242,6 +256,7 @@ export const zhCN: Translations = {
   memoTab: '备忘录',
   memoSearchPlaceholder: '搜索备忘录...',
   memoNew: '新建备忘录',
+  memoUntitled: '无标题',
   memoTitlePlaceholder: '标题',
   memoBodyPlaceholder: '写点什么...',
   memoTagsPlaceholder: '添加标签，逗号分隔',
@@ -260,6 +275,11 @@ export const zhCN: Translations = {
   savePositionDesc: '记录上次窗口位置，下次启动时恢复',
 
   copied: '已复制！',
+  dropImportPrompt: '松开以收录到剪贴板',
+  dropImportHint: '支持拖入文字、图片或图片文件',
+  dropImporting: '正在收录...',
+  dropImportDone: '已收录到剪贴板',
+  dropImportFailed: '收录失败，请重试',
 
   settings: '设置',
   language: '语言',
@@ -392,6 +412,10 @@ export const en: Translations = {
   editConflict: 'This item changed on another device. The latest content has been refreshed; review and save again.',
   cancel: 'Cancel',
   openInBrowser: 'Open in browser',
+  exportImage: 'Save image as',
+  exportImageFailed: 'Could not save the image. Please try again.',
+  previewImage: 'Preview image',
+  closePreview: 'Close preview',
   restore: 'Restore',
   archive: 'Recycle Bin',
   permanentDelete: 'Delete Forever',
@@ -420,6 +444,7 @@ export const en: Translations = {
   memoTab: 'Memos',
   memoSearchPlaceholder: 'Search memos...',
   memoNew: 'New Memo',
+  memoUntitled: 'Untitled',
   memoTitlePlaceholder: 'Title',
   memoBodyPlaceholder: 'Write something...',
   memoTagsPlaceholder: 'Tags, comma separated',
@@ -438,6 +463,11 @@ export const en: Translations = {
   savePositionDesc: 'Remember last window position across restarts',
 
   copied: 'Copied!',
+  dropImportPrompt: 'Drop to add to clipboard',
+  dropImportHint: 'Text, images, and image files are supported',
+  dropImporting: 'Adding to clipboard...',
+  dropImportDone: 'Added to clipboard',
+  dropImportFailed: 'Could not add to clipboard. Try again.',
 
   settings: 'Settings',
   language: 'Language',

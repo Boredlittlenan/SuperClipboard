@@ -578,7 +578,7 @@ export default function SettingsButton({
               <div style={styles.updateResultStack}>
                 <div style={styles.updateResultHeader}>
                   <span style={styles.updateNewText}>{t.hasUpdate(updateInfo.latestVersion)}</span>
-                  <button style={styles.updateDownloadBtn} onClick={handleDownload}>
+                  <button className="update-download-btn" style={styles.updateDownloadBtn} onClick={handleDownload}>
                     {t.downloadUpdate}
                   </button>
                 </div>
@@ -881,7 +881,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '11px',
     fontWeight: 600,
     cursor: 'pointer',
-    transition: 'opacity 0.15s',
+    transition: 'background-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease',
     flexShrink: 0,
   },
   updateRetryBtn: {

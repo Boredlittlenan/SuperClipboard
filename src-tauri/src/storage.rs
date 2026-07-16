@@ -13,7 +13,7 @@ use thiserror::Error;
 const CLIPBOARD_QUERY_LIMIT: i64 = 50;
 const MEMO_QUERY_LIMIT: i64 = 100;
 const MAX_QUERY_LIMIT: i64 = 500;
-const SCHEMA_VERSION: &str = "6";
+const SCHEMA_VERSION: &str = "8";
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -300,8 +300,9 @@ impl Storage {
                 preview     TEXT    NOT NULL DEFAULT '',
                 search_text TEXT    NOT NULL DEFAULT '',
                 hash        TEXT    NOT NULL UNIQUE,
+                content_hash TEXT   NOT NULL,
                 pinned      INTEGER NOT NULL DEFAULT 0,
-                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                 original_content TEXT,
                 updated_at  TEXT
             );
@@ -323,8 +324,8 @@ impl Storage {
                 auto_tags  TEXT    NOT NULL DEFAULT '[]',
                 search_text TEXT   NOT NULL DEFAULT '',
                 pinned     INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
             CREATE INDEX IF NOT EXISTS idx_memos_updated_at ON memos(updated_at DESC);
             ",
@@ -366,6 +367,7 @@ impl Storage {
         let _ = conn.execute_batch(
             "ALTER TABLE clipboard_entries ADD COLUMN search_text TEXT NOT NULL DEFAULT ''",
         );
+        let _ = conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN content_hash TEXT");
         let _ =
             conn.execute_batch("ALTER TABLE memos ADD COLUMN search_text TEXT NOT NULL DEFAULT ''");
 
@@ -493,6 +495,45 @@ impl Storage {
             }
         }
 
+        if applied_version < 7 {
+            conn.execute_batch(
+                "UPDATE memos
+                 SET created_at = replace(created_at, ' ', 'T') || 'Z'
+                 WHERE created_at GLOB '????-??-?? ??:??:??*';
+                 UPDATE memos
+                 SET updated_at = replace(updated_at, ' ', 'T') || 'Z'
+                 WHERE updated_at GLOB '????-??-?? ??:??:??*';
+                 UPDATE memos
+                 SET archived_at = replace(archived_at, ' ', 'T') || 'Z'
+                 WHERE archived_at GLOB '????-??-?? ??:??:??*';
+                 UPDATE clipboard_entries
+                 SET archived_at = replace(archived_at, ' ', 'T') || 'Z'
+                 WHERE archived_at GLOB '????-??-?? ??:??:??*';",
+            )?;
+        }
+
+        if applied_version < 8 {
+            let rows = {
+                let mut statement = conn.prepare("SELECT id, content FROM clipboard_entries")?;
+                let rows = statement
+                    .query_map([], |row| {
+                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                    })?
+                    .collect::<SqlResult<Vec<_>>>()?;
+                rows
+            };
+            for (id, content) in rows {
+                conn.execute(
+                    "UPDATE clipboard_entries SET content_hash = ?1 WHERE id = ?2",
+                    params![Self::hash_content(&content), id],
+                )?;
+            }
+        }
+
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_content_hash ON clipboard_entries(content_hash)",
+        )?;
+
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -530,8 +571,11 @@ impl Storage {
         let category_tags = category_tags_json(&category_tags)?;
         let result = conn.execute(
             "INSERT OR IGNORE INTO clipboard_entries 
-             (category, category_tags, content_type, content, preview, search_text, hash, pinned, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (category, category_tags, content_type, content, preview, search_text, hash, content_hash, pinned, created_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+             WHERE NOT EXISTS (
+                SELECT 1 FROM clipboard_entries WHERE hash = ?7 OR content_hash = ?8
+             )",
             params![
                 category.to_string(),
                 category_tags,
@@ -540,6 +584,7 @@ impl Storage {
                 entry.preview,
                 search_text,
                 entry.hash,
+                Self::hash_content(&entry.content),
                 entry.pinned as i32,
                 entry.created_at.to_rfc3339(),
             ],
@@ -659,8 +704,8 @@ impl Storage {
             );
             tx.execute(
                 "INSERT INTO clipboard_entries
-                 (id, category, category_tags, content_type, content, preview, search_text, hash, pinned, created_at, original_content, updated_at, archived_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                 (id, category, category_tags, content_type, content, preview, search_text, hash, content_hash, pinned, created_at, original_content, updated_at, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     entry.id,
                     category_tags
@@ -674,6 +719,7 @@ impl Storage {
                     entry.preview,
                     search_text,
                     entry.hash,
+                    Self::hash_content(&entry.content),
                     entry.pinned as i32,
                     entry.created_at.to_rfc3339(),
                     entry.original_content,
@@ -781,7 +827,15 @@ impl Storage {
             Some(current) => current,
             None => return Ok(false),
         };
-        let original = existing_original.unwrap_or(current_content);
+        if current_content == new_content {
+            return Ok(true);
+        }
+        let reverts_to_original = existing_original.as_deref() == Some(new_content);
+        let original = if reverts_to_original {
+            None
+        } else {
+            Some(existing_original.unwrap_or(current_content))
+        };
         let preview = if new_content.len() > 200 {
             new_content.chars().take(200).collect::<String>()
         } else {
@@ -791,11 +845,11 @@ impl Storage {
         let category = categories.first().cloned().unwrap_or(Category::Text);
         let search_text = clipboard_search_text("text/plain", new_content, &preview, &categories);
         let category_tags = category_tags_json(&categories)?;
-        let now = Utc::now().to_rfc3339();
+        let now = (!reverts_to_original).then(|| Utc::now().to_rfc3339());
 
         let rows = conn.execute(
-            "UPDATE clipboard_entries SET category = ?1, category_tags = ?2, content = ?3, preview = ?4, search_text = ?5, original_content = ?6, updated_at = ?7 WHERE id = ?8",
-            params![category.to_string(), category_tags, new_content, preview, search_text, original, now, id],
+            "UPDATE clipboard_entries SET category = ?1, category_tags = ?2, content = ?3, preview = ?4, search_text = ?5, content_hash = ?6, original_content = ?7, updated_at = ?8 WHERE id = ?9",
+            params![category.to_string(), category_tags, new_content, preview, search_text, Self::hash_content(new_content), original, now, id],
         )?;
         Ok(rows > 0)
     }
@@ -1005,7 +1059,8 @@ impl Storage {
         let search_text = memo_search_text(title, body, &tags, auto_tags);
         let auto_tags = serde_json::to_string(auto_tags)?;
         conn.execute(
-            "INSERT INTO memos (title, body, tags, auto_tags, search_text, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM memos))",
+            "INSERT INTO memos (title, body, tags, auto_tags, search_text, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM memos), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
             params![title, body, tags, auto_tags, search_text],
         )?;
         let id = conn.last_insert_rowid();
@@ -1031,7 +1086,7 @@ impl Storage {
         let search_text = memo_search_text(title, body, &tags, auto_tags);
         let auto_tags = serde_json::to_string(auto_tags)?;
         let rows = conn.execute(
-            "UPDATE memos SET title = ?1, body = ?2, tags = ?3, auto_tags = ?4, search_text = ?5, updated_at = datetime('now') WHERE id = ?6",
+            "UPDATE memos SET title = ?1, body = ?2, tags = ?3, auto_tags = ?4, search_text = ?5, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?6",
             params![title, body, tags, auto_tags, search_text, id],
         )?;
         Ok(rows > 0)
@@ -1042,7 +1097,7 @@ impl Storage {
         let conn = self.conn.lock().unwrap();
         if archive {
             let rows = conn.execute(
-                "UPDATE memos SET archived_at = datetime('now') WHERE id = ?1 AND archived_at IS NULL",
+                "UPDATE memos SET archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1 AND archived_at IS NULL",
                 params![id],
             )?;
             Ok(rows > 0)
@@ -1098,7 +1153,7 @@ impl Storage {
     pub fn archive_memo(&self, id: i64) -> Result<bool, StorageError> {
         let conn = self.conn.lock().unwrap();
         let rows = conn.execute(
-            "UPDATE memos SET archived_at = datetime('now') WHERE id = ?1 AND archived_at IS NULL",
+            "UPDATE memos SET archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1 AND archived_at IS NULL",
             params![id],
         )?;
         Ok(rows > 0)
@@ -1400,6 +1455,42 @@ mod tests {
     }
 
     #[test]
+    fn schema_migration_normalizes_legacy_memo_timestamps_to_utc() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let memo = storage.create_memo("Time", "body", "", &[]).unwrap();
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE memos SET created_at = ?1, updated_at = ?2, archived_at = ?3 WHERE id = ?4",
+                params![
+                    "2026-07-16 00:45:00",
+                    "2026-07-16 00:46:00",
+                    "2026-07-16 00:47:00",
+                    memo.id
+                ],
+            )
+            .unwrap();
+        }
+        storage.set_setting("schema_version", "6").unwrap();
+        drop(storage);
+
+        let migrated = Storage::new(&db_path).unwrap();
+        let memo = migrated
+            .query_archived_memos(&MemoFilter::default())
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(memo.created_at, "2026-07-16T00:45:00Z");
+        assert_eq!(memo.updated_at, "2026-07-16T00:46:00Z");
+        assert_eq!(memo.archived_at.as_deref(), Some("2026-07-16T00:47:00Z"));
+
+        drop(migrated);
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
     fn search_ignores_embedded_image_payloads() {
         let db_path = temp_db_path();
         let storage = Storage::new(&db_path).unwrap();
@@ -1557,6 +1648,86 @@ mod tests {
         assert_eq!(updated.content, "after another edit");
         assert_eq!(updated.original_content.as_deref(), Some("before edit"));
         assert!(updated.updated_at.is_some());
+
+        let copied_edited_content = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Text],
+            content_type: "text/plain".to_string(),
+            content: "after another edit".to_string(),
+            preview: "after another edit".to_string(),
+            hash: Storage::hash_content("after another edit"),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        assert!(!storage.insert(&copied_edited_content).unwrap());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn update_entry_with_unchanged_content_keeps_metadata_empty() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let entry = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Text],
+            content_type: "text/plain".to_string(),
+            content: "unchanged".to_string(),
+            preview: "unchanged".to_string(),
+            hash: Storage::hash_content("unchanged"),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        storage.insert(&entry).unwrap();
+        let id = storage.query(&QueryFilter::default()).unwrap()[0].id;
+
+        assert!(storage.update_entry(id, "unchanged").unwrap());
+        let stored = storage.get_entry_by_id(id).unwrap().unwrap();
+        assert_eq!(stored.content, "unchanged");
+        assert!(stored.original_content.is_none());
+        assert!(stored.updated_at.is_none());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn reverting_entry_to_original_clears_edit_metadata() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let entry = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Text],
+            content_type: "text/plain".to_string(),
+            content: "first copy".to_string(),
+            preview: "first copy".to_string(),
+            hash: Storage::hash_content("first copy"),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        storage.insert(&entry).unwrap();
+        let id = storage.query(&QueryFilter::default()).unwrap()[0].id;
+
+        assert!(storage.update_entry(id, "temporary edit").unwrap());
+        assert!(storage.update_entry(id, "first copy").unwrap());
+        let stored = storage.get_entry_by_id(id).unwrap().unwrap();
+        assert_eq!(stored.content, "first copy");
+        assert!(stored.original_content.is_none());
+        assert!(stored.updated_at.is_none());
 
         std::fs::remove_file(db_path).ok();
     }

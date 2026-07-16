@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 const DEFAULT_PORT: &str = "5432";
 const DEFAULT_SSL_MODE: &str = "prefer";
-const REMOTE_SCHEMA_VERSION: i64 = 5;
+const REMOTE_SCHEMA_VERSION: i64 = 6;
 const REMOTE_SCHEMA_CACHE_PREFIX: &str = "remote_schema_version_";
 const REMOTE_SEARCH_BACKFILL_SQL: &str = r#"
     UPDATE superclipboard.clipboard_entries
@@ -525,6 +525,7 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
             preview TEXT NOT NULL DEFAULT '',
             search_text TEXT NOT NULL DEFAULT '',
             hash TEXT NOT NULL UNIQUE,
+            content_hash TEXT NOT NULL DEFAULT '',
             pinned BOOLEAN NOT NULL DEFAULT false,
             created_at TEXT NOT NULL,
             original_content TEXT,
@@ -544,6 +545,10 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
             ADD COLUMN IF NOT EXISTS category_tags TEXT NOT NULL DEFAULT '[]';
         ALTER TABLE superclipboard.clipboard_entries
             ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT '';
+        ALTER TABLE superclipboard.clipboard_entries
+            ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT '';
+        CREATE INDEX IF NOT EXISTS idx_sc_clipboard_content_hash
+            ON superclipboard.clipboard_entries(content_hash);
 
         CREATE TABLE IF NOT EXISTS superclipboard.memos (
             id BIGSERIAL PRIMARY KEY,
@@ -685,6 +690,25 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
                 &[&5_i64, &"separate manual memo tags from localized auto tags"],
             )?;
         }
+        if applied_version < 6 {
+            let rows = transaction.query(
+                "SELECT id, content FROM superclipboard.clipboard_entries",
+                &[],
+            )?;
+            for row in rows {
+                let id: i64 = row.get("id");
+                let content: String = row.get("content");
+                let content_hash = Storage::hash_content(&content);
+                transaction.execute(
+                    "UPDATE superclipboard.clipboard_entries SET content_hash = $1 WHERE id = $2",
+                    &[&content_hash, &id],
+                )?;
+            }
+            transaction.execute(
+                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+                &[&6_i64, &"current clipboard content hashes for deduplication"],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     });
@@ -766,11 +790,16 @@ pub fn insert_clipboard(storage: &Storage, entry: &ClipboardEntry) -> RemoteResu
         &category_tags,
     );
     let category_tags = category_tags_json(&category_tags);
+    let content_hash = Storage::hash_content(&entry.content);
     with_client(storage, |client| {
         Ok(client.execute(
             "INSERT INTO superclipboard.clipboard_entries
-             (uuid, category, category_tags, content_type, content, preview, search_text, hash, pinned, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             (uuid, category, category_tags, content_type, content, preview, search_text, hash, content_hash, pinned, created_at)
+             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+             WHERE NOT EXISTS (
+                SELECT 1 FROM superclipboard.clipboard_entries
+                WHERE hash = $8 OR content_hash = $9
+             )
              ON CONFLICT(hash) DO NOTHING",
             &[
                 &uuid,
@@ -781,6 +810,7 @@ pub fn insert_clipboard(storage: &Storage, entry: &ClipboardEntry) -> RemoteResu
                 &entry.preview,
                 &search_text,
                 &entry.hash,
+                &content_hash,
                 &entry.pinned,
                 &entry.created_at.to_rfc3339(),
             ],
@@ -887,30 +917,39 @@ pub fn update_clipboard(
         };
         let current_content: String = row.get("content");
         let original_content: Option<String> = row.get("original_content");
-        let original = original_content.unwrap_or(current_content);
+        if current_content == content {
+            return Ok(UpdateResult::updated(true));
+        }
+        let reverts_to_original = original_content.as_deref() == Some(content);
+        let original = if reverts_to_original {
+            None
+        } else {
+            Some(original_content.unwrap_or(current_content))
+        };
         let preview = if content.chars().count() > 200 {
             content.chars().take(200).collect::<String>()
         } else {
             content.to_string()
         };
-        let now = Utc::now().to_rfc3339();
+        let now = (!reverts_to_original).then(|| Utc::now().to_rfc3339());
         let categories = classify_text_tags(content);
         let category = categories.first().cloned().unwrap_or(Category::Text);
         let search_text = clipboard_search_text("text/plain", content, &preview, &categories);
         let category_tags = category_tags_json(&categories);
+        let content_hash = Storage::hash_content(content);
         let rows = if let Some(expected_version) = expected_version {
             client.execute(
                 "UPDATE superclipboard.clipboard_entries
-                 SET category = $1, category_tags = $2, content = $3, preview = $4, search_text = $5, original_content = $6, updated_at = $7, version = version + 1
-                 WHERE id = $8 AND version = $9",
-                &[&category.to_string(), &category_tags, &content, &preview, &search_text, &original, &now, &id, &expected_version],
+                 SET category = $1, category_tags = $2, content = $3, preview = $4, search_text = $5, content_hash = $6, original_content = $7, updated_at = $8, version = version + 1
+                 WHERE id = $9 AND version = $10",
+                &[&category.to_string(), &category_tags, &content, &preview, &search_text, &content_hash, &original, &now, &id, &expected_version],
             )?
         } else {
             client.execute(
                 "UPDATE superclipboard.clipboard_entries
-                 SET category = $1, category_tags = $2, content = $3, preview = $4, search_text = $5, original_content = $6, updated_at = $7, version = version + 1
-                 WHERE id = $8",
-                &[&category.to_string(), &category_tags, &content, &preview, &search_text, &original, &now, &id],
+                 SET category = $1, category_tags = $2, content = $3, preview = $4, search_text = $5, content_hash = $6, original_content = $7, updated_at = $8, version = version + 1
+                 WHERE id = $9",
+                &[&category.to_string(), &category_tags, &content, &preview, &search_text, &content_hash, &original, &now, &id],
             )?
         };
         if rows > 0 {

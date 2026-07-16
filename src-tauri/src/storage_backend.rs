@@ -16,6 +16,15 @@ fn remote(storage: &Storage) -> bool {
     remote_storage::is_remote_mode(storage)
 }
 
+/// Store a captured clipboard entry in whichever storage mode is active.
+pub fn insert_entry(storage: &Storage, entry: &ClipboardEntry) -> BackendResult<bool> {
+    if remote(storage) {
+        remote_storage::insert_clipboard(storage, entry).map_err(|error| error.to_string())
+    } else {
+        storage.insert(entry).map_err(|error| error.to_string())
+    }
+}
+
 pub fn get_entries(storage: &Storage, filter: &QueryFilter) -> BackendResult<Vec<ClipboardEntry>> {
     if remote(storage) {
         remote_storage::query_clipboard(storage, filter).map_err(|error| error.to_string())

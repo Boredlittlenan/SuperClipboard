@@ -1,6 +1,6 @@
 use crate::classifier::{classify_image, classify_image_tags, classify_text_tags, Category};
-use crate::remote_storage;
 use crate::storage::{ClipboardEntry, Storage};
+use crate::storage_backend;
 use arboard::Clipboard;
 use base64::Engine;
 use chrono::Utc;
@@ -61,34 +61,10 @@ impl ClipboardMonitor {
                                 // Encode image as PNG base64
                                 let img_data = encode_image_to_base64(&img);
                                 if let Some(data) = img_data {
-                                    let preview = format!("[Image {}x{}]", img.width, img.height);
-
-                                    let entry = ClipboardEntry {
-                                        id: 0,
-                                        category: classify_image(),
-                                        category_tags: classify_image_tags(),
-                                        content_type: "image/png".to_string(),
-                                        content: data,
-                                        preview,
-                                        hash: Storage::hash_content(&format!(
-                                            "image:{}",
-                                            image_hash
-                                        )),
-                                        pinned: false,
-                                        created_at: Utc::now(),
-                                        original_content: None,
-                                        updated_at: None,
-                                        archived_at: None,
-                                        version: 1,
-                                    };
-
-                                    let insert_result = if remote_storage::is_remote_mode(&storage)
-                                    {
-                                        remote_storage::insert_clipboard(&storage, &entry)
-                                            .map_err(|e| e.to_string())
-                                    } else {
-                                        storage.insert(&entry).map_err(|e| e.to_string())
-                                    };
+                                    let entry =
+                                        make_image_entry(data, img.width, img.height, &image_hash);
+                                    let insert_result =
+                                        storage_backend::insert_entry(&storage, &entry);
                                     match insert_result {
                                         Ok(true) => {
                                             debug!("Captured image: {}x{}", img.width, img.height);
@@ -117,32 +93,9 @@ impl ClipboardMonitor {
                         }
                         last_clipboard_hash = hash.clone();
 
-                        let category_tags = classify_text_tags(&text);
-                        let category = category_tags.first().cloned().unwrap_or(Category::Text);
-                        let preview = generate_preview(&text, &category);
-
-                        let entry = ClipboardEntry {
-                            id: 0,
-                            category: category.clone(),
-                            category_tags,
-                            content_type: "text/plain".to_string(),
-                            content: text,
-                            preview,
-                            hash,
-                            pinned: false,
-                            created_at: Utc::now(),
-                            original_content: None,
-                            updated_at: None,
-                            archived_at: None,
-                            version: 1,
-                        };
-
-                        let insert_result = if remote_storage::is_remote_mode(&storage) {
-                            remote_storage::insert_clipboard(&storage, &entry)
-                                .map_err(|e| e.to_string())
-                        } else {
-                            storage.insert(&entry).map_err(|e| e.to_string())
-                        };
+                        let entry = make_text_entry(text);
+                        let category = entry.category.clone();
+                        let insert_result = storage_backend::insert_entry(&storage, &entry);
                         match insert_result {
                             Ok(true) => {
                                 debug!("Captured {}: {:?}", category, entry.preview);
@@ -169,6 +122,53 @@ impl ClipboardMonitor {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+/// Build a normalized text entry so manual imports and polling share category logic.
+pub(crate) fn make_text_entry(text: String) -> ClipboardEntry {
+    let category_tags = classify_text_tags(&text);
+    let category = category_tags.first().cloned().unwrap_or(Category::Text);
+    let preview = generate_preview(&text, &category);
+
+    ClipboardEntry {
+        id: 0,
+        category,
+        category_tags,
+        content_type: "text/plain".to_string(),
+        hash: Storage::hash_content(&text),
+        content: text,
+        preview,
+        pinned: false,
+        created_at: Utc::now(),
+        original_content: None,
+        updated_at: None,
+        archived_at: None,
+        version: 1,
+    }
+}
+
+/// Build a normalized image entry from the raw RGBA payload used by the system clipboard.
+pub(crate) fn make_image_entry(
+    content: String,
+    width: usize,
+    height: usize,
+    image_hash: &str,
+) -> ClipboardEntry {
+    ClipboardEntry {
+        id: 0,
+        category: classify_image(),
+        category_tags: classify_image_tags(),
+        content_type: "image/png".to_string(),
+        preview: format!("[Image {width}x{height}]"),
+        hash: Storage::hash_content(&format!("image:{image_hash}")),
+        content,
+        pinned: false,
+        created_at: Utc::now(),
+        original_content: None,
+        updated_at: None,
+        archived_at: None,
+        version: 1,
     }
 }
 

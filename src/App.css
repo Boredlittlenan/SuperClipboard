@@ -128,6 +128,7 @@
 
 /* ─── App Root ─── */
 .app-root {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -155,6 +156,44 @@
 .app-root.is-window-dragging *::after {
   transition: none !important;
   animation: none !important;
+}
+
+/* Drop imports stay above the content but leave text editors to their own handlers. */
+.clipboard-drop-overlay {
+  position: absolute;
+  z-index: 850;
+  inset: 36px 0 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--bg) 48%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.clipboard-drop-overlay-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: min(260px, 100%);
+  padding: 22px 18px;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: var(--soft-shadow);
+  color: var(--accent);
+  text-align: center;
+}
+
+.clipboard-drop-overlay-panel strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.clipboard-drop-overlay-panel span {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 /* ─── Title Bar ─── */
@@ -424,6 +463,10 @@
   z-index: 1000;
 }
 
+.toast-error {
+  background: var(--danger);
+}
+
 /* ─── Dialog ─── */
 .dialog-backdrop {
   position: fixed;
@@ -530,6 +573,99 @@
   filter: none;
 }
 
+.image-preview-backdrop {
+  z-index: 1500;
+}
+
+.image-preview-dialog {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 36px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  animation: dialogIn 0.14s ease;
+}
+
+.image-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.image-preview-close {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.image-preview-close:hover {
+  background: var(--hover-bg);
+  color: var(--text-primary);
+}
+
+.image-preview-content {
+  min-height: 180px;
+  max-height: calc(100vh - 104px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  overflow: auto;
+  background: var(--surface);
+}
+
+.image-preview-content img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 132px);
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.image-preview-loading {
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.app-root[data-ui-style="modern"] .image-preview-dialog {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.56)),
+    var(--panel-glass);
+  border-color: var(--apple-separator);
+  border-radius: 12px;
+  box-shadow: 0 24px 56px rgba(15, 23, 42, 0.24), inset 0 1px 0 var(--hairline-highlight);
+  backdrop-filter: blur(36px) saturate(1.6);
+}
+
+.app-root[data-theme="dark"][data-ui-style="modern"] .image-preview-dialog {
+  background:
+    linear-gradient(135deg, rgba(36, 36, 36, 0.8), rgba(24, 24, 24, 0.64)),
+    var(--panel-glass);
+}
+
 /* ─── Scrollbar ─── */
 ::-webkit-scrollbar {
   width: 6px;
@@ -611,6 +747,24 @@
 .settings-gear-btn:hover {
   background: var(--hover-bg) !important;
   color: var(--text-primary) !important;
+}
+
+/* Keep the update action legible when browser/default button hover styles apply. */
+.update-download-btn:hover {
+  background: color-mix(in srgb, var(--accent) 82%, #111111) !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 34%, transparent) !important;
+}
+
+.update-download-btn:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
+.update-download-btn:active {
+  background: color-mix(in srgb, var(--accent) 70%, #111111) !important;
+  color: #ffffff !important;
+  transform: translateY(1px);
 }
 
 .glass-menu-panel {

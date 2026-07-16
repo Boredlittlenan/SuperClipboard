@@ -861,6 +861,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -979,6 +980,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::clipboard::get_entries,
             commands::clipboard::get_entry_content,
+            commands::clipboard::export_clipboard_image,
             commands::clipboard::delete_entry,
             commands::clipboard::toggle_pin,
             commands::clipboard::update_entry,
@@ -991,6 +993,8 @@ pub fn run() {
             commands::clipboard::permanent_delete,
             commands::clipboard::purge_old_archives,
             commands::clipboard::copy_to_clipboard,
+            commands::clipboard::import_dropped_text,
+            commands::clipboard::import_dropped_image,
             get_setting,
             get_settings,
             set_setting,

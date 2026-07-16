@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { NotebookText, Search, Trash2 } from 'lucide-react';
+import { Import, NotebookText, Search, Trash2 } from 'lucide-react';
 import type { ClipboardEntry, FilterTab, QueryFilter, Stats, Memo } from './types';
 import {
   getEntries,
@@ -31,6 +31,7 @@ import ConfirmDialog, { type ConfirmDialogState } from './components/ConfirmDial
 import { emitAppEvent, onAppEvent } from './events/appEvents';
 import { useAppSettings } from './hooks/useAppSettings';
 import { useInfiniteScroll } from './hooks/useInfiniteScroll';
+import { useClipboardDropImport } from './hooks/useClipboardDropImport';
 import AppSettingsProvider from './components/settings/AppSettingsProvider';
 import './App.css';
 
@@ -96,6 +97,7 @@ function AppContent() {
   const [memoArchiveCountState, setMemoArchiveCountState] = useState<number>(0);
   const [openedViaShortcut, setOpenedViaShortcut] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [dropNotice, setDropNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
   const [storageRevision, setStorageRevision] = useState(0);
   const [entriesRefreshNonce, setEntriesRefreshNonce] = useState(0);
   const [isWindowDragging, setIsWindowDragging] = useState(false);
@@ -722,6 +724,27 @@ function AppContent() {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  const handleDropImportComplete = useCallback((inserted: boolean) => {
+    if (inserted) {
+      setDropNotice({ message: t.dropImportDone, tone: 'success' });
+    }
+  }, [t]);
+
+  const handleDropImportError = useCallback(() => {
+    setDropNotice({ message: t.dropImportFailed, tone: 'error' });
+  }, [t]);
+
+  useEffect(() => {
+    if (!dropNotice) return;
+    const timer = window.setTimeout(() => setDropNotice(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [dropNotice]);
+
+  const dropImport = useClipboardDropImport({
+    onComplete: handleDropImportComplete,
+    onError: handleDropImportError,
+  });
+
   return (
     <div
       className={`app-root${isWindowDragging ? ' is-window-dragging' : ''}`}
@@ -729,6 +752,10 @@ function AppContent() {
       data-accent={themeAccent}
       data-ui-style={effectiveModernUiEnabled ? 'modern' : 'classic'}
       data-memo-color={memoColor || undefined}
+      onDragEnter={dropImport.handleDragEnter}
+      onDragOver={dropImport.handleDragOver}
+      onDragLeave={dropImport.handleDragLeave}
+      onDrop={dropImport.handleDrop}
     >
       {/* Title bar (draggable, frameless window) */}
       <div data-tauri-drag-region className="title-bar" onPointerDown={handleTitleDragStart}>
@@ -920,9 +947,22 @@ function AppContent() {
         )}
       </div>
 
+      {(dropImport.isDragActive || dropImport.isImporting) && (
+        <div className="clipboard-drop-overlay" role="status" aria-live="polite">
+          <div className="clipboard-drop-overlay-panel">
+            <Import size={24} strokeWidth={1.9} aria-hidden="true" />
+            <strong>{dropImport.isImporting ? t.dropImporting : t.dropImportPrompt}</strong>
+            {!dropImport.isImporting && <span>{t.dropImportHint}</span>}
+          </div>
+        </div>
+      )}
+
       {/* Copied toast */}
       {copied !== null && (
         <div className="toast">{t.copied}</div>
+      )}
+      {dropNotice && (
+        <div className={`toast${dropNotice.tone === 'error' ? ' toast-error' : ''}`}>{dropNotice.message}</div>
       )}
 
       {confirmDialog && (

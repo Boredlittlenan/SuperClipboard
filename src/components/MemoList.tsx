@@ -349,7 +349,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                 onClick={(e) => e.stopPropagation()}
               />
             ) : (
-              <span className="memo-selectable" style={styles.memoTitle}>{memo.title || '(untitled)'}</span>
+              <span className="memo-selectable" style={styles.memoTitle}>{memo.title || t.memoUntitled}</span>
             )}
             {!isEditing && (
               <div className="memo-actions" style={styles.memoActions}>

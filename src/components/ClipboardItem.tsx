@@ -1,10 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Archive, ExternalLink, Image as ImageIcon, Pencil, Pin, RotateCcw, Trash2 } from 'lucide-react';
+import { save } from '@tauri-apps/plugin-dialog';
+import { Archive, Download, ExternalLink, Image as ImageIcon, Maximize2, Pencil, Pin, RotateCcw, Trash2 } from 'lucide-react';
 import type { ClipboardEntry } from '../types';
 import { getArchiveDaysRemaining, getArchiveTone, getCategoryColor, getCategoryLabel, formatRelativeTime } from '../utils';
 import { useI18n } from '../i18n';
-import { getEntryContent, type UpdateResult } from '../api/clipboard';
+import { exportClipboardImage, getEntryContent, type UpdateResult } from '../api/clipboard';
+import ImagePreviewDialog from './ImagePreviewDialog';
 
 interface Props {
   entry: ClipboardEntry;
@@ -29,6 +31,10 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   const [editError, setEditError] = useState('');
   const [imageContent, setImageContent] = useState(entry.category === 'image' ? entry.content : '');
   const [imageLoading, setImageLoading] = useState(false);
+  const [exportingImage, setExportingImage] = useState(false);
+  const [imageExportError, setImageExportError] = useState('');
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
+  const [imagePreviewLoading, setImagePreviewLoading] = useState(false);
   const { t } = useI18n();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
@@ -48,7 +54,8 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   const isImage = entry.category === 'image';
   const isLink = entry.category === 'link';
   const originalContent = entry.original_content;
-  const hasOriginal = originalContent != null;
+  const hasOriginal = originalContent != null && originalContent !== entry.content;
+  const hasEditMetadata = hasOriginal && entry.updated_at != null;
   const archiveDaysRemaining = isArchive && entry.archived_at ? getArchiveDaysRemaining(entry.archived_at) : null;
 
   useEffect(() => {
@@ -117,6 +124,11 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   const handleSave = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (saving) return;
+    if (editContent === entry.content) {
+      setEditing(false);
+      setEditError('');
+      return;
+    }
     setSaving(true);
     try {
       const result = await onEdit(entry.id, editContent, entry.version);
@@ -133,7 +145,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
     } finally {
       setSaving(false);
     }
-  }, [entry.id, entry.version, editContent, onEdit, saving, t.editConflict]);
+  }, [entry.content, entry.id, entry.version, editContent, onEdit, saving, t.editConflict]);
 
   const handleCancel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -154,6 +166,45 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
     e.stopPropagation();
     setShowOriginal(prev => !prev);
   }, []);
+
+  const handleExportImage = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (exportingImage) return;
+
+    const path = await save({
+      title: t.exportImage,
+      defaultPath: `superclipboard-image-${entry.id}.png`,
+      filters: [{ name: 'PNG', extensions: ['png'] }],
+    });
+    if (!path) return;
+
+    setExportingImage(true);
+    setImageExportError('');
+    try {
+      await exportClipboardImage(entry.id, path);
+    } catch (error) {
+      console.error('Failed to export clipboard image:', error);
+      setImageExportError(t.exportImageFailed);
+    } finally {
+      setExportingImage(false);
+    }
+  }, [entry.id, exportingImage, t.exportImage, t.exportImageFailed]);
+
+  const handleOpenImagePreview = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setImagePreviewOpen(true);
+    if (imageContent) return;
+
+    setImagePreviewLoading(true);
+    try {
+      const content = await getEntryContent(entry.id);
+      if (content) setImageContent(content);
+    } catch (error) {
+      console.error('Failed to load clipboard image preview:', error);
+    } finally {
+      setImagePreviewLoading(false);
+    }
+  }, [entry.id, imageContent]);
 
   return (
     <div
@@ -193,6 +244,11 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
               <div className="entry-actions" style={styles.inlineActions}>
                 {isArchive ? (
                   <>
+                    {isImage && (
+                      <button style={styles.actionBtn} onClick={handleOpenImagePreview} title={t.previewImage} aria-label={t.previewImage}>
+                        <Maximize2 size={13} />
+                      </button>
+                    )}
                     <button
                       style={styles.actionBtn}
                       onClick={(e) => {
@@ -223,6 +279,22 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                         title={t.openInBrowser || 'Open in browser'}
                       >
                         <ExternalLink size={13} />
+                      </button>
+                    )}
+                    {isImage && (
+                      <button style={styles.actionBtn} onClick={handleOpenImagePreview} title={t.previewImage} aria-label={t.previewImage}>
+                        <Maximize2 size={13} />
+                      </button>
+                    )}
+                    {isImage && (
+                      <button
+                        style={{ ...styles.actionBtn, ...(exportingImage ? styles.actionBtnDisabled : {}) }}
+                        onClick={handleExportImage}
+                        title={t.exportImage}
+                        aria-label={t.exportImage}
+                        disabled={exportingImage}
+                      >
+                        <Download size={13} />
                       </button>
                     )}
                     {!isImage && (
@@ -263,11 +335,6 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
             )}
           </div>
           <div style={styles.headerRight}>
-            {entry.updated_at && (
-              <span style={styles.editedBadge}>
-                {t.editedAt(formatRelativeTime(entry.updated_at, t))}
-              </span>
-            )}
             <span className="entry-time" style={styles.time}>{formatRelativeTime(entry.created_at, t)}</span>
             {entry.pinned && !isArchive && <Pin size={12} style={styles.pinBadge} />}
             {isArchive && entry.archived_at && (
@@ -306,6 +373,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
         ) : (
           <div className="entry-preview" style={styles.preview}>
             {editError && <div style={styles.editError}>{editError}</div>}
+            {imageExportError && <div style={styles.editError}>{imageExportError}</div>}
             {isImage ? (
               <div ref={imageContainerRef} style={styles.imageContainer}>
                 {imageContent ? (
@@ -331,35 +399,57 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
           </div>
         )}
 
-        {/* Original content collapsible */}
+        {/* Original content and edit time share one compact metadata row. */}
         {hasOriginal && !editing && !isArchive && (
-          <div
-            style={styles.originalSection}
-            onClick={(e) => {
-              e.stopPropagation();
-              onCopy(entry.id, true);
-            }}
-          >
-            <button style={styles.originalToggle} onClick={handleToggleOriginal}>
-              <span style={{
-                ...styles.toggleArrow,
-                transform: showOriginal ? 'rotate(90deg)' : 'rotate(0deg)',
-              }}>
-                {'\u25B6'}
-              </span>
-              {showOriginal ? t.hideOriginal : t.showOriginal}
-            </button>
+          <>
+            <div style={styles.originalMetaRow}>
+              <div
+                style={styles.originalSection}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCopy(entry.id, true);
+                }}
+              >
+                <button style={styles.originalToggle} onClick={handleToggleOriginal}>
+                  <span style={{
+                    ...styles.toggleArrow,
+                    transform: showOriginal ? 'rotate(90deg)' : 'rotate(0deg)',
+                  }}>
+                    {'\u25B6'}
+                  </span>
+                  {showOriginal ? t.hideOriginal : t.showOriginal}
+                </button>
+              </div>
+              {hasEditMetadata && (
+                <span style={styles.editedBadge}>
+                  {t.editedAt(formatRelativeTime(entry.updated_at!, t))}
+                </span>
+              )}
+            </div>
             {showOriginal && (
-              <div style={{
-                ...styles.originalContent,
-                ...(showCategoryIndicator ? {} : styles.originalContentNoIndicator),
-              }}>
+              <div
+                style={{
+                  ...styles.originalContent,
+                  ...(showCategoryIndicator ? {} : styles.originalContentNoIndicator),
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCopy(entry.id, true);
+                }}
+              >
                 <pre style={styles.originalPre}>{originalContent}</pre>
               </div>
             )}
-          </div>
+          </>
         )}
       </div>
+      {imagePreviewOpen && (
+        <ImagePreviewDialog
+          content={imageContent}
+          loading={imageLoading || imagePreviewLoading}
+          onClose={() => setImagePreviewOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -439,6 +529,13 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '8px',
     fontWeight: 500,
     lineHeight: 1,
+  },
+  originalMetaRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+    marginTop: '6px',
   },
   pinBadge: {
     fontSize: '12px',
@@ -595,7 +692,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   // Original content collapsible styles
   originalSection: {
-    marginTop: '6px',
+    flexShrink: 0,
   },
   originalToggle: {
     display: 'flex',
@@ -659,5 +756,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   actionBtnActive: {
     color: 'var(--accent)',
+  },
+  actionBtnDisabled: {
+    opacity: 0.55,
+    cursor: 'wait',
   },
 };

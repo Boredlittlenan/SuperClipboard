@@ -1,6 +1,6 @@
 [package]
 name = "superclipboard"
-version = "3.3.0"
+version = "3.4.0"
 description = "A lightweight clipboard manager with smart categorization"
 authors = [""]
 edition = "2021"
@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
@@ -23,7 +24,7 @@ serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 arboard = { version = "3", features = ["image-data"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 regex = "1"
 url = "2"
 sha2 = "0.10"

@@ -23,14 +23,16 @@ The product vision, requirements, interface decisions, hands-on testing, and fin
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
 
-- `SuperClipboard_3.3.0_x64-setup.exe`: recommended Windows installer
-- `SuperClipboard_3.3.0_x64_en-US.msi`: MSI package
+- `SuperClipboard_<version>_x64-setup.exe`: recommended Windows installer
+- `SuperClipboard_<version>_x64_en-US.msi`: MSI package
 
 ## Highlights
 
 - Smart categorization for text, links, images, code, emails, and file paths
+- Drop text, links, images, or image files onto the main window to add them to the system clipboard and history
 - Local SQLite history with SHA-256 deduplication and a compact search index that excludes image Base64 payloads
-- Pin, edit, copy, delete, and restore clipboard entries
+- Edited clipboard content participates in deduplication, so copying a modified entry does not create a duplicate
+- Pin, edit, copy, delete, restore, preview, and export clipboard entries; images can open in an in-app preview or save as PNG
 - Optional memo module with title, rich body, pasted image preview, tags, pinning, search, and drag sorting
 - Optional recycle bin with separate Clipboard and Memos views and 30-day cleanup
 - Global shortcut, tray controls, single-instance launch, and auto-start support
@@ -48,7 +50,7 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `3.3.0`
+- Version: `3.4.0`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - UI style: classic UI by default, with Modern UI available in Experimental Features
@@ -70,9 +72,13 @@ Open Settings, click the shortcut button, then press the desired key combination
 
 Copied text, links, images, code, emails, and paths are added to the list automatically. Clicking an item copies it back to the system clipboard. If the window was opened by the global shortcut, clicking an item also tries to hide SuperClipboard and send `Ctrl+V` to the previously active app.
 
+You can also drag text, links, images, or PNG/JPEG/GIF/WebP files onto the main window. SuperClipboard writes the dropped content to the system clipboard, then uses the same classification and deduplication flow as a normal copy. Dropping into a memo editor keeps its normal in-editor image insertion behavior.
+
 When the window is visible but covered by another app, pressing the global shortcut brings it back to the front. The shortcut only hides the window when SuperClipboard is already the foreground window.
 
-After an entry is edited, clicking its visible content copies the latest saved version. Expand Original to inspect the first captured content; clicking that original-content area copies the original version without overwriting it.
+After an entry is edited, clicking its visible content copies the latest saved version. The first captured version and the latest edit both participate in deduplication, so copying either one does not create a redundant history entry. Expand Original to inspect the first captured content; clicking that original-content area copies the original version without overwriting it.
+
+Image entries show Preview and Save Image actions on hover. Preview opens inside SuperClipboard; Save Image writes a PNG file to a location you choose.
 
 ### Raw Preview
 
