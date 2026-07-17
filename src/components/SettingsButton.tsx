@@ -384,7 +384,10 @@ export default function SettingsButton({
           </div>
 
           {/* System Settings header */}
-          <div style={styles.sectionHeader}>{t.systemSettings}</div>
+          <div style={styles.sectionHeader}>
+            <span>{t.systemSettings}</span>
+            <span style={styles.sectionLine} />
+          </div>
 
           {/* Shortcut section */}
           <SettingRow label={t.shortcut} title={t.shortcutDesc}>
@@ -479,7 +482,10 @@ export default function SettingsButton({
           <ToggleSettingRow label={t.experimentalFeatures} title={t.experimentalFeaturesDesc} checked={experimentalFeaturesEnabled} onChange={handleExperimentalFeaturesToggle} />
 
           {/* Feature Settings header */}
-          <div style={styles.sectionHeader}>{t.featureSettings}</div>
+          <div style={styles.sectionHeader}>
+            <span>{t.featureSettings}</span>
+            <span style={styles.sectionLine} />
+          </div>
 
           {/* Category tab sorting */}
           <ToggleSettingRow label={t.categoryTabSorting} title={t.categoryTabSortingDesc} checked={categoryTabSortingEnabled} onChange={handleCategoryTabSortingToggle} />
@@ -668,15 +674,23 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '6px 0',
   },
   sectionHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
     fontSize: '10px',
     fontWeight: 600,
     color: 'var(--text-muted)',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.5px',
-    marginTop: '6px',
-    marginBottom: '2px',
-    paddingBottom: '4px',
-    borderBottom: '1px solid var(--border)',
+    lineHeight: '16px',
+    letterSpacing: '0',
+    marginTop: '8px',
+    marginBottom: '3px',
+    padding: '0 1px',
+  },
+  sectionLine: {
+    flex: 1,
+    height: '1px',
+    background: 'var(--border)',
+    transform: 'translateY(1px)',
   },
   langOptions: {
     display: 'flex',

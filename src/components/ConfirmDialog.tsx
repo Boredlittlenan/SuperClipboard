@@ -6,6 +6,10 @@ export interface ConfirmDialogState {
   message: string;
   confirmLabel: string;
   tone?: 'danger' | 'normal';
+  secondaryLabel?: string;
+  secondaryTone?: 'danger' | 'normal';
+  onSecondary?: () => void;
+  secondaryAfterPrimary?: boolean;
   resolve: (confirmed: boolean) => void;
 }
 
@@ -22,21 +26,37 @@ export default function ConfirmDialog({ dialog, onClose }: Props) {
     onClose();
   };
 
+  const primaryAction = (
+    <button
+      className={`dialog-btn dialog-btn-primary ${dialog.tone === 'danger' ? 'dialog-btn-danger' : ''}`}
+      onClick={() => resolve(true)}
+    >
+      {dialog.confirmLabel}
+    </button>
+  );
+  const secondaryAction = dialog.secondaryLabel && dialog.onSecondary ? (
+    <button
+      className={`dialog-btn dialog-btn-secondary ${dialog.secondaryTone === 'danger' ? 'dialog-btn-danger' : ''}`}
+      onClick={() => {
+        dialog.onSecondary?.();
+        onClose();
+      }}
+    >
+      {dialog.secondaryLabel}
+    </button>
+  ) : null;
+
   const content = (
     <div className="dialog-backdrop" onMouseDown={() => resolve(false)}>
       <div className="confirm-dialog" onMouseDown={(e) => e.stopPropagation()}>
         <div className="confirm-dialog-title">{dialog.title}</div>
         <div className="confirm-dialog-message">{dialog.message}</div>
-        <div className="confirm-dialog-actions">
+        <div className={`confirm-dialog-actions${dialog.secondaryLabel ? ' has-secondary' : ''}`}>
           <button className="dialog-btn" onClick={() => resolve(false)}>
             {t.cancel}
           </button>
-          <button
-            className={`dialog-btn dialog-btn-primary ${dialog.tone === 'danger' ? 'dialog-btn-danger' : ''}`}
-            onClick={() => resolve(true)}
-          >
-            {dialog.confirmLabel}
-          </button>
+          {dialog.secondaryAfterPrimary ? primaryAction : secondaryAction}
+          {dialog.secondaryAfterPrimary ? secondaryAction : primaryAction}
         </div>
       </div>
     </div>

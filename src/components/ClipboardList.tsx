@@ -22,6 +22,10 @@ interface Props {
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  selectionMode?: boolean;
+  multiSelectEnabled?: boolean;
+  selectedIds?: ReadonlySet<number>;
+  onSelectionToggle?: (entry: ClipboardEntry) => void;
 }
 
 export default function ClipboardList({
@@ -41,6 +45,10 @@ export default function ClipboardList({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
+  selectionMode = false,
+  multiSelectEnabled = false,
+  selectedIds,
+  onSelectionToggle,
 }: Props) {
   const { t } = useI18n();
   const listRef = useRef<HTMLDivElement>(null);
@@ -67,7 +75,7 @@ export default function ClipboardList({
   }
 
   return (
-    <div ref={listRef} className="clipboard-list" style={styles.list}>
+    <div ref={listRef} className="clipboard-list entry-list" style={styles.list}>
       {entries.map((entry) => (
         <ClipboardItem
           key={entry.id}
@@ -83,9 +91,13 @@ export default function ClipboardList({
           showCategoryIndicator={showCategoryIndicator}
           onRestore={onRestore}
           onPermanentDelete={onPermanentDelete}
+          selectionMode={selectionMode}
+          multiSelectEnabled={multiSelectEnabled}
+          selected={selectedIds?.has(entry.id) ?? false}
+          onSelectionToggle={onSelectionToggle}
         />
       ))}
-      <div ref={loadMoreRef} style={styles.loadMore} aria-hidden={!loadingMore}>
+      <div ref={loadMoreRef} className="entry-list-tail" style={styles.loadMore} aria-hidden={!loadingMore}>
         {loadingMore && <div style={styles.loadMoreSpinner} />}
       </div>
     </div>

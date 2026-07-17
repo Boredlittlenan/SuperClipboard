@@ -1,4 +1,4 @@
-use crate::classifier::{classify_text_tags, Category};
+use crate::classifier::{classify_text_tags, Category, CLASSIFICATION_RULES_VERSION};
 use crate::memo_tags;
 use crate::search_index::{clipboard_search_text, memo_search_text};
 use chrono::{DateTime, Utc};
@@ -13,8 +13,6 @@ use thiserror::Error;
 const CLIPBOARD_QUERY_LIMIT: i64 = 50;
 const MEMO_QUERY_LIMIT: i64 = 100;
 const MAX_QUERY_LIMIT: i64 = 500;
-const SCHEMA_VERSION: &str = "8";
-
 #[derive(Error, Debug)]
 pub enum StorageError {
     #[error("Database error: {0}")]
@@ -73,11 +71,14 @@ pub struct ClipboardEntry {
 
 /// Query filter for listing entries
 #[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QueryFilter {
     pub category: Option<String>,
     pub search: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    #[serde(default)]
+    pub include_auxiliary_tags: bool,
 }
 
 /// A memo/sticky note entry (separate from clipboard)
@@ -173,8 +174,12 @@ fn category_tags_from_json(fallback: Category, value: Option<String>) -> Vec<Cat
     }
 }
 
-fn category_match_condition(column: &str) -> String {
-    format!("({column} = ? OR category_tags LIKE ?)")
+fn category_match_condition(column: &str, include_auxiliary_tags: bool) -> String {
+    if include_auxiliary_tags {
+        format!("({column} = ? OR category_tags LIKE ?)")
+    } else {
+        format!("{column} = ?")
+    }
 }
 
 fn category_tag_pattern(category: &str) -> String {
@@ -289,260 +294,8 @@ impl Storage {
 
     fn init_tables(&self) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS clipboard_entries (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                category    TEXT    NOT NULL,
-                category_tags TEXT NOT NULL DEFAULT '[]',
-                content_type TEXT   NOT NULL,
-                content     TEXT    NOT NULL,
-                preview     TEXT    NOT NULL DEFAULT '',
-                search_text TEXT    NOT NULL DEFAULT '',
-                hash        TEXT    NOT NULL UNIQUE,
-                content_hash TEXT   NOT NULL,
-                pinned      INTEGER NOT NULL DEFAULT 0,
-                created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                original_content TEXT,
-                updated_at  TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_category ON clipboard_entries(category);
-            CREATE INDEX IF NOT EXISTS idx_created_at ON clipboard_entries(created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_hash ON clipboard_entries(hash);
-
-            CREATE TABLE IF NOT EXISTS settings (
-                key     TEXT PRIMARY KEY,
-                value   TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS memos (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                title      TEXT    NOT NULL DEFAULT '',
-                body       TEXT    NOT NULL DEFAULT '',
-                tags       TEXT    NOT NULL DEFAULT '',
-                auto_tags  TEXT    NOT NULL DEFAULT '[]',
-                search_text TEXT   NOT NULL DEFAULT '',
-                pinned     INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                updated_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-            );
-            CREATE INDEX IF NOT EXISTS idx_memos_updated_at ON memos(updated_at DESC);
-            ",
-        )?;
-
-        let applied_version = conn.query_row(
-            "SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'schema_version'), 0)",
-            [],
-            |row| row.get::<_, i64>(0),
-        )?;
-
-        // Legacy migrations for databases created before explicit schema versioning.
-        let _ =
-            conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN original_content TEXT");
-        let _ = conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN updated_at TEXT");
-
-        // Migration: add sort_order column to memos
-        let _ = conn
-            .execute_batch("ALTER TABLE memos ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
-        // Initialize sort_order based on current ordering (newest = highest)
-        let _ = conn.execute_batch(
-            "UPDATE memos SET sort_order = (
-                SELECT rn FROM (
-                    SELECT id, ROW_NUMBER() OVER (ORDER BY pinned DESC, created_at DESC) AS rn FROM memos
-                ) ranked WHERE ranked.id = memos.id
-            ) WHERE sort_order = 0",
-        );
-
-        // Migration: add archived_at column to clipboard_entries
-        let _ = conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN archived_at TEXT");
-
-        // Migration: add archived_at column to memos
-        let _ = conn.execute_batch("ALTER TABLE memos ADD COLUMN archived_at TEXT");
-        let _ =
-            conn.execute_batch("ALTER TABLE memos ADD COLUMN auto_tags TEXT NOT NULL DEFAULT '[]'");
-        let _ = conn.execute_batch(
-            "ALTER TABLE clipboard_entries ADD COLUMN category_tags TEXT NOT NULL DEFAULT '[]'",
-        );
-        let _ = conn.execute_batch(
-            "ALTER TABLE clipboard_entries ADD COLUMN search_text TEXT NOT NULL DEFAULT ''",
-        );
-        let _ = conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN content_hash TEXT");
-        let _ =
-            conn.execute_batch("ALTER TABLE memos ADD COLUMN search_text TEXT NOT NULL DEFAULT ''");
-
-        conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_clipboard_active_order
-                ON clipboard_entries(pinned DESC, created_at DESC)
-                WHERE archived_at IS NULL;
-             CREATE INDEX IF NOT EXISTS idx_clipboard_archive_order
-                ON clipboard_entries(archived_at DESC)
-                WHERE archived_at IS NOT NULL;
-             CREATE INDEX IF NOT EXISTS idx_memos_active_order
-                ON memos(pinned DESC, sort_order DESC)
-                WHERE archived_at IS NULL;
-             CREATE INDEX IF NOT EXISTS idx_memos_archive_order
-                ON memos(archived_at DESC)
-                WHERE archived_at IS NOT NULL;",
-        )?;
-
-        if applied_version < 4 {
-            let memo_rows = {
-                let mut statement = conn.prepare(
-                    "SELECT id, title, body FROM memos WHERE auto_tags = '[]' OR auto_tags = ''",
-                )?;
-                let rows = statement
-                    .query_map([], |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                        ))
-                    })?
-                    .collect::<SqlResult<Vec<_>>>()?;
-                rows
-            };
-            for (id, title, body) in memo_rows {
-                let auto_tags = serde_json::to_string(&memo_tags::infer(&title, &body))
-                    .unwrap_or_else(|_| "[]".to_string());
-                conn.execute(
-                    "UPDATE memos SET auto_tags = ?1 WHERE id = ?2",
-                    params![auto_tags, id],
-                )?;
-            }
-        }
-
-        if applied_version < 5 {
-            let clipboard_rows = {
-                let mut statement = conn.prepare(
-                    "SELECT id, category, category_tags, content_type, content, preview FROM clipboard_entries",
-                )?;
-                let rows = statement
-                    .query_map([], |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                            row.get::<_, String>(4)?,
-                            row.get::<_, String>(5)?,
-                        ))
-                    })?
-                    .collect::<SqlResult<Vec<_>>>()?;
-                rows
-            };
-            for (id, category, category_tags, content_type, content, preview) in clipboard_rows {
-                let tags =
-                    category_tags_from_json(category_from_str(&category), Some(category_tags));
-                let search_text = clipboard_search_text(&content_type, &content, &preview, &tags);
-                conn.execute(
-                    "UPDATE clipboard_entries SET search_text = ?1 WHERE id = ?2",
-                    params![search_text, id],
-                )?;
-            }
-
-            let memo_rows = {
-                let mut statement =
-                    conn.prepare("SELECT id, title, body, tags, auto_tags FROM memos")?;
-                let rows = statement
-                    .query_map([], |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                            row.get::<_, String>(4)?,
-                        ))
-                    })?
-                    .collect::<SqlResult<Vec<_>>>()?;
-                rows
-            };
-            for (id, title, body, tags, auto_tags) in memo_rows {
-                let auto_tags = serde_json::from_str::<Vec<String>>(&auto_tags).unwrap_or_default();
-                let search_text = memo_search_text(&title, &body, &tags, &auto_tags);
-                conn.execute(
-                    "UPDATE memos SET search_text = ?1 WHERE id = ?2",
-                    params![search_text, id],
-                )?;
-            }
-        }
-
-        if applied_version < 6 {
-            let memo_rows = {
-                let mut statement =
-                    conn.prepare("SELECT id, title, body, tags, auto_tags FROM memos")?;
-                let rows = statement
-                    .query_map([], |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
-                            row.get::<_, String>(4)?,
-                        ))
-                    })?
-                    .collect::<SqlResult<Vec<_>>>()?;
-                rows
-            };
-            for (id, title, body, tags, auto_tags) in memo_rows {
-                let tags = memo_tags::manual_only(&tags);
-                let auto_tags = serde_json::from_str::<Vec<String>>(&auto_tags).unwrap_or_default();
-                let search_text = memo_search_text(&title, &body, &tags, &auto_tags);
-                conn.execute(
-                    "UPDATE memos SET tags = ?1, search_text = ?2 WHERE id = ?3",
-                    params![tags, search_text, id],
-                )?;
-            }
-        }
-
-        if applied_version < 7 {
-            conn.execute_batch(
-                "UPDATE memos
-                 SET created_at = replace(created_at, ' ', 'T') || 'Z'
-                 WHERE created_at GLOB '????-??-?? ??:??:??*';
-                 UPDATE memos
-                 SET updated_at = replace(updated_at, ' ', 'T') || 'Z'
-                 WHERE updated_at GLOB '????-??-?? ??:??:??*';
-                 UPDATE memos
-                 SET archived_at = replace(archived_at, ' ', 'T') || 'Z'
-                 WHERE archived_at GLOB '????-??-?? ??:??:??*';
-                 UPDATE clipboard_entries
-                 SET archived_at = replace(archived_at, ' ', 'T') || 'Z'
-                 WHERE archived_at GLOB '????-??-?? ??:??:??*';",
-            )?;
-        }
-
-        if applied_version < 8 {
-            let rows = {
-                let mut statement = conn.prepare("SELECT id, content FROM clipboard_entries")?;
-                let rows = statement
-                    .query_map([], |row| {
-                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-                    })?
-                    .collect::<SqlResult<Vec<_>>>()?;
-                rows
-            };
-            for (id, content) in rows {
-                conn.execute(
-                    "UPDATE clipboard_entries SET content_hash = ?1 WHERE id = ?2",
-                    params![Self::hash_content(&content), id],
-                )?;
-            }
-        }
-
-        conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_content_hash ON clipboard_entries(content_hash)",
-        )?;
-
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![SCHEMA_VERSION],
-        )?;
-
-        Ok(())
+        crate::storage_migrations::run(&conn)
     }
-
     /// Compute SHA-256 hash of content for deduplication
     pub fn hash_content(content: &str) -> String {
         let mut hasher = Sha256::new();
@@ -555,6 +308,76 @@ impl Storage {
         let mut hasher = Sha256::new();
         hasher.update(bytes);
         hex::encode(hasher.finalize())
+    }
+
+    /// Recompute classification metadata for existing non-image clipboard entries.
+    /// This is intentionally user-triggered and never runs during database startup.
+    pub fn reclassify_clipboard_entries(&self) -> Result<u64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        let rows = {
+            let mut statement = tx.prepare(
+                "SELECT id, category, category_tags, content_type, content, preview, search_text
+                 FROM clipboard_entries
+                 WHERE content_type NOT LIKE 'image/%'",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                    ))
+                })?
+                .collect::<SqlResult<Vec<_>>>()?;
+            rows
+        };
+
+        let mut changed = 0_u64;
+        for (
+            id,
+            stored_category,
+            stored_category_tags,
+            content_type,
+            content,
+            preview,
+            stored_search_text,
+        ) in rows
+        {
+            let categories = classify_text_tags(&content);
+            let category = categories.first().cloned().unwrap_or(Category::Text);
+            let category = category.to_string();
+            let category_tags = category_tags_json(&categories)?;
+            let search_text = clipboard_search_text(&content_type, &content, &preview, &categories);
+
+            if stored_category == category
+                && stored_category_tags == category_tags
+                && stored_search_text == search_text
+            {
+                continue;
+            }
+
+            tx.execute(
+                "UPDATE clipboard_entries
+                 SET category = ?1, category_tags = ?2, search_text = ?3
+                 WHERE id = ?4",
+                params![category, category_tags, search_text, id],
+            )?;
+            changed += 1;
+        }
+
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES ('classification_rules_applied_version', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![CLASSIFICATION_RULES_VERSION.to_string()],
+        )?;
+
+        tx.commit()?;
+        Ok(changed)
     }
 
     /// Insert a new clipboard entry, returns Ok(true) if inserted, Ok(false) if duplicate
@@ -601,9 +424,14 @@ impl Storage {
 
         if let Some(ref cat) = filter.category {
             sql.push_str(" AND ");
-            sql.push_str(&category_match_condition("category"));
+            sql.push_str(&category_match_condition(
+                "category",
+                filter.include_auxiliary_tags,
+            ));
             param_values.push(Box::new(cat.clone()));
-            param_values.push(Box::new(category_tag_pattern(cat)));
+            if filter.include_auxiliary_tags {
+                param_values.push(Box::new(category_tag_pattern(cat)));
+            }
         }
 
         if let Some(ref search) = filter.search {
@@ -644,6 +472,26 @@ impl Storage {
         let entry = stmt.query_row(params![id], map_row_to_entry).ok();
 
         Ok(entry)
+    }
+
+    /// Fetch selected clipboard entries while preserving the caller's display order.
+    pub fn get_entries_by_ids(&self, ids: &[i64]) -> Result<Vec<ClipboardEntry>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, category, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, category_tags
+             FROM clipboard_entries WHERE id = ?1",
+        )?;
+        let mut entries = Vec::with_capacity(ids.len());
+
+        for id in ids {
+            match stmt.query_row(params![id], map_row_to_entry) {
+                Ok(entry) => entries.push(entry),
+                Err(rusqlite::Error::QueryReturnedNoRows) => {}
+                Err(error) => return Err(StorageError::Database(error)),
+            }
+        }
+
+        Ok(entries)
     }
 
     pub fn export_backup_data(&self, app_version: &str) -> Result<BackupData, StorageError> {
@@ -767,7 +615,7 @@ impl Storage {
         tx.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![SCHEMA_VERSION],
+            params![crate::storage_migrations::SCHEMA_VERSION],
         )?;
 
         tx.execute(
@@ -793,6 +641,30 @@ impl Storage {
         let conn = self.conn.lock().unwrap();
         let rows = conn.execute("DELETE FROM clipboard_entries WHERE id = ?1", params![id])?;
         Ok(rows > 0)
+    }
+
+    pub fn delete_entries(&self, ids: &[i64], archive: bool) -> Result<u64, StorageError> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        let mut affected = 0_u64;
+        for id in ids {
+            let rows = if archive {
+                tx.execute(
+                    "UPDATE clipboard_entries
+                     SET archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                     WHERE id = ?1 AND archived_at IS NULL",
+                    params![id],
+                )?
+            } else {
+                tx.execute("DELETE FROM clipboard_entries WHERE id = ?1", params![id])?
+            };
+            affected += rows as u64;
+        }
+        tx.commit()?;
+        Ok(affected)
     }
 
     /// Toggle pinned status
@@ -855,12 +727,17 @@ impl Storage {
     }
 
     /// Get total count of entries, optionally filtered by category
-    pub fn count(&self, category: Option<&str>) -> Result<i64, StorageError> {
+    pub fn count(
+        &self,
+        category: Option<&str>,
+        include_auxiliary_tags: bool,
+    ) -> Result<i64, StorageError> {
         let conn = self.conn.lock().unwrap();
         let count = if let Some(cat) = category {
             conn.query_row(
-                "SELECT COUNT(*) FROM clipboard_entries WHERE (category = ?1 OR category_tags LIKE ?2) AND archived_at IS NULL",
-                params![cat, category_tag_pattern(cat)],
+                "SELECT COUNT(*) FROM clipboard_entries
+                 WHERE (category = ?1 OR (?2 AND category_tags LIKE ?3)) AND archived_at IS NULL",
+                params![cat, include_auxiliary_tags, category_tag_pattern(cat)],
                 |row| row.get(0),
             )?
         } else {
@@ -905,9 +782,35 @@ impl Storage {
         Ok(size)
     }
 
-    /// Clear all non-pinned entries (archive them if archive is enabled, otherwise hard delete)
-    pub fn clear_unpinned(&self, archive: bool) -> Result<u64, StorageError> {
+    /// Clear non-pinned entries, optionally limited to a category.
+    pub fn clear_unpinned(
+        &self,
+        archive: bool,
+        category: Option<&str>,
+        include_auxiliary_tags: bool,
+    ) -> Result<u64, StorageError> {
         let conn = self.conn.lock().unwrap();
+        if let Some(category) = category {
+            let tag_pattern = category_tag_pattern(category);
+            let rows = if archive {
+                conn.execute(
+                    "UPDATE clipboard_entries
+                     SET archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                     WHERE pinned = 0 AND archived_at IS NULL
+                       AND (category = ?1 OR (?2 AND category_tags LIKE ?3))",
+                    params![category, include_auxiliary_tags, tag_pattern],
+                )?
+            } else {
+                conn.execute(
+                    "DELETE FROM clipboard_entries
+                     WHERE pinned = 0 AND archived_at IS NULL
+                       AND (category = ?1 OR (?2 AND category_tags LIKE ?3))",
+                    params![category, include_auxiliary_tags, tag_pattern],
+                )?
+            };
+            return Ok(rows as u64);
+        }
+
         if archive {
             let rows = conn.execute(
                 "UPDATE clipboard_entries SET archived_at = datetime('now') WHERE pinned = 0 AND archived_at IS NULL",
@@ -915,7 +818,10 @@ impl Storage {
             )?;
             Ok(rows as u64)
         } else {
-            let rows = conn.execute("DELETE FROM clipboard_entries WHERE pinned = 0", [])?;
+            let rows = conn.execute(
+                "DELETE FROM clipboard_entries WHERE pinned = 0 AND archived_at IS NULL",
+                [],
+            )?;
             Ok(rows as u64)
         }
     }
@@ -951,9 +857,14 @@ impl Storage {
 
         if let Some(ref cat) = filter.category {
             sql.push_str(" AND ");
-            sql.push_str(&category_match_condition("category"));
+            sql.push_str(&category_match_condition(
+                "category",
+                filter.include_auxiliary_tags,
+            ));
             param_values.push(Box::new(cat.clone()));
-            param_values.push(Box::new(category_tag_pattern(cat)));
+            if filter.include_auxiliary_tags {
+                param_values.push(Box::new(category_tag_pattern(cat)));
+            }
         }
 
         if let Some(ref search) = filter.search {
@@ -1000,6 +911,16 @@ impl Storage {
         let rows = conn.execute(
             "DELETE FROM clipboard_entries WHERE archived_at IS NOT NULL AND archived_at < datetime('now', '-' || ?1 || ' days')",
             params![days],
+        )?;
+        Ok(rows as u64)
+    }
+
+    /// Permanently delete all archived clipboard entries.
+    pub fn empty_archive(&self) -> Result<u64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "DELETE FROM clipboard_entries WHERE archived_at IS NOT NULL",
+            [],
         )?;
         Ok(rows as u64)
     }
@@ -1223,6 +1144,13 @@ impl Storage {
         Ok(rows as u64)
     }
 
+    /// Permanently delete all archived memos.
+    pub fn empty_memo_archive(&self) -> Result<u64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM memos WHERE archived_at IS NOT NULL", [])?;
+        Ok(rows as u64)
+    }
+
     /// Permanently delete a single memo (archived or not)
     pub fn permanent_delete_memo(&self, id: i64) -> Result<bool, StorageError> {
         let conn = self.conn.lock().unwrap();
@@ -1332,6 +1260,295 @@ mod tests {
     }
 
     #[test]
+    fn auxiliary_categories_only_participate_when_enabled() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let content = "https://example.com contact@example.com";
+        let entry = ClipboardEntry {
+            id: 0,
+            category: Category::Link,
+            category_tags: vec![Category::Link, Category::Email],
+            content_type: "text/plain".to_string(),
+            content: content.to_string(),
+            preview: content.to_string(),
+            hash: Storage::hash_content(content),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        assert!(storage.insert(&entry).unwrap());
+
+        let primary_only = QueryFilter {
+            category: Some("email".to_string()),
+            ..Default::default()
+        };
+        let include_auxiliary = QueryFilter {
+            category: Some("email".to_string()),
+            include_auxiliary_tags: true,
+            ..Default::default()
+        };
+
+        assert!(storage.query(&primary_only).unwrap().is_empty());
+        assert_eq!(storage.query(&include_auxiliary).unwrap().len(), 1);
+        assert_eq!(storage.count(Some("email"), false).unwrap(), 0);
+        assert_eq!(storage.count(Some("email"), true).unwrap(), 1);
+        assert_eq!(storage.count(Some("link"), false).unwrap(), 1);
+
+        drop(storage);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn clear_unpinned_category_respects_auxiliary_tags_and_pins() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let insert = |content: &str, category: Category, category_tags: Vec<Category>, pinned| {
+            storage
+                .insert(&ClipboardEntry {
+                    id: 0,
+                    category,
+                    category_tags,
+                    content_type: "text/plain".to_string(),
+                    content: content.to_string(),
+                    preview: content.to_string(),
+                    hash: Storage::hash_content(content),
+                    pinned,
+                    created_at: Utc::now(),
+                    original_content: None,
+                    updated_at: None,
+                    archived_at: None,
+                    version: 1,
+                })
+                .unwrap()
+        };
+
+        assert!(insert(
+            "https://example.com contact@example.com",
+            Category::Link,
+            vec![Category::Link, Category::Email],
+            false,
+        ));
+        assert!(insert(
+            "primary@example.com",
+            Category::Email,
+            vec![Category::Email],
+            false,
+        ));
+        assert!(insert(
+            "pinned@example.com",
+            Category::Email,
+            vec![Category::Email],
+            true,
+        ));
+        assert!(insert(
+            "plain text",
+            Category::Text,
+            vec![Category::Text],
+            false,
+        ));
+
+        assert_eq!(
+            storage.clear_unpinned(false, Some("email"), false).unwrap(),
+            1
+        );
+        assert_eq!(storage.count(Some("email"), false).unwrap(), 1);
+        assert_eq!(storage.count(Some("link"), false).unwrap(), 1);
+
+        assert_eq!(
+            storage.clear_unpinned(false, Some("email"), true).unwrap(),
+            1
+        );
+        assert_eq!(storage.count(Some("email"), true).unwrap(), 1);
+        assert_eq!(storage.count(Some("link"), false).unwrap(), 0);
+        assert_eq!(storage.count(Some("text"), false).unwrap(), 1);
+
+        drop(storage);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn clear_unpinned_category_archives_only_matching_entries() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        for (content, category, category_tags) in [
+            (
+                "https://example.com contact@example.com",
+                Category::Link,
+                vec![Category::Link, Category::Email],
+            ),
+            ("plain text", Category::Text, vec![Category::Text]),
+        ] {
+            assert!(storage
+                .insert(&ClipboardEntry {
+                    id: 0,
+                    category,
+                    category_tags,
+                    content_type: "text/plain".to_string(),
+                    content: content.to_string(),
+                    preview: content.to_string(),
+                    hash: Storage::hash_content(content),
+                    pinned: false,
+                    created_at: Utc::now(),
+                    original_content: None,
+                    updated_at: None,
+                    archived_at: None,
+                    version: 1,
+                })
+                .unwrap());
+        }
+
+        assert_eq!(
+            storage.clear_unpinned(true, Some("email"), true).unwrap(),
+            1
+        );
+        assert_eq!(storage.count(Some("link"), false).unwrap(), 0);
+        assert_eq!(storage.count(Some("text"), false).unwrap(), 1);
+        assert_eq!(storage.archive_count().unwrap(), 1);
+
+        drop(storage);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn clear_all_unpinned_keeps_recycle_bin_entries() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        for (content, pinned) in [
+            ("active clipboard", false),
+            ("archived clipboard", false),
+            ("pinned clipboard", true),
+        ] {
+            assert!(storage
+                .insert(&ClipboardEntry {
+                    id: 0,
+                    category: Category::Text,
+                    category_tags: vec![Category::Text],
+                    content_type: "text/plain".to_string(),
+                    content: content.to_string(),
+                    preview: content.to_string(),
+                    hash: Storage::hash_content(content),
+                    pinned,
+                    created_at: Utc::now(),
+                    original_content: None,
+                    updated_at: None,
+                    archived_at: None,
+                    version: 1,
+                })
+                .unwrap());
+        }
+
+        let archived_id = storage
+            .query(&QueryFilter::default())
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.content == "archived clipboard")
+            .unwrap()
+            .id;
+        assert!(storage.archive_entry(archived_id).unwrap());
+
+        assert_eq!(storage.clear_unpinned(false, None, false).unwrap(), 1);
+        assert_eq!(storage.count(None, false).unwrap(), 1);
+        assert_eq!(storage.archive_count().unwrap(), 1);
+
+        drop(storage);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn batch_delete_archives_and_removes_mixed_categories() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        for (content, category) in [
+            ("https://example.com", Category::Link),
+            ("plain batch item", Category::Text),
+        ] {
+            let entry = ClipboardEntry {
+                id: 0,
+                category: category.clone(),
+                category_tags: vec![category],
+                content_type: "text/plain".to_string(),
+                content: content.to_string(),
+                preview: content.to_string(),
+                hash: Storage::hash_content(content),
+                pinned: false,
+                created_at: Utc::now(),
+                original_content: None,
+                updated_at: None,
+                archived_at: None,
+                version: 1,
+            };
+            assert!(storage.insert(&entry).unwrap());
+        }
+        let ids = storage
+            .query(&QueryFilter::default())
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(storage.delete_entries(&ids, true).unwrap(), 2);
+        assert_eq!(storage.count(None, false).unwrap(), 0);
+        assert_eq!(storage.archive_count().unwrap(), 2);
+        assert_eq!(storage.delete_entries(&ids, false).unwrap(), 2);
+        assert_eq!(storage.archive_count().unwrap(), 0);
+
+        drop(storage);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn empty_archives_permanently_remove_only_archived_records() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        for content in ["active clipboard", "archived clipboard"] {
+            assert!(storage
+                .insert(&ClipboardEntry {
+                    id: 0,
+                    category: Category::Text,
+                    category_tags: vec![Category::Text],
+                    content_type: "text/plain".to_string(),
+                    content: content.to_string(),
+                    preview: content.to_string(),
+                    hash: Storage::hash_content(content),
+                    pinned: false,
+                    created_at: Utc::now(),
+                    original_content: None,
+                    updated_at: None,
+                    archived_at: None,
+                    version: 1,
+                })
+                .unwrap());
+        }
+        let archived_entry_id = storage
+            .query(&QueryFilter::default())
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.content == "archived clipboard")
+            .unwrap()
+            .id;
+        storage.archive_entry(archived_entry_id).unwrap();
+
+        storage.create_memo("Active memo", "keep", "", &[]).unwrap();
+        let archived_memo = storage
+            .create_memo("Archived memo", "remove", "", &[])
+            .unwrap();
+        storage.archive_memo(archived_memo.id).unwrap();
+
+        assert_eq!(storage.empty_archive().unwrap(), 1);
+        assert_eq!(storage.empty_memo_archive().unwrap(), 1);
+        assert_eq!(storage.archive_count().unwrap(), 0);
+        assert_eq!(storage.memo_archive_count().unwrap(), 0);
+        assert_eq!(storage.count(None, false).unwrap(), 1);
+        assert_eq!(storage.memo_count().unwrap(), 1);
+
+        drop(storage);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
     fn backup_data_round_trips_between_databases() {
         let source_path = temp_db_path();
         let target_path = temp_db_path();
@@ -1411,7 +1628,7 @@ mod tests {
         assert_eq!(memos[0].auto_tags, vec!["email".to_string()]);
         assert_eq!(
             migrated.get_setting("schema_version").unwrap().as_deref(),
-            Some(SCHEMA_VERSION),
+            Some(crate::storage_migrations::SCHEMA_VERSION),
         );
 
         drop(migrated);
@@ -1447,7 +1664,7 @@ mod tests {
         assert_eq!(memos[0].auto_tags, vec!["email".to_string()]);
         assert_eq!(
             migrated.get_setting("schema_version").unwrap().as_deref(),
-            Some(SCHEMA_VERSION),
+            Some(crate::storage_migrations::SCHEMA_VERSION),
         );
 
         drop(migrated);
@@ -1487,6 +1704,66 @@ mod tests {
         assert_eq!(memo.archived_at.as_deref(), Some("2026-07-16T00:47:00Z"));
 
         drop(migrated);
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn manual_reclassification_updates_only_classification_metadata() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let content = "E:/Code/SuperClipboard3/docs/index.html";
+        let created_at = Utc::now();
+        let original_content = Some("original path".to_string());
+        let updated_at = Some("2026-07-17T01:02:03Z".to_string());
+        storage
+            .insert(&ClipboardEntry {
+                id: 0,
+                category: Category::Code,
+                category_tags: vec![Category::Code, Category::Text],
+                content_type: "text/plain".to_string(),
+                content: content.to_string(),
+                preview: content.to_string(),
+                hash: Storage::hash_content(content),
+                pinned: false,
+                created_at,
+                original_content: original_content.clone(),
+                updated_at: updated_at.clone(),
+                archived_at: None,
+                version: 1,
+            })
+            .unwrap();
+        let entry_id = storage.query(&QueryFilter::default()).unwrap()[0].id;
+        {
+            let conn = storage.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE clipboard_entries
+                 SET original_content = ?1, updated_at = ?2
+                 WHERE id = ?3",
+                params![original_content, updated_at, entry_id],
+            )
+            .unwrap();
+        }
+
+        assert_eq!(storage.reclassify_clipboard_entries().unwrap(), 1);
+        assert_eq!(storage.reclassify_clipboard_entries().unwrap(), 0);
+        assert_eq!(
+            storage
+                .get_setting("classification_rules_applied_version")
+                .unwrap()
+                .as_deref(),
+            Some("1")
+        );
+        let entries = storage.query(&QueryFilter::default()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].category, Category::FilePath);
+        assert_eq!(entries[0].category_tags, vec![Category::FilePath]);
+        assert_eq!(entries[0].content, content);
+        assert_eq!(entries[0].created_at, created_at);
+        assert_eq!(entries[0].original_content, original_content);
+        assert_eq!(entries[0].updated_at, updated_at);
+        assert!(!entries[0].pinned);
+
+        drop(storage);
         std::fs::remove_file(db_path).ok();
     }
 

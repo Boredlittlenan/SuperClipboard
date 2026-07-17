@@ -15,7 +15,6 @@
     "core:window:allow-start-dragging",
     "core:path:default",
     "dialog:default",
-    "shell:allow-open",
     "global-shortcut:default"
   ]
 }

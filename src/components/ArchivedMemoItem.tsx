@@ -58,7 +58,6 @@ export default function ArchivedMemoItem({ memo, onRestore, onPermanentDelete }:
 const styles: Record<string, React.CSSProperties> = {
   item: {
     padding: '10px 12px',
-    borderBottom: '1px solid var(--border)',
   },
   content: {
     display: 'flex',

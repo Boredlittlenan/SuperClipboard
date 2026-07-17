@@ -1,12 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
-import { Archive, Download, ExternalLink, Image as ImageIcon, Maximize2, Pencil, Pin, RotateCcw, Trash2 } from 'lucide-react';
+import { Archive, Check, Download, ExternalLink, Image as ImageIcon, Maximize2, Pencil, Pin, RotateCcw, Trash2 } from 'lucide-react';
 import type { ClipboardEntry } from '../types';
 import { getArchiveDaysRemaining, getArchiveTone, getCategoryColor, getCategoryLabel, formatRelativeTime } from '../utils';
 import { useI18n } from '../i18n';
 import { exportClipboardImage, getEntryContent, type UpdateResult } from '../api/clipboard';
 import ImagePreviewDialog from './ImagePreviewDialog';
+import { shouldToggleEntrySelection } from '../clipboardMerge';
 
 interface Props {
   entry: ClipboardEntry;
@@ -21,9 +22,13 @@ interface Props {
   showCategoryIndicator?: boolean;
   onRestore?: (id: number) => void;
   onPermanentDelete?: (id: number) => void;
+  selectionMode?: boolean;
+  multiSelectEnabled?: boolean;
+  selected?: boolean;
+  onSelectionToggle?: (entry: ClipboardEntry) => void;
 }
 
-export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, onEdit, rawPreview, isArchive, archiveEnabled, multiTagEnabled, showCategoryIndicator = true, onRestore, onPermanentDelete }: Props) {
+export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, onEdit, rawPreview, isArchive, archiveEnabled, multiTagEnabled, showCategoryIndicator = true, onRestore, onPermanentDelete, selectionMode = false, multiSelectEnabled = false, selected = false, onSelectionToggle }: Props) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(entry.content);
   const [showOriginal, setShowOriginal] = useState(false);
@@ -61,6 +66,13 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   useEffect(() => {
     setImageContent(isImage ? entry.content : '');
   }, [entry.content, entry.id, isImage]);
+
+  useEffect(() => {
+    if (selectionMode) {
+      setEditing(false);
+      setEditError('');
+    }
+  }, [selectionMode]);
 
   useEffect(() => {
     if (!isImage || entry.content) return;
@@ -208,10 +220,23 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
 
   return (
     <div
-      className="clipboard-entry"
+      className={`clipboard-entry${selectionMode ? ' is-selecting' : ''}${selected ? ' is-selected' : ''}`}
       style={styles.container}
-      onClick={() => !editing && onCopy(entry.id)}
-      title={editing ? undefined : t.clickToCopy}
+      onClick={(event) => {
+        if (!editing && shouldToggleEntrySelection(selectionMode, multiSelectEnabled, event.ctrlKey)) {
+          if (event.ctrlKey) event.preventDefault();
+          onSelectionToggle?.(entry);
+        } else if (!editing) {
+          onCopy(entry.id);
+        }
+      }}
+      title={selectionMode
+        ? selected
+          ? t.deselectItem
+          : t.selectItem
+        : editing
+          ? undefined
+          : t.clickToCopy}
     >
       {/* Category indicator */}
       {showCategoryIndicator && (
@@ -222,6 +247,21 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
         {/* Header row */}
         <div style={styles.header}>
           <div style={styles.headerLeft}>
+            {selectionMode && (
+              <button
+                type="button"
+                className={`entry-selection-check${selected ? ' is-checked' : ''}`}
+                role="checkbox"
+                aria-checked={selected}
+                aria-label={selected ? t.deselectItem : t.selectItem}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectionToggle?.(entry);
+                }}
+              >
+                {selected && <Check size={12} strokeWidth={2.6} />}
+              </button>
+            )}
             <div style={styles.categoryBadges}>
               {categoryTags.map((category) => {
                 const color = getCategoryColor(category);
@@ -240,7 +280,7 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
                 );
               })}
             </div>
-            {!editing && (
+            {!editing && !selectionMode && (
               <div className="entry-actions" style={styles.inlineActions}>
                 {isArchive ? (
                   <>
@@ -457,7 +497,6 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
 const styles: Record<string, React.CSSProperties> = {
   container: {
     display: 'flex',
-    borderBottom: '1px solid var(--border)',
     cursor: 'pointer',
     position: 'relative',
   },

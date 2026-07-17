@@ -245,6 +245,21 @@
   font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
 }
 
+.title-actions-loading {
+  width: 60px;
+  height: 28px;
+  flex: none;
+}
+
+.view-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .app-root[data-ui-style="modern"] .shortcut-hint {
   padding: 2px 7px;
   border: 1px solid var(--apple-separator);
@@ -370,20 +385,81 @@
   -webkit-app-region: no-drag;
 }
 
+.experimental-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  margin-top: 5px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.experimental-action-button > svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.experimental-action-button > span {
+  display: block;
+  line-height: 14px;
+}
+
+.experimental-action-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.experimental-action-button:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+}
+
+.experimental-action-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.experimental-action-button:disabled svg {
+  animation: spin 0.8s linear infinite;
+}
+
 /* ─── Footer Bar ─── */
 .footer-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 12px;
-  min-height: 28px;
+  padding: 3px 12px;
+  min-height: 30px;
+  box-sizing: border-box;
   border-top: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
 }
 
+.footer-bar > * {
+  min-width: 0;
+}
+
+.footer-bar svg {
+  display: block;
+  flex-shrink: 0;
+}
+
 .app-root[data-ui-style="modern"] .footer-bar {
-  padding: 8px 10px;
+  padding: 5px 10px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0)),
     var(--apple-glass);
@@ -399,26 +475,34 @@
   box-shadow: 0 -10px 24px rgba(0, 0, 0, 0.26), inset 0 1px 0 var(--hairline-highlight);
 }
 
-.app-root[data-ui-style="modern"] .footer-text {
+.app-root[data-ui-style="modern"] .footer-text,
+.app-root[data-ui-style="modern"] .select-entries-btn,
+.app-root[data-ui-style="modern"] .clear-btn {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border: 1px solid var(--apple-separator);
-  border-radius: 999px;
-  background: var(--apple-control);
-  color: var(--text-secondary);
-  line-height: 1;
-}
-
-.app-root[data-ui-style="modern"] .clear-btn {
-  min-height: 22px;
+  justify-content: center;
+  height: 24px;
+  box-sizing: border-box;
   padding: 0 9px;
   border: 1px solid var(--apple-separator);
   border-radius: 999px;
   background: var(--apple-control);
-  color: var(--text-secondary);
+  color: var(--text-muted);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), inset 0 1px 0 var(--hairline-highlight);
+  font-size: 11px;
   line-height: 1;
+  white-space: nowrap;
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.app-root[data-ui-style="modern"] .footer-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 7px;
+}
+
+.app-root[data-ui-style="modern"] .clear-btn {
+  border-radius: 7px;
 }
 
 .app-root[data-ui-style="modern"] .clear-btn:hover {
@@ -426,12 +510,28 @@
   color: var(--danger);
 }
 
+.app-root[data-ui-style="modern"] .clear-btn:disabled,
+.app-root[data-ui-style="modern"] .clear-btn:disabled:hover {
+  background: var(--apple-control);
+  color: var(--text-muted);
+  opacity: 0.45;
+}
+
 .footer-text {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
   font-size: 11px;
+  line-height: 1;
   color: var(--text-muted);
 }
 
+.app-root[data-ui-style="classic"] .footer-text {
+  transform: translateY(-1px);
+}
+
 .clear-btn {
+  height: 24px;
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -439,11 +539,209 @@
   cursor: pointer;
   padding: 0 4px;
   border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
   transition: color 0.12s;
 }
 
 .clear-btn:hover {
   color: var(--danger);
+}
+
+.clear-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.clear-btn:disabled:hover {
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.archive-empty-btn {
+  gap: 4px;
+}
+
+.archive-empty-btn > svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.archive-empty-btn > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.archive-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.archive-subtabs {
+  display: flex;
+  gap: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.archive-subtab {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.archive-subtab[data-active="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.footer-actions,
+.batch-selection-actions {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  gap: 6px;
+}
+
+.select-entries-btn,
+.batch-cancel-btn,
+.batch-delete-btn,
+.batch-merge-btn {
+  height: 24px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  transition: color 0.14s ease, background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+}
+
+.select-entries-btn > span,
+.batch-merge-btn > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.select-entries-btn > svg {
+  transform: translateY(-1px);
+}
+
+.batch-icon-btn {
+  width: 25px;
+  min-width: 25px;
+  padding: 0;
+}
+
+.select-entries-btn:hover,
+.batch-cancel-btn:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+  border-color: var(--border-strong);
+}
+
+.batch-delete-btn {
+  color: var(--danger);
+}
+
+.batch-delete-btn:hover:not(:disabled) {
+  color: #dc2626;
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.batch-merge-btn {
+  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent);
+  font-weight: 600;
+}
+
+.batch-merge-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.batch-merge-btn:disabled,
+.batch-cancel-btn:disabled,
+.batch-delete-btn:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.batch-selection-count {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.app-root[data-ui-style="modern"] .select-entries-btn,
+.app-root[data-ui-style="modern"] .batch-cancel-btn,
+.app-root[data-ui-style="modern"] .batch-delete-btn {
+  border-color: var(--apple-separator);
+  background: var(--apple-control);
+  border-radius: 7px;
+}
+
+.app-root[data-ui-style="modern"] .batch-cancel-btn,
+.app-root[data-ui-style="modern"] .batch-delete-btn,
+.app-root[data-ui-style="modern"] .batch-merge-btn {
+  height: 24px;
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), inset 0 1px 0 var(--hairline-highlight);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.app-root[data-ui-style="modern"] .batch-icon-btn {
+  width: 26px;
+  min-width: 26px;
+}
+
+.app-root[data-ui-style="modern"] .select-entries-btn {
+  gap: 3px;
+}
+
+.app-root[data-ui-style="modern"] .select-entries-btn:hover {
+  color: var(--text-primary);
+  background: var(--apple-control-hover);
+  border-color: var(--apple-separator);
+}
+
+.app-root[data-ui-style="modern"] .batch-merge-btn {
+  gap: 3px;
+  padding-inline: 9px;
+  box-shadow: 0 2px 6px var(--accent-ring), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.app-root[data-ui-style="modern"] .batch-merge-btn > svg,
+.app-root[data-ui-style="modern"] .batch-merge-btn > span {
+  align-self: center;
+  transform: none;
 }
 
 /* ─── Toast ─── */
@@ -452,12 +750,18 @@
   bottom: 50px;
   left: 50%;
   transform: translateX(-50%);
+  width: max-content;
+  max-width: min(360px, calc(100vw - 32px));
+  box-sizing: border-box;
   background: var(--accent);
   color: #fff;
   padding: 6px 16px;
   border-radius: 16px;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  white-space: normal;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   animation: fadeInUp 0.2s ease;
   z-index: 1000;
@@ -535,15 +839,33 @@
   gap: 8px;
 }
 
+.confirm-dialog-actions.has-secondary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+}
+
 .dialog-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-primary);
   border-radius: 6px;
-  padding: 6px 12px;
+  padding: 7px 12px 5px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.confirm-dialog-actions.has-secondary .dialog-btn {
+  min-width: 0;
+  padding-inline: 8px;
+  white-space: nowrap;
 }
 
 .dialog-btn:hover {
@@ -557,7 +879,10 @@
 }
 
 .dialog-btn-primary:hover {
-  filter: brightness(0.96);
+  border-color: color-mix(in srgb, var(--accent) 86%, #111111);
+  background: color-mix(in srgb, var(--accent) 86%, #111111);
+  color: #ffffff;
+  filter: none;
 }
 
 .dialog-btn-danger {
@@ -838,12 +1163,92 @@
 .clipboard-entry {
   background: #ffffff;
   transition: background 0.12s ease;
-  contain: layout paint style;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 86px;
 }
+
+/* Let the list background form separators so WebView cannot cull an isolated 1px node. */
+.entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+}
+
+.entry-list-tail {
+  flex-shrink: 0;
+  background: var(--surface);
+}
+
+/* Keep the separator backing only behind entries, not across unused list space. */
+.app-root[data-ui-style="classic"] .entry-list::after {
+  content: "";
+  display: block;
+  flex: 1 0 0;
+  min-height: 0;
+  margin-top: -1px;
+  background: var(--surface);
+  pointer-events: none;
+}
+
+.entry-list > .clipboard-entry,
+.entry-list > .memo-entry {
+  flex: 0 0 auto;
+}
+
+.app-root[data-ui-style="modern"] .entry-list {
+  gap: 0;
+  background: transparent;
+}
+
+.app-root[data-ui-style="modern"] .entry-list-tail {
+  background: transparent;
+}
+
 .clipboard-entry:hover {
   background: var(--hover-bg);
+}
+
+.clipboard-entry.is-selected,
+.clipboard-entry.is-selected:hover {
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--border));
+  z-index: 1;
+}
+
+.clipboard-entry.is-selecting {
+  cursor: default;
+}
+
+.entry-selection-check {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: var(--surface-raised);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+}
+
+.entry-selection-check:hover {
+  border-color: var(--accent);
+}
+
+.entry-selection-check.is-checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.app-root[data-ui-style="modern"] .clipboard-entry.is-selected,
+.app-root[data-ui-style="modern"] .clipboard-entry.is-selected:hover {
+  background: color-mix(in srgb, var(--accent) 9%, var(--apple-glass-strong));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--apple-separator)) !important;
+  box-shadow: 0 4px 12px var(--accent-ring), inset 0 1px 0 var(--hairline-highlight);
+  z-index: 1;
 }
 .app-root[data-ui-style="modern"] .clipboard-entry {
   margin: 7px 8px 0;
@@ -883,9 +1288,6 @@
 .memo-entry {
   background: #ffffff;
   transition: background 0.15s ease;
-  contain: layout paint style;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 110px;
 }
 .memo-entry:hover {
   background: var(--memo-item-hover-bg);

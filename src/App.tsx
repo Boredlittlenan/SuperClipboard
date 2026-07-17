@@ -1,9 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { Import, NotebookText, Search, Trash2 } from 'lucide-react';
-import type { ClipboardEntry, FilterTab, QueryFilter, Stats, Memo } from './types';
+import { Combine, Import, ListChecks, NotebookText, Search, Trash2, X } from 'lucide-react';
+import type { ClipboardEntry, FilterTab, Stats } from './types';
 import {
-  getEntries,
   deleteEntry,
   togglePin,
   getStats,
@@ -11,47 +10,42 @@ import {
   copyToClipboard,
   updateEntry,
   onClipboardChanged,
-  getArchivedEntries,
   unarchiveEntry,
   permanentDelete,
   purgeOldArchives,
+  emptyArchive,
+  mergeEntries,
+  deleteEntries,
+  reclassifyClipboardEntries,
 } from './api/clipboard';
 import { getShortcut, checkUpdate, openUrl, pasteToActiveWindow } from './api/settings';
-import { getArchivedMemos, unarchiveMemo, permanentDeleteMemo, purgeOldMemoArchives } from './api/memos';
-import { formatShortcutLabel } from './utils';
+import { unarchiveMemo, permanentDeleteMemo, purgeOldMemoArchives, emptyMemoArchive } from './api/memos';
+import { formatShortcutLabel, getTabLabel } from './utils';
 import { I18nProvider, useI18n } from './i18n';
 import CategoryTabs from './components/CategoryTabs';
 import ClipboardList from './components/ClipboardList';
-import SettingsButton from './components/SettingsButton';
-import RemoteStorageButton from './components/RemoteStorageButton';
-import ExperimentalFeaturesButton from './components/ExperimentalFeaturesButton';
-import MemoList from './components/MemoList';
 import ArchivedMemoItem from './components/ArchivedMemoItem';
 import ConfirmDialog, { type ConfirmDialogState } from './components/ConfirmDialog';
 import { emitAppEvent, onAppEvent } from './events/appEvents';
 import { useAppSettings } from './hooks/useAppSettings';
-import { useInfiniteScroll } from './hooks/useInfiniteScroll';
 import { useClipboardDropImport } from './hooks/useClipboardDropImport';
+import { useClipboardEntries } from './hooks/useClipboardEntries';
+import { useArchivedMemos } from './hooks/useArchivedMemos';
 import AppSettingsProvider from './components/settings/AppSettingsProvider';
+import { canMergeEntries, getMergeCategory, getSelectedEntriesInListOrder, isBatchDeleteShortcut, MAX_MERGE_SELECTION } from './clipboardMerge';
+import { getFooterItemCount } from './footerItemCount';
 import './App.css';
+
+const SettingsButton = lazy(() => import('./components/SettingsButton'));
+const RemoteStorageButton = lazy(() => import('./components/RemoteStorageButton'));
+const ExperimentalFeaturesButton = lazy(() => import('./components/ExperimentalFeaturesButton'));
+const MemoList = lazy(() => import('./components/MemoList'));
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-const CLIPBOARD_PAGE_SIZE = 50;
-
-function buildClipboardFilter(activeTab: FilterTab, searchQuery: string, offset = 0): QueryFilter {
-  const filter: QueryFilter = { limit: CLIPBOARD_PAGE_SIZE, offset };
-  if (activeTab !== 'all' && activeTab !== 'archive' && activeTab !== 'memo') {
-    filter.category = activeTab;
-  }
-  const search = searchQuery.trim();
-  if (search) filter.search = search;
-  return filter;
 }
 
 function AppContent() {
@@ -64,6 +58,7 @@ function AppContent() {
     archiveEnabled,
     experimentalFeaturesEnabled,
     clipboardMultiTagEnabled,
+    multiSelectEnabled,
     hideEntryColorStripEnabled,
     categoryTabSelectedColorsEnabled,
     categoryTabSortingEnabled,
@@ -72,14 +67,12 @@ function AppContent() {
     themeMode,
     autoUpdate,
   } = settings;
+  const multiTagClassificationEnabled = experimentalFeaturesEnabled && clipboardMultiTagEnabled;
+  const multiSelectModeEnabled = experimentalFeaturesEnabled && multiSelectEnabled;
   const [titleVariant, setTitleVariant] = useState<'default' | 'xiaonan' | 'yingnan'>('default');
-  const [entries, setEntries] = useState<ClipboardEntry[]>([]);
-  const [entriesHasMore, setEntriesHasMore] = useState(false);
-  const [entriesLoadingMore, setEntriesLoadingMore] = useState(false);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState<Stats | null>(null);
-  const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState<number | null>(null);
   const [currentShortcut, setCurrentShortcut] = useState('Alt+X');
   const [memoCountState, setMemoCountState] = useState<number | null>(null);
@@ -91,34 +84,82 @@ function AppContent() {
   const searchRef = useRef<HTMLInputElement>(null);
   const searchQueryRef = useRef('');
   const [archiveSubTab, setArchiveSubTab] = useState<'clipboard' | 'memos'>('clipboard');
-  const [archivedMemos, setArchivedMemos] = useState<Memo[]>([]);
-  const [archivedMemosHasMore, setArchivedMemosHasMore] = useState(false);
-  const [archivedMemosLoadingMore, setArchivedMemosLoadingMore] = useState(false);
   const [memoArchiveCountState, setMemoArchiveCountState] = useState<number>(0);
   const [openedViaShortcut, setOpenedViaShortcut] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [dropNotice, setDropNotice] = useState<{ message: string; tone: 'success' | 'error' } | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedEntryIds, setSelectedEntryIds] = useState<number[]>([]);
+  const [batchActionPending, setBatchActionPending] = useState(false);
+  const [archiveClearPending, setArchiveClearPending] = useState(false);
+  const [reclassifyingHistory, setReclassifyingHistory] = useState(false);
   const [storageRevision, setStorageRevision] = useState(0);
-  const [entriesRefreshNonce, setEntriesRefreshNonce] = useState(0);
   const [isWindowDragging, setIsWindowDragging] = useState(false);
-  const fetchEntriesRequestRef = useRef(0);
-  const fetchEntriesInFlightRef = useRef(false);
-  const fetchEntriesPendingRef = useRef(false);
-  const entriesLoadingMoreRef = useRef(false);
-  const archivedMemosLoadingMoreRef = useRef(false);
-  const archivedMemosRequestRef = useRef(0);
-  const archivedMemoListRef = useRef<HTMLDivElement>(null);
-  const archivedMemoLoadMoreRef = useRef<HTMLDivElement>(null);
+  const fetchStatsRequestRef = useRef(0);
   const autoUpdateCheckedRef = useRef(false);
   const resumeRefreshRef = useRef(0);
   const lastWakeCheckRef = useRef(Date.now());
   const resumeRefreshTimersRef = useRef<number[]>([]);
+  const {
+    entries,
+    setEntries,
+    hasMore: entriesHasMore,
+    loading,
+    setLoading,
+    loadingMore: entriesLoadingMore,
+    fetchEntries,
+    loadMoreEntries,
+    refreshEntries,
+    clearEntries,
+  } = useClipboardEntries({
+    activeTab,
+    searchQuery,
+    includeAuxiliaryTags: multiTagClassificationEnabled,
+    refreshKey: storageRevision,
+  });
+  const {
+    memos: archivedMemos,
+    setMemos: setArchivedMemos,
+    loadingMore: archivedMemosLoadingMore,
+    listRef: archivedMemoListRef,
+    loadMoreRef: archivedMemoLoadMoreRef,
+    fetchMemos: fetchArchivedMemos,
+    clearMemos: clearArchivedMemos,
+  } = useArchivedMemos({
+    enabled: archiveEnabled,
+    active: activeTab === 'archive' && archiveSubTab === 'memos',
+    refreshKey: storageRevision,
+  });
   // Hidden title variants triggered from the Settings version badge.
   const displayTitle = titleVariant === 'xiaonan'
     ? '小楠の剪贴板'
     : titleVariant === 'yingnan'
       ? '瑛楠的剪贴板'
       : t.appTitle;
+  const selectedEntries = useMemo(
+    () => getSelectedEntriesInListOrder(entries, selectedEntryIds),
+    [entries, selectedEntryIds],
+  );
+  const selectionCategory = useMemo(
+    () => getMergeCategory(entries, selectedEntryIds),
+    [entries, selectedEntryIds],
+  );
+  const canMergeSelection = useMemo(
+    () => selectedEntries.length === selectedEntryIds.length && canMergeEntries(selectedEntries),
+    [selectedEntries, selectedEntryIds.length],
+  );
+  const selectedEntryIdSet = useMemo(() => new Set(selectedEntryIds), [selectedEntryIds]);
+  const footerItemCount = getFooterItemCount({
+    activeTab,
+    archiveSubTab,
+    stats,
+    memoCount: memoCountState,
+    memoLoadedCount: memoListCount,
+    archiveCount: archiveCountState,
+    memoArchiveCount: memoArchiveCountState,
+    loadedEntryCount: entries.length,
+    loadedArchivedMemoCount: archivedMemos.length,
+  });
 
   const handleTitleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -229,85 +270,12 @@ function AppContent() {
     };
   }, [autoUpdate, t]);
 
-  // Fetch entries based on current filter
-  const fetchEntries = useCallback(async () => {
-    const requestId = ++fetchEntriesRequestRef.current;
-    if (fetchEntriesInFlightRef.current) {
-      fetchEntriesPendingRef.current = true;
-      return;
-    }
-    fetchEntriesInFlightRef.current = true;
-    if (activeTab === 'memo') {
-      setLoading(false);
-      setEntriesHasMore(false);
-      fetchEntriesInFlightRef.current = false;
-      return;
-    }
-    const filter = buildClipboardFilter(activeTab, searchQuery);
-    try {
-      if (activeTab === 'archive') {
-        const data = await getArchivedEntries(filter);
-        if (fetchEntriesRequestRef.current === requestId) {
-          setEntries(data);
-          setEntriesHasMore(data.length === CLIPBOARD_PAGE_SIZE);
-        }
-      } else {
-        const data = await getEntries(filter);
-        if (fetchEntriesRequestRef.current === requestId) {
-          setEntries(data);
-          setEntriesHasMore(data.length === CLIPBOARD_PAGE_SIZE);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to fetch entries:', err);
-    } finally {
-      if (fetchEntriesRequestRef.current === requestId) {
-        setLoading(false);
-      }
-      fetchEntriesInFlightRef.current = false;
-      if (fetchEntriesPendingRef.current) {
-        fetchEntriesPendingRef.current = false;
-        setEntriesRefreshNonce((value) => value + 1);
-      }
-    }
-  }, [activeTab, searchQuery]);
-
-  const loadMoreEntries = useCallback(async () => {
-    if (
-      activeTab === 'memo'
-      || !entriesHasMore
-      || entriesLoadingMoreRef.current
-      || fetchEntriesInFlightRef.current
-    ) return;
-
-    entriesLoadingMoreRef.current = true;
-    setEntriesLoadingMore(true);
-    const requestId = fetchEntriesRequestRef.current;
-    const offset = entries.length;
-    const filter = buildClipboardFilter(activeTab, searchQuery, offset);
-    try {
-      const data = activeTab === 'archive'
-        ? await getArchivedEntries(filter)
-        : await getEntries(filter);
-      if (fetchEntriesRequestRef.current !== requestId) return;
-      setEntries((current) => {
-        if (current.length !== offset) return current;
-        const knownIds = new Set(current.map((entry) => entry.id));
-        return [...current, ...data.filter((entry) => !knownIds.has(entry.id))];
-      });
-      setEntriesHasMore(data.length === CLIPBOARD_PAGE_SIZE);
-    } catch (error) {
-      console.error('Failed to load more entries:', error);
-    } finally {
-      entriesLoadingMoreRef.current = false;
-      setEntriesLoadingMore(false);
-    }
-  }, [activeTab, entries.length, entriesHasMore, searchQuery]);
-
   // Fetch stats
   const fetchStats = useCallback(async () => {
+    const requestId = ++fetchStatsRequestRef.current;
     try {
-      const s = await getStats();
+      const s = await getStats(multiTagClassificationEnabled);
+      if (fetchStatsRequestRef.current !== requestId) return;
       setStats(s);
       setArchiveCountState(s.archive);
       setMemoCountState(s.memoCount);
@@ -315,14 +283,14 @@ function AppContent() {
     } catch (err) {
       console.error('Failed to fetch stats:', err);
     }
-  }, []);
+  }, [multiTagClassificationEnabled]);
 
   const refreshDataOnce = useCallback(() => {
     if (activeTab !== 'memo') {
       setLoading(true);
     }
     setStorageRevision((value) => value + 1);
-  }, [activeTab]);
+  }, [activeTab, setLoading]);
 
   const clearScheduledDataRefreshes = useCallback(() => {
     resumeRefreshTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -349,8 +317,8 @@ function AppContent() {
     const offClipboard = onAppEvent('clipboard:changed', refreshDataOnce);
     const offStorage = onAppEvent('storage:changed', () => {
       clearScheduledDataRefreshes();
-      setEntries([]);
-      setArchivedMemos([]);
+      clearEntries();
+      clearArchivedMemos();
       refreshDataOnce();
     });
     return () => {
@@ -358,7 +326,7 @@ function AppContent() {
       offClipboard();
       offStorage();
     };
-  }, [clearScheduledDataRefreshes, refreshDataOnce, scheduleDataRefresh]);
+  }, [clearArchivedMemos, clearEntries, clearScheduledDataRefreshes, refreshDataOnce, scheduleDataRefresh]);
 
   // Listen for window-shown events to track how the window was opened and refresh remote data.
   useEffect(() => {
@@ -404,59 +372,6 @@ function AppContent() {
       resumeRefreshTimersRef.current = [];
     };
   }, []);
-
-  // Fetch archived memos
-  const fetchArchivedMemos = useCallback(async () => {
-    const requestId = ++archivedMemosRequestRef.current;
-    if (!archiveEnabled) {
-      setArchivedMemos([]);
-      setArchivedMemosHasMore(false);
-      return;
-    }
-    try {
-      const data = await getArchivedMemos({ limit: CLIPBOARD_PAGE_SIZE });
-      if (archivedMemosRequestRef.current !== requestId) return;
-      setArchivedMemos(data);
-      setArchivedMemosHasMore(data.length === CLIPBOARD_PAGE_SIZE);
-    } catch (err) {
-      console.error('Failed to fetch archived memos:', err);
-    }
-  }, [archiveEnabled]);
-
-  const loadMoreArchivedMemos = useCallback(async () => {
-    if (!archivedMemosHasMore || archivedMemosLoadingMoreRef.current) return;
-    archivedMemosLoadingMoreRef.current = true;
-    setArchivedMemosLoadingMore(true);
-    const requestId = archivedMemosRequestRef.current;
-    const offset = archivedMemos.length;
-    try {
-      const data = await getArchivedMemos({ limit: CLIPBOARD_PAGE_SIZE, offset });
-      if (archivedMemosRequestRef.current !== requestId) return;
-      setArchivedMemos((current) => {
-        if (current.length !== offset) return current;
-        const knownIds = new Set(current.map((memo) => memo.id));
-        return [...current, ...data.filter((memo) => !knownIds.has(memo.id))];
-      });
-      setArchivedMemosHasMore(data.length === CLIPBOARD_PAGE_SIZE);
-    } catch (error) {
-      console.error('Failed to load more archived memos:', error);
-    } finally {
-      archivedMemosLoadingMoreRef.current = false;
-      setArchivedMemosLoadingMore(false);
-    }
-  }, [archivedMemos.length, archivedMemosHasMore]);
-
-  useInfiniteScroll(
-    archivedMemoListRef,
-    archivedMemoLoadMoreRef,
-    activeTab === 'archive' && archiveSubTab === 'memos' && archivedMemosHasMore && !archivedMemosLoadingMore,
-    () => { void loadMoreArchivedMemos(); },
-  );
-
-  // Fetch visible list when the active filter changes.
-  useEffect(() => {
-    void fetchEntries();
-  }, [fetchEntries, storageRevision, entriesRefreshNonce]);
 
   // Refresh counts when storage changes; tab clicks also trigger a direct stats refresh.
   useEffect(() => {
@@ -569,7 +484,7 @@ function AppContent() {
         console.error('Failed to delete:', err);
       }
     },
-    [fetchStats, archiveEnabled]
+    [archiveEnabled, fetchStats, setEntries]
   );
 
   const handleTogglePin = useCallback(
@@ -583,7 +498,7 @@ function AppContent() {
         console.error('Failed to toggle pin:', err);
       }
     },
-    []
+    [setEntries]
   );
 
   const handleEdit = useCallback(
@@ -605,7 +520,7 @@ function AppContent() {
         console.error('Failed to restore:', err);
       }
     },
-    [fetchStats]
+    [fetchStats, setEntries]
   );
 
   const handlePermanentDelete = useCallback(
@@ -625,7 +540,7 @@ function AppContent() {
         console.error('Failed to permanently delete:', err);
       }
     },
-    [fetchStats, requestConfirm, t]
+    [fetchStats, requestConfirm, setEntries, t]
   );
 
   const handleMemoRestore = useCallback(
@@ -638,7 +553,7 @@ function AppContent() {
         console.error('Failed to restore memo:', err);
       }
     },
-    [fetchStats]
+    [fetchStats, setArchivedMemos]
   );
 
   const handleMemoPermanentDelete = useCallback(
@@ -658,32 +573,91 @@ function AppContent() {
         console.error('Failed to permanently delete memo:', err);
       }
     },
-    [fetchStats, requestConfirm, t]
+    [fetchStats, requestConfirm, setArchivedMemos, t]
   );
 
-  const handleClear = useCallback(async () => {
+  const handleEmptyArchive = useCallback(async () => {
+    if (archiveClearPending || footerItemCount === 0) return;
+    const scope = archiveSubTab === 'memos' ? t.memoSubTab : t.archiveSubTab;
     const confirmed = await requestConfirm({
-      title: t.clearHistory,
-      message: t.clearConfirm,
-      confirmLabel: t.clearHistory,
+      title: t.emptyArchiveTitle,
+      message: t.emptyArchiveConfirm(scope, footerItemCount),
+      confirmLabel: t.emptyArchive,
       tone: 'danger',
     });
     if (!confirmed) return;
+
+    setArchiveClearPending(true);
     try {
-      await clearUnpinned(archiveEnabled || undefined);
+      const removed = archiveSubTab === 'memos'
+        ? await emptyMemoArchive()
+        : await emptyArchive();
+      if (archiveSubTab === 'memos') {
+        clearArchivedMemos();
+        setMemoArchiveCountState(0);
+        setStats((current) => current ? { ...current, memoArchive: 0 } : current);
+      } else {
+        clearEntries();
+        setArchiveCountState(0);
+        setStats((current) => current ? { ...current, archive: 0 } : current);
+      }
+      await fetchStats();
+      setDropNotice({ message: t.emptyArchiveSuccess(scope, removed), tone: 'success' });
+    } catch (error) {
+      console.error('Failed to empty recycle bin:', error);
+      setDropNotice({ message: t.emptyArchiveFailed, tone: 'error' });
+    } finally {
+      setArchiveClearPending(false);
+    }
+  }, [archiveClearPending, archiveSubTab, clearArchivedMemos, clearEntries, fetchStats, footerItemCount, requestConfirm, t]);
+
+  const handleClear = useCallback(async () => {
+    const category = activeTab !== 'all' && activeTab !== 'archive' && activeTab !== 'memo'
+      ? activeTab
+      : undefined;
+    let clearCategory = category;
+    const clearDestination = archiveEnabled
+      ? t.clearMovesToArchive
+      : t.clearDeletesPermanently;
+
+    if (category) {
+      const clearScope = await new Promise<'current' | 'all' | null>((resolve) => {
+        setConfirmDialog({
+          title: t.clearHistory,
+          message: `${t.clearScopeConfirm(getTabLabel(category, t))}\n\n${clearDestination}`,
+          confirmLabel: t.clearCurrentTab,
+          tone: 'danger',
+          secondaryLabel: t.clearAllHistory,
+          secondaryTone: 'danger',
+          secondaryAfterPrimary: true,
+          onSecondary: () => resolve('all'),
+          resolve: (confirmed) => resolve(confirmed ? 'current' : null),
+        });
+      });
+      if (!clearScope) return;
+      if (clearScope === 'all') clearCategory = undefined;
+    } else {
+      const confirmed = await requestConfirm({
+        title: t.clearHistory,
+        message: `${t.clearConfirm}\n\n${clearDestination}`,
+        confirmLabel: t.clearHistory,
+        tone: 'danger',
+      });
+      if (!confirmed) return;
+    }
+
+    try {
+      await clearUnpinned(
+        archiveEnabled || undefined,
+        clearCategory,
+        clearCategory ? multiTagClassificationEnabled : false,
+      );
       fetchEntries();
       fetchStats();
     } catch (err) {
       console.error('Failed to clear:', err);
     }
-  }, [fetchEntries, fetchStats, archiveEnabled, requestConfirm, t]);
-
-  // Fetch archived memos when archive tab is active
-  useEffect(() => {
-    if (activeTab === 'archive' && archiveEnabled) {
-      fetchArchivedMemos();
-    }
-  }, [activeTab, archiveEnabled, fetchArchivedMemos, storageRevision]);
+  }, [activeTab, archiveEnabled, fetchEntries, fetchStats, multiTagClassificationEnabled, requestConfirm, t]);
 
   // Handle tab change
   const handleTabChange = useCallback((tab: FilterTab) => {
@@ -691,9 +665,11 @@ function AppContent() {
     if (tab !== 'memo') {
       setLoading(true);
     }
+    setSelectionMode(false);
+    setSelectedEntryIds([]);
     setActiveTab(tab);
     void fetchStats();
-  }, [activeTab, fetchStats]);
+  }, [activeTab, fetchStats, setLoading]);
 
   const handleMemoCountChange = useCallback((count: number) => {
     setMemoListCount(count);
@@ -708,8 +684,181 @@ function AppContent() {
     emitAppEvent('storage:changed');
   }, []);
 
+  const handleReclassifyHistory = useCallback(async () => {
+    if (reclassifyingHistory) return;
+    const confirmed = await requestConfirm({
+      title: t.reclassifyHistoryConfirmTitle,
+      message: t.reclassifyHistoryConfirm,
+      confirmLabel: t.reclassifyHistoryConfirmAction,
+      tone: 'normal',
+    });
+    if (!confirmed) return;
+
+    setReclassifyingHistory(true);
+    try {
+      const changed = await reclassifyClipboardEntries();
+      refreshEntries();
+      await fetchStats();
+      setDropNotice({ message: t.reclassifyHistorySuccess(changed), tone: 'success' });
+    } catch (error) {
+      console.error('Failed to reclassify clipboard history:', error);
+      setDropNotice({ message: t.reclassifyHistoryFailed, tone: 'error' });
+    } finally {
+      setReclassifyingHistory(false);
+    }
+  }, [fetchStats, reclassifyingHistory, refreshEntries, requestConfirm, t]);
+
   // Debounced search
   const [searchInput, setSearchInput] = useState('');
+
+  const resetSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedEntryIds([]);
+  }, []);
+
+  useEffect(() => {
+    if (!multiSelectModeEnabled && selectionMode) {
+      resetSelection();
+    }
+  }, [multiSelectModeEnabled, resetSelection, selectionMode]);
+
+  const handleSelectionToggle = useCallback((entry: ClipboardEntry) => {
+    if (!multiSelectModeEnabled) return;
+    setSelectionMode(true);
+    setSelectedEntryIds((current) => current.includes(entry.id)
+      ? current.filter((id) => id !== entry.id)
+      : [...current, entry.id]);
+  }, [multiSelectModeEnabled]);
+
+  const handleMergeEntries = useCallback(async () => {
+    if (selectedEntries.length < 2) {
+      setDropNotice({ message: t.mergeNeedTwo, tone: 'error' });
+      return;
+    }
+    if (selectedEntries.length !== selectedEntryIds.length) {
+      setDropNotice({ message: t.mergeFailed, tone: 'error' });
+      resetSelection();
+      return;
+    }
+    if (selectedEntries.length > MAX_MERGE_SELECTION) {
+      setDropNotice({ message: t.mergeLimitReached(MAX_MERGE_SELECTION), tone: 'error' });
+      return;
+    }
+    if (!canMergeEntries(selectedEntries)) {
+      setDropNotice({ message: t.mergeSameTypeOnly, tone: 'error' });
+      return;
+    }
+    if (selectionCategory === 'image' && !memoEnabled) {
+      setDropNotice({ message: t.mergeMemoRequired, tone: 'error' });
+      return;
+    }
+
+    const mergeMode = await new Promise<'merge' | 'merge-delete' | null>((resolve) => {
+      setConfirmDialog({
+        title: t.mergeChoiceTitle,
+        message: t.mergeChoiceMessage(selectedEntries.length, archiveEnabled),
+        confirmLabel: t.mergeOnly,
+        secondaryLabel: t.mergeAndDeleteOriginals,
+        secondaryTone: 'danger',
+        onSecondary: () => resolve('merge-delete'),
+        resolve: (confirmed) => resolve(confirmed ? 'merge' : null),
+      });
+    });
+    if (!mergeMode) return;
+
+    const deleteOriginals = mergeMode === 'merge-delete';
+    setBatchActionPending(true);
+    try {
+      const result = await mergeEntries(
+        selectedEntries.map((entry) => entry.id),
+        t.mergedImagesTitle(selectedEntries.length),
+        deleteOriginals,
+        archiveEnabled,
+      );
+      resetSelection();
+      if (!result.created) {
+        if (deleteOriginals && result.deletedOriginals > 0) {
+          refreshEntries();
+          await fetchStats();
+          setDropNotice({ message: t.mergeDuplicateAndRemoved(archiveEnabled), tone: 'success' });
+        } else {
+          setDropNotice({ message: t.mergeDuplicate, tone: 'error' });
+        }
+        return;
+      }
+      if (result.kind === 'memo') {
+        setSearchInput('');
+        setSearchQuery('');
+        setActiveTab('memo');
+        setStorageRevision((value) => value + 1);
+        setDropNotice({
+          message: deleteOriginals
+            ? t.mergeMemoCreatedAndRemoved(archiveEnabled)
+            : t.mergeMemoCreated,
+          tone: 'success',
+        });
+      } else {
+        refreshEntries();
+        await fetchStats();
+        setDropNotice({
+          message: deleteOriginals ? t.mergeCreatedAndRemoved(archiveEnabled) : t.mergeCreated,
+          tone: 'success',
+        });
+      }
+    } catch (error) {
+      console.error('Failed to merge clipboard entries:', error);
+      setDropNotice({ message: t.mergeFailed, tone: 'error' });
+    } finally {
+      setBatchActionPending(false);
+    }
+  }, [archiveEnabled, fetchStats, memoEnabled, refreshEntries, resetSelection, selectedEntries, selectedEntryIds.length, selectionCategory, t]);
+
+  const handleDeleteSelectedEntries = useCallback(async () => {
+    const ids = [...selectedEntryIds];
+    if (ids.length === 0) return;
+    const confirmed = await requestConfirm({
+      title: t.deleteSelectedTitle,
+      message: t.deleteSelectedConfirm(ids.length, archiveEnabled),
+      confirmLabel: t.deleteSelected,
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+
+    setBatchActionPending(true);
+    try {
+      const deleted = await deleteEntries(ids, archiveEnabled);
+      resetSelection();
+      refreshEntries();
+      await fetchStats();
+      setDropNotice({ message: t.deleteSelectedDone(deleted, archiveEnabled), tone: 'success' });
+    } catch (error) {
+      console.error('Failed to delete selected clipboard entries:', error);
+      setDropNotice({ message: t.deleteSelectedFailed, tone: 'error' });
+    } finally {
+      setBatchActionPending(false);
+    }
+  }, [archiveEnabled, fetchStats, refreshEntries, requestConfirm, resetSelection, selectedEntryIds, t]);
+
+  useEffect(() => {
+    if (!multiSelectModeEnabled || !selectionMode || selectedEntryIds.length === 0) return;
+    const handleDeleteShortcut = (event: KeyboardEvent) => {
+      if (!isBatchDeleteShortcut(
+        event.key,
+        multiSelectModeEnabled,
+        selectionMode,
+        selectedEntryIds.length,
+      ) || confirmDialog || batchActionPending) return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        if (target.isContentEditable || target.matches('input, textarea, select')) return;
+        if (target.closest('.glass-menu-panel, .confirm-dialog, .settings-gear-btn')) return;
+      }
+      event.preventDefault();
+      void handleDeleteSelectedEntries();
+    };
+    window.addEventListener('keydown', handleDeleteShortcut);
+    return () => window.removeEventListener('keydown', handleDeleteShortcut);
+  }, [batchActionPending, confirmDialog, handleDeleteSelectedEntries, multiSelectModeEnabled, selectedEntryIds.length, selectionMode]);
   useEffect(() => {
     searchQueryRef.current = searchQuery;
   }, [searchQuery]);
@@ -722,7 +871,7 @@ function AppContent() {
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [searchInput]);
+  }, [searchInput, setLoading]);
 
   const handleDropImportComplete = useCallback((inserted: boolean) => {
     if (inserted) {
@@ -763,14 +912,19 @@ function AppContent() {
           <span className="title-text">{displayTitle}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <span className="shortcut-hint">{formatShortcutLabel(currentShortcut)}</span>
-            {experimentalFeaturesEnabled && (
-              <ExperimentalFeaturesButton />
-            )}
-            <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
-            <SettingsButton
-              onShortcutChange={setCurrentShortcut}
-              onVersionTitleTrigger={handleVersionTitleTrigger}
-            />
+            <Suspense fallback={<span className="title-actions-loading" aria-hidden="true" />}>
+              {experimentalFeaturesEnabled && (
+                <ExperimentalFeaturesButton
+                  reclassifyingHistory={reclassifyingHistory}
+                  onReclassifyHistory={handleReclassifyHistory}
+                />
+              )}
+              <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
+              <SettingsButton
+                onShortcutChange={setCurrentShortcut}
+                onVersionTitleTrigger={handleVersionTitleTrigger}
+              />
+            </Suspense>
           </div>
         </div>
       </div>
@@ -787,8 +941,9 @@ function AppContent() {
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
           className="search-input"
+          disabled={selectionMode}
         />
-        {searchInput && (
+        {searchInput && !selectionMode && (
           <button
             className="clear-search-btn"
             onClick={() => setSearchInput('')}
@@ -815,36 +970,32 @@ function AppContent() {
 
       {/* Main content: memo list or clipboard list */}
       {activeTab === 'memo' ? (
-        <MemoList
-          searchQuery={searchQuery}
-          archiveEnabled={archiveEnabled}
-          refreshKey={storageRevision}
-          onCountChange={handleMemoCountChange}
-          onTotalCountChange={handleMemoTotalCountChange}
-          onArchiveCountChange={setMemoArchiveCountState}
-        />
+        <Suspense fallback={<div className="view-loading">{t.loading}</div>}>
+          <MemoList
+            searchQuery={searchQuery}
+            archiveEnabled={archiveEnabled}
+            refreshKey={storageRevision}
+            onCountChange={handleMemoCountChange}
+            onTotalCountChange={handleMemoTotalCountChange}
+            onArchiveCountChange={setMemoArchiveCountState}
+          />
+        </Suspense>
       ) : activeTab === 'archive' ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="archive-view">
           {/* Archive sub-tabs */}
-          <div style={{ display: 'flex', gap: '0', padding: '0 12px', borderBottom: '1px solid var(--border)' }}>
+          <div className="archive-subtabs">
             <button
-              style={{
-                flex: 1, padding: '8px 0', border: 'none', borderBottom: archiveSubTab === 'clipboard' ? '2px solid var(--accent)' : '2px solid transparent',
-                background: 'transparent', color: archiveSubTab === 'clipboard' ? 'var(--accent)' : 'var(--text-muted)',
-                fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '34px', lineHeight: 1,
-              }}
+              type="button"
+              className="archive-subtab"
+              data-active={archiveSubTab === 'clipboard'}
               onClick={() => setArchiveSubTab('clipboard')}
             >
               {t.archiveSubTab} ({archiveCountState ?? 0})
             </button>
             <button
-              style={{
-                flex: 1, padding: '8px 0', border: 'none', borderBottom: archiveSubTab === 'memos' ? '2px solid var(--accent)' : '2px solid transparent',
-                background: 'transparent', color: archiveSubTab === 'memos' ? 'var(--accent)' : 'var(--text-muted)',
-                fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '34px', lineHeight: 1,
-              }}
+              type="button"
+              className="archive-subtab"
+              data-active={archiveSubTab === 'memos'}
               onClick={() => { setArchiveSubTab('memos'); fetchArchivedMemos(); }}
             >
               {t.memoSubTab} ({memoArchiveCountState})
@@ -869,7 +1020,7 @@ function AppContent() {
                 loading={loading}
                 isArchive={true}
                 archiveEnabled={archiveEnabled}
-                multiTagEnabled={experimentalFeaturesEnabled && clipboardMultiTagEnabled}
+                multiTagEnabled={multiTagClassificationEnabled}
                 showCategoryIndicator={effectiveEntryColorIndicatorEnabled}
                 onRestore={handleRestore}
                 onPermanentDelete={handlePermanentDelete}
@@ -886,7 +1037,7 @@ function AppContent() {
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.archiveEmptyHint}</span>
               </div>
             ) : (
-              <div ref={archivedMemoListRef} style={{ flex: 1, overflowY: 'auto' }}>
+              <div ref={archivedMemoListRef} className="entry-list" style={{ flex: 1, overflowY: 'auto' }}>
                 {archivedMemos.map(memo => (
                   <ArchivedMemoItem
                     key={memo.id}
@@ -895,7 +1046,7 @@ function AppContent() {
                     onPermanentDelete={() => handleMemoPermanentDelete(memo.id)}
                   />
                 ))}
-                <div ref={archivedMemoLoadMoreRef} style={{ minHeight: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div ref={archivedMemoLoadMoreRef} className="entry-list-tail" style={{ minHeight: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {archivedMemosLoadingMore && <div style={{ width: '14px', height: '14px', border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />}
                 </div>
               </div>
@@ -912,38 +1063,110 @@ function AppContent() {
           rawPreview={rawPreview}
           loading={loading}
           archiveEnabled={archiveEnabled}
-          multiTagEnabled={experimentalFeaturesEnabled && clipboardMultiTagEnabled}
+          multiTagEnabled={multiTagClassificationEnabled}
           showCategoryIndicator={effectiveEntryColorIndicatorEnabled}
           onRestore={handleRestore}
           onPermanentDelete={handlePermanentDelete}
           hasMore={entriesHasMore}
           loadingMore={entriesLoadingMore}
           onLoadMore={loadMoreEntries}
+          selectionMode={selectionMode}
+          multiSelectEnabled={multiSelectModeEnabled}
+          selectedIds={selectedEntryIdSet}
+          onSelectionToggle={handleSelectionToggle}
         />
       )}
 
       {/* Footer bar */}
       <div className="footer-bar">
-        <span className="footer-text">
-          {activeTab === 'memo'
-            ? t.itemsCount(memoListCount)
-            : activeTab === 'archive' && archiveSubTab === 'memos'
-            ? t.itemsCount(archivedMemos.length)
-            : t.itemsCount(entries.length)}
+        {selectionMode ? (
+          <>
+            <span className="footer-text batch-selection-count">{t.selectedCount(selectedEntryIds.length)}</span>
+            <div className="batch-selection-actions">
+              <button
+                type="button"
+                className="batch-cancel-btn batch-icon-btn"
+                onClick={resetSelection}
+                disabled={batchActionPending}
+                title={t.cancel}
+                aria-label={t.cancel}
+              >
+                <X size={13} />
+              </button>
+              <button
+                type="button"
+                className="batch-delete-btn batch-icon-btn"
+                onClick={() => void handleDeleteSelectedEntries()}
+                disabled={selectedEntryIds.length === 0 || batchActionPending}
+                title={t.deleteSelected}
+                aria-label={t.deleteSelected}
+              >
+                <Trash2 size={13} />
+              </button>
+              <button
+                type="button"
+                className="batch-merge-btn"
+                onClick={() => void handleMergeEntries()}
+                disabled={!canMergeSelection || batchActionPending}
+                title={selectedEntryIds.length < 2
+                  ? t.mergeNeedTwo
+                  : selectedEntryIds.length > MAX_MERGE_SELECTION
+                    ? t.mergeLimitReached(MAX_MERGE_SELECTION)
+                    : !canMergeSelection
+                      ? t.mergeSameTypeOnly
+                      : undefined}
+              >
+                <Combine size={13} />
+                <span>{selectionCategory === 'image' ? t.mergeToMemo : t.mergeEntries}</span>
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <span className="footer-text">
+          {t.itemsCount(footerItemCount)}
           {activeTab === 'memo'
             ? stats?.memoSize != null && ` · ${t.memoStorage(formatBytes(stats.memoSize))}`
             : activeTab === 'archive' && archiveSubTab === 'memos'
             ? stats?.memoSize != null && ` · ${t.memoStorage(formatBytes(stats.memoSize))}`
             : stats?.clipboardSize != null && ` · ${t.clipboardStorage(formatBytes(stats.clipboardSize))}`}
-        </span>
-        {activeTab !== 'memo' && activeTab !== 'archive' && (
-          <button
-            className="clear-btn"
-            onClick={handleClear}
-            title={t.clearHistory}
-          >
-            {t.clearHistory}
-          </button>
+            </span>
+            {activeTab === 'archive' ? (
+              <div className="footer-actions">
+                <button
+                  type="button"
+                  className="clear-btn archive-empty-btn"
+                  onClick={() => void handleEmptyArchive()}
+                  disabled={footerItemCount === 0 || archiveClearPending}
+                  title={t.emptyArchiveTitle}
+                >
+                  <Trash2 size={12} aria-hidden="true" />
+                  <span>{archiveClearPending ? t.emptyArchivePending : t.emptyArchive}</span>
+                </button>
+              </div>
+            ) : activeTab !== 'memo' && (
+              <div className="footer-actions">
+                {multiSelectModeEnabled && (
+                  <button
+                    type="button"
+                    className="select-entries-btn"
+                    onClick={() => setSelectionMode(true)}
+                    title={t.selectEntries}
+                  >
+                    <ListChecks size={13} />
+                    <span>{t.selectEntries}</span>
+                  </button>
+                )}
+                <button
+                  className="clear-btn"
+                  onClick={handleClear}
+                  title={t.clearHistory}
+                >
+                  {t.clearHistory}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 

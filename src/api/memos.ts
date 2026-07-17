@@ -65,3 +65,8 @@ export async function permanentDeleteMemo(id: number): Promise<boolean> {
 export async function purgeOldMemoArchives(days: number): Promise<number> {
   return invoke('purge_old_memo_archives', { days });
 }
+
+/** Permanently delete every memo currently in the recycle bin. */
+export async function emptyMemoArchive(): Promise<number> {
+  return invoke('empty_memo_archive');
+}

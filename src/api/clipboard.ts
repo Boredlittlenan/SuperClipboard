@@ -1,11 +1,22 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { ClipboardEntry, QueryFilter, Stats } from '../types';
+import type { Category, ClipboardEntry, QueryFilter, Stats } from '../types';
 import { createEntryContentLoader } from './entryContentLoader';
 
 export interface UpdateResult {
   updated: boolean;
   conflict: boolean;
+}
+
+export interface MergeEntriesResult {
+  kind: 'clipboard' | 'memo';
+  created: boolean;
+  deletedOriginals: number;
+}
+
+export interface ClassificationStatus {
+  currentVersion: number;
+  appliedVersion: number | null;
 }
 
 const loadEntryContent = createEntryContentLoader(
@@ -38,6 +49,21 @@ export async function importDroppedImage(dataUrl: string): Promise<boolean> {
   return invoke('import_dropped_image', { dataUrl });
 }
 
+/** Merge selected entries in the provided display order. */
+export async function mergeEntries(
+  ids: number[],
+  memoTitle: string,
+  deleteOriginals = false,
+  archiveOriginals = false,
+): Promise<MergeEntriesResult> {
+  return invoke('merge_entries', { ids, memoTitle, deleteOriginals, archiveOriginals });
+}
+
+/** Delete or archive multiple clipboard entries in one storage operation. */
+export async function deleteEntries(ids: number[], archive?: boolean): Promise<number> {
+  return invoke('delete_entries', { ids, archive });
+}
+
 /** Delete a clipboard entry by ID (optionally archive instead of hard delete) */
 export async function deleteEntry(id: number, archive?: boolean): Promise<boolean> {
   return invoke('delete_entry', { id, archive });
@@ -49,13 +75,27 @@ export async function togglePin(id: number): Promise<boolean> {
 }
 
 /** Get category statistics */
-export async function getStats(): Promise<Stats> {
-  return invoke('get_stats');
+export async function getStats(includeAuxiliaryTags = false): Promise<Stats> {
+  return invoke('get_stats', { includeAuxiliaryTags });
 }
 
-/** Clear all non-pinned entries */
-export async function clearUnpinned(archive?: boolean): Promise<number> {
-  return invoke('clear_unpinned', { archive });
+/** Recompute category metadata for existing entries in the active storage backend. */
+export async function reclassifyClipboardEntries(): Promise<number> {
+  return invoke('reclassify_clipboard_entries');
+}
+
+/** Return the classification ruleset applied to the active storage backend. */
+export async function getClassificationStatus(): Promise<ClassificationStatus> {
+  return invoke('get_classification_status');
+}
+
+/** Clear non-pinned entries, optionally limited to the selected category tab. */
+export async function clearUnpinned(
+  archive?: boolean,
+  category?: Category,
+  includeAuxiliaryTags = false,
+): Promise<number> {
+  return invoke('clear_unpinned', { archive, category, includeAuxiliaryTags });
 }
 
 /** Copy an entry back to system clipboard, optionally using its first captured content. */
@@ -100,6 +140,11 @@ export async function permanentDelete(id: number): Promise<boolean> {
 /** Purge archives older than specified days */
 export async function purgeOldArchives(days: number): Promise<number> {
   return invoke('purge_old_archives', { days });
+}
+
+/** Permanently delete every clipboard entry currently in the recycle bin. */
+export async function emptyArchive(): Promise<number> {
+  return invoke('empty_archive');
 }
 
 /** Listen for new clipboard events */

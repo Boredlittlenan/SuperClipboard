@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use url::Url;
 
+/// Increment only when persisted clipboard classification results can change.
+pub const CLASSIFICATION_RULES_VERSION: i64 = 1;
+
 /// Content categories for clipboard items
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -33,8 +36,9 @@ impl std::fmt::Display for Category {
 static EMAIL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$").unwrap());
 
-static WINDOWS_PATH_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"^[A-Za-z]:\\(.+\\)*[^\\/:*?"<>|]+$"#).unwrap());
+static WINDOWS_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"^[A-Za-z]:[\\/](?:[^\\/:*?"<>|\r\n]+[\\/])*[^\\/:*?"<>|\r\n]+[\\/]?$"#).unwrap()
+});
 
 static UNIX_PATH_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(/[^/\x00]+)+/?$").unwrap());
 
@@ -48,7 +52,7 @@ static EMBEDDED_EMAIL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b").unwrap());
 
 static EMBEDDED_WINDOWS_PATH_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"[A-Za-z]:\\[^\r\n<>|"]+"#).unwrap());
+    LazyLock::new(|| Regex::new(r#"[A-Za-z]:[\\/][^\r\n<>|"]+"#).unwrap());
 
 static EMBEDDED_UNIX_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)(?:^|\s)(/(?:Users|home|var|etc|tmp|mnt|Volumes)/[^\s]+)").unwrap()
@@ -501,6 +505,14 @@ mod tests {
     #[test]
     fn test_classify_windows_path() {
         assert_eq!(classify_text(r"C:\Users\test\file.txt"), Category::FilePath);
+        assert_eq!(
+            classify_text("E:/Code/SuperClipboard3/docs/index.html"),
+            Category::FilePath
+        );
+        assert_eq!(
+            classify_text_tags("E:/Code/SuperClipboard3/docs/index.html"),
+            vec![Category::FilePath]
+        );
     }
 
     #[test]

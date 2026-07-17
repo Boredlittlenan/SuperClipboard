@@ -153,3 +153,8 @@ pub async fn purge_old_memo_archives(
     })
     .await
 }
+
+#[tauri::command]
+pub async fn empty_memo_archive(state: tauri::State<'_, AppState>) -> Result<u64, String> {
+    run_storage(state.storage.clone(), storage_backend::empty_memo_archive).await
+}

@@ -4,10 +4,12 @@ mod classifier;
 mod clipboard;
 mod commands;
 mod memo_tags;
+mod remote_migrations;
 mod remote_storage;
 mod search_index;
 mod storage;
 mod storage_backend;
+mod storage_migrations;
 mod update;
 mod window_position;
 
@@ -48,6 +50,7 @@ pub struct AppState {
     _monitor: std::sync::Mutex<ClipboardMonitor>,
     current_shortcut: std::sync::Mutex<String>,
     shortcut_recording: Arc<AtomicBool>,
+    always_on_top: AtomicBool,
     remote_listener: std::sync::Mutex<Option<RemoteListenerHandle>>,
 }
 
@@ -379,11 +382,58 @@ fn show_window(
     let _ = app.emit("window-shown", source);
 }
 
+fn should_hide_window(
+    is_visible: bool,
+    is_minimized: bool,
+    is_foreground: bool,
+    is_always_on_top: bool,
+) -> bool {
+    is_visible && !is_minimized && (is_foreground || is_always_on_top)
+}
+
 fn toggle_window(app: &tauri::AppHandle, window: &tauri::WebviewWindow, source: &'static str) {
-    if window.is_visible().unwrap_or(false) && is_window_foreground(window) {
+    let always_on_top = app.state::<AppState>().always_on_top.load(Ordering::SeqCst);
+    let should_hide = should_hide_window(
+        window.is_visible().unwrap_or(false),
+        window.is_minimized().unwrap_or(false),
+        is_window_foreground(window),
+        always_on_top,
+    );
+
+    if should_hide {
         let _ = window.hide();
     } else {
         show_window(app, window, source, false);
+    }
+}
+
+#[cfg(test)]
+mod window_toggle_tests {
+    use super::should_hide_window;
+
+    #[test]
+    fn foreground_window_hides_in_normal_mode() {
+        assert!(should_hide_window(true, false, true, false));
+    }
+
+    #[test]
+    fn covered_window_is_focused_in_normal_mode() {
+        assert!(!should_hide_window(true, false, false, false));
+    }
+
+    #[test]
+    fn visible_always_on_top_window_hides_without_foreground_focus() {
+        assert!(should_hide_window(true, false, false, true));
+    }
+
+    #[test]
+    fn minimized_always_on_top_window_is_restored_instead_of_hidden() {
+        assert!(!should_hide_window(true, true, false, true));
+    }
+
+    #[test]
+    fn hidden_window_is_shown_regardless_of_mode() {
+        assert!(!should_hide_window(false, false, false, true));
     }
 }
 
@@ -644,12 +694,17 @@ fn set_shortcut_recording(
 
 /// Set window always-on-top at runtime
 #[tauri::command]
-fn set_always_on_top(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+fn set_always_on_top(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window
             .set_always_on_top(enabled)
             .map_err(|e| e.to_string())?;
     }
+    state.always_on_top.store(enabled, Ordering::SeqCst);
     Ok(())
 }
 
@@ -736,8 +791,11 @@ fn restore_backup(
     }
 
     if let Some(always_on_top) = restored_setting("always_on_top") {
+        let enabled = always_on_top == "true";
         if let Some(window) = app.get_webview_window("main") {
-            let _ = window.set_always_on_top(always_on_top == "true");
+            if window.set_always_on_top(enabled).is_ok() {
+                state.always_on_top.store(enabled, Ordering::SeqCst);
+            }
         }
     }
 
@@ -860,7 +918,6 @@ pub fn run() {
     env_logger::init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -924,6 +981,7 @@ pub fn run() {
                 _monitor: std::sync::Mutex::new(monitor),
                 current_shortcut: std::sync::Mutex::new(shortcut.clone()),
                 shortcut_recording: Arc::new(AtomicBool::new(false)),
+                always_on_top: AtomicBool::new(false),
                 remote_listener: std::sync::Mutex::new(None),
             });
 
@@ -936,7 +994,11 @@ pub fn run() {
 
             // Apply always-on-top setting.
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_always_on_top(always_on_top);
+                if window.set_always_on_top(always_on_top).is_ok() {
+                    app.state::<AppState>()
+                        .always_on_top
+                        .store(always_on_top, Ordering::SeqCst);
+                }
                 show_window(app.handle(), &window, "startup", true);
             }
 
@@ -982,9 +1044,12 @@ pub fn run() {
             commands::clipboard::get_entry_content,
             commands::clipboard::export_clipboard_image,
             commands::clipboard::delete_entry,
+            commands::clipboard::delete_entries,
             commands::clipboard::toggle_pin,
             commands::clipboard::update_entry,
             commands::clipboard::get_stats,
+            commands::clipboard::reclassify_clipboard_entries,
+            commands::clipboard::get_classification_status,
             commands::clipboard::clear_unpinned,
             commands::clipboard::archive_entry,
             commands::clipboard::unarchive_entry,
@@ -992,9 +1057,11 @@ pub fn run() {
             commands::clipboard::archive_count,
             commands::clipboard::permanent_delete,
             commands::clipboard::purge_old_archives,
+            commands::clipboard::empty_archive,
             commands::clipboard::copy_to_clipboard,
             commands::clipboard::import_dropped_text,
             commands::clipboard::import_dropped_image,
+            commands::clipboard::merge_entries,
             get_setting,
             get_settings,
             set_setting,
@@ -1018,6 +1085,7 @@ pub fn run() {
             commands::memos::memo_archive_count,
             commands::memos::permanent_delete_memo,
             commands::memos::purge_old_memo_archives,
+            commands::memos::empty_memo_archive,
             set_always_on_top,
             create_backup,
             list_backups,

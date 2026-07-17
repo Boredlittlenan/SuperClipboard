@@ -102,9 +102,58 @@ fn update_info(release: GithubRelease) -> Result<UpdateInfo, String> {
     })
 }
 
+fn update_info_from_release_url(url: &reqwest::Url) -> Result<UpdateInfo, String> {
+    let segments = url
+        .path_segments()
+        .map(|segments| segments.collect::<Vec<_>>())
+        .unwrap_or_default();
+    let tag_name = match segments.as_slice() {
+        [.., "releases", "tag", tag] if !tag.is_empty() => (*tag).to_string(),
+        _ => {
+            return Err(format!(
+                "Latest release redirect did not contain a version tag: {url}"
+            ))
+        }
+    };
+
+    update_info(GithubRelease {
+        tag_name,
+        html_url: url.to_string(),
+        name: String::new(),
+        body: String::new(),
+        published_at: String::new(),
+        assets: Vec::new(),
+    })
+}
+
+async fn fetch_release_api(client: &reqwest::Client) -> Result<GithubRelease, String> {
+    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
+    client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("Update request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Update server returned an error: {error}"))?
+        .json::<GithubRelease>()
+        .await
+        .map_err(|error| format!("Failed to parse update response: {error}"))
+}
+
+async fn fetch_release_page(client: &reqwest::Client) -> Result<UpdateInfo, String> {
+    let url = format!("https://github.com/{GITHUB_REPO}/releases/latest");
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("Release page request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Release page returned an error: {error}"))?;
+    update_info_from_release_url(response.url())
+}
+
 #[tauri::command]
 pub async fn check_update() -> Result<UpdateInfo, String> {
-    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
     let client = reqwest::Client::builder()
         .user_agent(format!("SuperClipboard/{APP_VERSION}"))
         .connect_timeout(Duration::from_secs(5))
@@ -112,19 +161,12 @@ pub async fn check_update() -> Result<UpdateInfo, String> {
         .build()
         .map_err(|error| format!("Failed to create update client: {error}"))?;
 
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| format!("Update request failed: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Update server returned an error: {error}"))?;
-    let release = response
-        .json::<GithubRelease>()
-        .await
-        .map_err(|error| format!("Failed to parse update response: {error}"))?;
-
-    update_info(release)
+    match fetch_release_api(&client).await {
+        Ok(release) => update_info(release),
+        Err(api_error) => fetch_release_page(&client)
+            .await
+            .map_err(|fallback_error| format!("{api_error}; fallback failed: {fallback_error}")),
+    }
 }
 
 #[cfg(test)]
@@ -160,5 +202,27 @@ mod tests {
         };
 
         assert_eq!(installer_url(&release), "https://example.com/setup.exe");
+    }
+
+    #[test]
+    fn parses_latest_release_redirect_without_api_metadata() {
+        let url = reqwest::Url::parse(
+            "https://github.com/Boredlittlenan/SuperClipboard/releases/tag/v3.6.0",
+        )
+        .unwrap();
+        let info = update_info_from_release_url(&url).unwrap();
+
+        assert_eq!(info.latest_version, "3.6.0");
+        assert_eq!(info.download_url, url.as_str());
+        assert!(info.has_update);
+        assert!(info.release_notes.is_empty());
+    }
+
+    #[test]
+    fn rejects_release_redirect_without_tag() {
+        let url =
+            reqwest::Url::parse("https://github.com/Boredlittlenan/SuperClipboard/releases/latest")
+                .unwrap();
+        assert!(update_info_from_release_url(&url).is_err());
     }
 }

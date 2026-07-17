@@ -21,6 +21,7 @@ export interface QueryFilter {
   search?: string;
   limit?: number;
   offset?: number;
+  includeAuxiliaryTags?: boolean;
 }
 
 export interface Stats {

@@ -49,6 +49,33 @@ export interface Translations {
   showOriginal: string;
   hideOriginal: string;
   dragToReorder: string;
+  selectEntries: string;
+  selectItem: string;
+  deselectItem: string;
+  selectedCount: (n: number) => string;
+  deleteSelected: string;
+  deleteSelectedTitle: string;
+  deleteSelectedConfirm: (n: number, archived: boolean) => string;
+  deleteSelectedDone: (n: number, archived: boolean) => string;
+  deleteSelectedFailed: string;
+  mergeEntries: string;
+  mergeToMemo: string;
+  mergeNeedTwo: string;
+  mergeSameTypeOnly: string;
+  mergeLimitReached: (n: number) => string;
+  mergeChoiceTitle: string;
+  mergeChoiceMessage: (n: number, archived: boolean) => string;
+  mergeOnly: string;
+  mergeAndDeleteOriginals: string;
+  mergeCreated: string;
+  mergeMemoCreated: string;
+  mergeDuplicate: string;
+  mergeCreatedAndRemoved: (archived: boolean) => string;
+  mergeMemoCreatedAndRemoved: (archived: boolean) => string;
+  mergeDuplicateAndRemoved: (archived: boolean) => string;
+  mergeFailed: string;
+  mergeMemoRequired: string;
+  mergedImagesTitle: (n: number) => string;
 
   // List states
   loading: string;
@@ -61,6 +88,17 @@ export interface Translations {
   memoStorage: (formatted: string) => string;
   clearHistory: string;
   clearConfirm: string;
+  clearScopeConfirm: (category: string) => string;
+  clearMovesToArchive: string;
+  clearDeletesPermanently: string;
+  clearCurrentTab: string;
+  clearAllHistory: string;
+  emptyArchive: string;
+  emptyArchivePending: string;
+  emptyArchiveTitle: string;
+  emptyArchiveConfirm: (scope: string, count: number) => string;
+  emptyArchiveSuccess: (scope: string, count: number) => string;
+  emptyArchiveFailed: string;
 
   // Memos
   memoTab: string;
@@ -120,12 +158,24 @@ export interface Translations {
   autoUpdateDesc: string;
   experimentalFeatures: string;
   experimentalFeaturesDesc: string;
+  multiSelectMode: string;
+  multiSelectModeDesc: string;
   clipboardMultiTag: string;
   clipboardMultiTagDesc: string;
   hideEntryColorStrip: string;
   hideEntryColorStripDesc: string;
   categoryTabSelectedColors: string;
   categoryTabSelectedColorsDesc: string;
+  reclassifyHistory: string;
+  reclassifyHistoryDesc: string;
+  reclassifyHistoryPending: string;
+  reclassifyHistoryConfirmTitle: string;
+  reclassifyHistoryConfirm: string;
+  reclassifyHistoryConfirmAction: string;
+  reclassifyHistorySuccess: (count: number) => string;
+  reclassifyHistoryFailed: string;
+  classificationRulesCurrent: (version: number) => string;
+  classificationRulesOutdated: (version: number) => string;
   categoryTabSorting: string;
   categoryTabSortingDesc: string;
   version: string;
@@ -159,6 +209,7 @@ export interface Translations {
   restoreBackupDone: (clipboard: number, memos: number, settings: number) => string;
   backupFailed: string;
   systemSettings: string;
+  appearanceSettings: string;
   featureSettings: string;
   remoteStorage: string;
   storageMode: string;
@@ -242,6 +293,45 @@ export const zhCN: Translations = {
   showOriginal: '查看原文',
   hideOriginal: '收起原文',
   dragToReorder: '拖拽排序',
+  selectEntries: '选择条目',
+  selectItem: '选择此条目',
+  deselectItem: '取消选择',
+  selectedCount: (n) => `已选 ${n} 条`,
+  deleteSelected: '删除所选',
+  deleteSelectedTitle: '删除所选条目',
+  deleteSelectedConfirm: (n, archived) => archived
+    ? `将选中的 ${n} 条记录移入回收站吗？`
+    : `永久删除选中的 ${n} 条记录吗？此操作无法撤销。`,
+  deleteSelectedDone: (n, archived) => archived
+    ? `已将 ${n} 条记录移入回收站`
+    : `已删除 ${n} 条记录`,
+  deleteSelectedFailed: '删除所选条目失败，请重试',
+  mergeEntries: '合并为新条目',
+  mergeToMemo: '合并为图片备忘录',
+  mergeNeedTwo: '至少选择两个同类型条目',
+  mergeSameTypeOnly: '只能合并相同主类型的条目',
+  mergeLimitReached: (n) => `一次最多合并 ${n} 条`,
+  mergeChoiceTitle: '合并所选条目',
+  mergeChoiceMessage: (n, archived) => archived
+    ? `请选择合并方式。合并并删除后，${n} 条原记录将移入回收站。`
+    : `请选择合并方式。合并并删除后，${n} 条原记录将被永久删除。`,
+  mergeOnly: '仅合并',
+  mergeAndDeleteOriginals: '合并并删除原条目',
+  mergeCreated: '已生成新的合并条目',
+  mergeMemoCreated: '已生成图片备忘录',
+  mergeDuplicate: '相同的合并内容已经存在',
+  mergeCreatedAndRemoved: (archived) => archived
+    ? '已生成合并条目，原条目已移入回收站'
+    : '已生成合并条目并删除原条目',
+  mergeMemoCreatedAndRemoved: (archived) => archived
+    ? '已生成图片备忘录，原条目已移入回收站'
+    : '已生成图片备忘录并删除原条目',
+  mergeDuplicateAndRemoved: (archived) => archived
+    ? '相同的合并内容已存在，原条目已移入回收站'
+    : '相同的合并内容已存在，原条目已删除',
+  mergeFailed: '合并失败，请重试',
+  mergeMemoRequired: '合并图片前请先在设置中开启备忘录',
+  mergedImagesTitle: (n) => `合并图片 (${n})`,
 
   loading: '加载中...',
   noEntries: '暂无剪贴板记录',
@@ -252,6 +342,17 @@ export const zhCN: Translations = {
   memoStorage: (s) => `备忘录 ${s}`,
   clearHistory: '清除历史',
   clearConfirm: '确定清除所有未置顶的记录吗？',
+  clearScopeConfirm: (category) => `要仅清除“${category}”标签内的未置顶记录，还是清除全部未置顶记录？`,
+  clearMovesToArchive: '回收站已开启：清除的条目将进入回收站，可在回收站中恢复。',
+  clearDeletesPermanently: '回收站未开启：清除的条目将被永久删除，无法恢复。',
+  clearCurrentTab: '仅清除当前标签',
+  clearAllHistory: '清除全部',
+  emptyArchive: '清空',
+  emptyArchivePending: '清空中',
+  emptyArchiveTitle: '清空回收站',
+  emptyArchiveConfirm: (scope, count) => `确定永久删除回收站中的 ${count} 条${scope}记录吗？删除后无法恢复。`,
+  emptyArchiveSuccess: (scope, count) => `已清空 ${count} 条${scope}记录`,
+  emptyArchiveFailed: '清空回收站失败，请稍后重试',
 
   memoTab: '备忘录',
   memoSearchPlaceholder: '搜索备忘录...',
@@ -308,12 +409,24 @@ export const zhCN: Translations = {
   autoUpdateDesc: '每次启动时自动检查更新',
   experimentalFeatures: '实验功能',
   experimentalFeaturesDesc: '显示实验功能入口，实验功能默认关闭',
+  multiSelectMode: '多选模式',
+  multiSelectModeDesc: '显示选择条目入口，支持 Ctrl+点击多选和 Delete 删除',
   clipboardMultiTag: '剪贴板多标签显示',
   clipboardMultiTagDesc: '在剪贴板条目中显示所有识别出的分类标签',
   hideEntryColorStrip: '隐藏条目色条',
   hideEntryColorStripDesc: '隐藏剪贴板条目左侧的分类色条和原文左侧边框',
   categoryTabSelectedColors: '多色模式(Tab标签)',
   categoryTabSelectedColorsDesc: '让选中的 Tab 标签使用对应分类颜色',
+  reclassifyHistory: '更新历史分类',
+  reclassifyHistoryDesc: '建议在版本更新或分类规则变化后重新识别当前存储中的历史条目',
+  reclassifyHistoryPending: '正在更新分类',
+  reclassifyHistoryConfirmTitle: '重新识别历史条目',
+  reclassifyHistoryConfirm: '将按当前版本的规则重新识别当前存储中的历史剪贴板条目。只更新分类标签和搜索索引，不修改正文、时间、置顶或编辑记录。是否继续？',
+  reclassifyHistoryConfirmAction: '开始重新识别',
+  reclassifyHistorySuccess: (count) => `历史分类已更新，共调整 ${count} 条记录`,
+  reclassifyHistoryFailed: '历史分类更新失败，请稍后重试',
+  classificationRulesCurrent: (version) => `分类规则 v${version} · 历史数据已更新`,
+  classificationRulesOutdated: (version) => `分类规则 v${version} · 建议重新识别历史数据`,
   categoryTabSorting: '标签排序',
   categoryTabSortingDesc: '允许直接拖动剪贴板分类标签调整顺序',
   version: '版本号',
@@ -347,6 +460,7 @@ export const zhCN: Translations = {
   restoreBackupDone: (clipboard, memos, settings) => `已恢复 ${clipboard} 条剪贴板、${memos} 条备忘录、${settings} 项设置`,
   backupFailed: '操作失败',
   systemSettings: '系统设置',
+  appearanceSettings: '外观设置',
   featureSettings: '功能设置',
   remoteStorage: '存储设置',
   storageMode: '存储模式',
@@ -430,6 +544,45 @@ export const en: Translations = {
   showOriginal: 'Show original',
   hideOriginal: 'Hide original',
   dragToReorder: 'Drag to reorder',
+  selectEntries: 'Select entries',
+  selectItem: 'Select this entry',
+  deselectItem: 'Deselect',
+  selectedCount: (n) => `${n} selected`,
+  deleteSelected: 'Delete selected',
+  deleteSelectedTitle: 'Delete selected entries',
+  deleteSelectedConfirm: (n, archived) => archived
+    ? `Move ${n} selected item${n === 1 ? '' : 's'} to the Recycle Bin?`
+    : `Permanently delete ${n} selected item${n === 1 ? '' : 's'}? This cannot be undone.`,
+  deleteSelectedDone: (n, archived) => archived
+    ? `Moved ${n} item${n === 1 ? '' : 's'} to the Recycle Bin`
+    : `Deleted ${n} item${n === 1 ? '' : 's'}`,
+  deleteSelectedFailed: 'Could not delete the selected entries',
+  mergeEntries: 'Merge into new entry',
+  mergeToMemo: 'Merge into image memo',
+  mergeNeedTwo: 'Select at least two entries of the same type',
+  mergeSameTypeOnly: 'Only entries with the same primary type can be merged',
+  mergeLimitReached: (n) => `Up to ${n} entries can be merged at once`,
+  mergeChoiceTitle: 'Merge selected entries',
+  mergeChoiceMessage: (n, archived) => archived
+    ? `Choose how to merge. Deleting the originals will move all ${n} items to the Recycle Bin.`
+    : `Choose how to merge. Deleting the originals will permanently remove all ${n} items.`,
+  mergeOnly: 'Merge only',
+  mergeAndDeleteOriginals: 'Merge and delete originals',
+  mergeCreated: 'Created a new merged entry',
+  mergeMemoCreated: 'Created an image memo',
+  mergeDuplicate: 'The same merged content already exists',
+  mergeCreatedAndRemoved: (archived) => archived
+    ? 'Created the merged entry and moved the originals to the Recycle Bin'
+    : 'Created the merged entry and deleted the originals',
+  mergeMemoCreatedAndRemoved: (archived) => archived
+    ? 'Created the image memo and moved the originals to the Recycle Bin'
+    : 'Created the image memo and deleted the originals',
+  mergeDuplicateAndRemoved: (archived) => archived
+    ? 'The merged content already exists; the originals were moved to the Recycle Bin'
+    : 'The merged content already exists; the originals were deleted',
+  mergeFailed: 'Could not merge the selected entries',
+  mergeMemoRequired: 'Enable Memos in Settings before merging images',
+  mergedImagesTitle: (n) => `Merged Images (${n})`,
 
   loading: 'Loading...',
   noEntries: 'No clipboard entries yet',
@@ -440,6 +593,17 @@ export const en: Translations = {
   memoStorage: (s) => `Memo ${s}`,
   clearHistory: 'Clear History',
   clearConfirm: 'Clear all non-pinned entries?',
+  clearScopeConfirm: (category) => `Clear non-pinned entries in the “${category}” tab only, or clear all non-pinned entries?`,
+  clearMovesToArchive: 'Recycle Bin is enabled: cleared entries will be moved there and can be restored.',
+  clearDeletesPermanently: 'Recycle Bin is disabled: cleared entries will be permanently deleted and cannot be restored.',
+  clearCurrentTab: 'Clear This Tab',
+  clearAllHistory: 'Clear All',
+  emptyArchive: 'Empty',
+  emptyArchivePending: 'Emptying',
+  emptyArchiveTitle: 'Empty Recycle Bin',
+  emptyArchiveConfirm: (scope, count) => `Permanently delete all ${count} ${scope.toLowerCase()} item${count === 1 ? '' : 's'} from the Recycle Bin? This cannot be undone.`,
+  emptyArchiveSuccess: (scope, count) => `Removed ${count} ${scope.toLowerCase()} item${count === 1 ? '' : 's'} from the Recycle Bin`,
+  emptyArchiveFailed: 'Could not empty the Recycle Bin. Please try again.',
 
   memoTab: 'Memos',
   memoSearchPlaceholder: 'Search memos...',
@@ -496,12 +660,24 @@ export const en: Translations = {
   autoUpdateDesc: 'Check for updates on startup',
   experimentalFeatures: 'Experimental Features',
   experimentalFeaturesDesc: 'Show the experimental features entry. Experimental features are off by default.',
+  multiSelectMode: 'Multi-select Mode',
+  multiSelectModeDesc: 'Show Select Entries and enable Ctrl+click selection and Delete',
   clipboardMultiTag: 'Clipboard Multi-tag Display',
   clipboardMultiTagDesc: 'Show every detected category tag on clipboard entries',
   hideEntryColorStrip: 'Hide Entry Color Strip',
   hideEntryColorStripDesc: 'Hide the category color strip and original-content left border on clipboard entries',
   categoryTabSelectedColors: 'Multicolor Mode (Tab Labels)',
   categoryTabSelectedColorsDesc: 'Use the matching category color for the selected Tab label background',
+  reclassifyHistory: 'Update History Categories',
+  reclassifyHistoryDesc: 'Recommended after an app update or classification-rule change. Existing data is never updated automatically.',
+  reclassifyHistoryPending: 'Updating Categories',
+  reclassifyHistoryConfirmTitle: 'Reclassify History',
+  reclassifyHistoryConfirm: 'Reclassify historical clipboard entries in the active storage using the current rules? Only category metadata and the search index will change. Content, dates, pins, and edit history remain untouched.',
+  reclassifyHistoryConfirmAction: 'Start Reclassification',
+  reclassifyHistorySuccess: (count) => `History categories updated: ${count} record(s) changed`,
+  reclassifyHistoryFailed: 'Could not update history categories. Please try again.',
+  classificationRulesCurrent: (version) => `Rules v${version} · history is current`,
+  classificationRulesOutdated: (version) => `Rules v${version} · reclassification recommended`,
   categoryTabSorting: 'Tab Sorting',
   categoryTabSortingDesc: 'Allow dragging clipboard category tabs to reorder them',
   version: 'Version',
@@ -535,6 +711,7 @@ export const en: Translations = {
   restoreBackupDone: (clipboard, memos, settings) => `Restored ${clipboard} clipboard, ${memos} memo, ${settings} setting items`,
   backupFailed: 'Operation failed',
   systemSettings: 'System Settings',
+  appearanceSettings: 'Appearance',
   featureSettings: 'Feature Settings',
   remoteStorage: 'Storage Settings',
   storageMode: 'Storage Mode',

@@ -1,5 +1,6 @@
-use crate::classifier::{classify_text_tags, Category};
+use crate::classifier::{classify_text_tags, Category, CLASSIFICATION_RULES_VERSION};
 use crate::memo_tags;
+use crate::remote_migrations;
 use crate::search_index::{clipboard_search_text, memo_search_text};
 use crate::storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage, UpdateResult};
 use chrono::{DateTime, Utc};
@@ -19,39 +20,7 @@ use uuid::Uuid;
 
 const DEFAULT_PORT: &str = "5432";
 const DEFAULT_SSL_MODE: &str = "prefer";
-const REMOTE_SCHEMA_VERSION: i64 = 6;
 const REMOTE_SCHEMA_CACHE_PREFIX: &str = "remote_schema_version_";
-const REMOTE_SEARCH_BACKFILL_SQL: &str = r#"
-    UPDATE superclipboard.clipboard_entries
-    SET search_text = regexp_replace(trim(concat_ws(' ',
-        CASE WHEN content_type LIKE 'image/%' THEN '' ELSE content END,
-        preview,
-        CASE WHEN category = 'text' OR category_tags LIKE '%"text"%' THEN 'text 文本' ELSE '' END,
-        CASE WHEN category = 'link' OR category_tags LIKE '%"link"%' THEN 'link url 链接' ELSE '' END,
-        CASE WHEN category = 'image' OR category_tags LIKE '%"image"%' THEN 'image 图片' ELSE '' END,
-        CASE WHEN category = 'code' OR category_tags LIKE '%"code"%' THEN 'code 代码' ELSE '' END,
-        CASE WHEN category = 'email' OR category_tags LIKE '%"email"%' THEN 'email 邮箱' ELSE '' END,
-        CASE WHEN category = 'file_path' OR category_tags LIKE '%"file_path"%' THEN 'file path 文件 路径' ELSE '' END
-    )), '\s+', ' ', 'g');
-
-    UPDATE superclipboard.memos
-    SET search_text = regexp_replace(trim(concat_ws(' ',
-        title,
-        regexp_replace(
-            regexp_replace(body, '!\[[^]]*\]\(data:image/[^)]*\)', ' ', 'g'),
-            'data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+', ' ', 'g'
-        ),
-        tags,
-        auto_tags,
-        CASE WHEN auto_tags LIKE '%"text"%' THEN 'text 文本' ELSE '' END,
-        CASE WHEN auto_tags LIKE '%"link"%' THEN 'link url 链接' ELSE '' END,
-        CASE WHEN auto_tags LIKE '%"image"%' THEN 'image 图片' ELSE '' END,
-        CASE WHEN auto_tags LIKE '%"code"%' THEN 'code 代码' ELSE '' END,
-        CASE WHEN auto_tags LIKE '%"email"%' THEN 'email 邮箱' ELSE '' END,
-        CASE WHEN auto_tags LIKE '%"file_path"%' OR auto_tags LIKE '%"path"%' THEN 'file path 文件 路径' ELSE '' END
-    )), '\s+', ' ', 'g');
-"#;
-
 #[derive(Debug, Error)]
 pub enum RemoteStorageError {
     #[error("Remote storage is not configured")]
@@ -165,6 +134,25 @@ fn category_tag_pattern(category: &str) -> String {
     format!("%\"{}\"%", category)
 }
 
+fn append_category_filter(
+    sql: &mut String,
+    values: &mut Vec<Box<dyn ToSql + Sync>>,
+    category: &str,
+    include_auxiliary_tags: bool,
+) {
+    values.push(Box::new(category.to_string()));
+    let category_index = values.len();
+    if include_auxiliary_tags {
+        values.push(Box::new(category_tag_pattern(category)));
+        let tag_index = values.len();
+        sql.push_str(&format!(
+            " AND (category = ${category_index} OR category_tags LIKE ${tag_index})"
+        ));
+    } else {
+        sql.push_str(&format!(" AND category = ${category_index}"));
+    }
+}
+
 pub fn is_remote_mode(storage: &Storage) -> bool {
     matches!(storage.get_setting("storage_mode"), Ok(Some(mode)) if mode == "remote")
         && matches!(storage.get_setting("remote_db_ready"), Ok(Some(ready)) if ready == "true")
@@ -178,7 +166,7 @@ pub fn is_schema_current(storage: &Storage) -> bool {
     let key = format!("{REMOTE_SCHEMA_CACHE_PREFIX}{}", config.cache_key());
     matches!(
         storage.get_setting(&key),
-        Ok(Some(version)) if version == REMOTE_SCHEMA_VERSION.to_string()
+        Ok(Some(version)) if version == remote_migrations::VERSION.to_string()
     )
 }
 
@@ -507,218 +495,95 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
                 &[],
             )?
             .get(0);
-        if applied_version > REMOTE_SCHEMA_VERSION {
+        if applied_version > remote_migrations::VERSION {
             return Err(RemoteStorageError::SchemaTooNew(applied_version));
         }
 
-        transaction.batch_execute(
-        "
-        CREATE SCHEMA IF NOT EXISTS superclipboard;
-
-        CREATE TABLE IF NOT EXISTS superclipboard.clipboard_entries (
-            id BIGSERIAL PRIMARY KEY,
-            uuid TEXT NOT NULL UNIQUE,
-            category TEXT NOT NULL,
-            category_tags TEXT NOT NULL DEFAULT '[]',
-            content_type TEXT NOT NULL,
-            content TEXT NOT NULL,
-            preview TEXT NOT NULL DEFAULT '',
-            search_text TEXT NOT NULL DEFAULT '',
-            hash TEXT NOT NULL UNIQUE,
-            content_hash TEXT NOT NULL DEFAULT '',
-            pinned BOOLEAN NOT NULL DEFAULT false,
-            created_at TEXT NOT NULL,
-            original_content TEXT,
-            updated_at TEXT,
-            archived_at TEXT,
-            deleted_at TEXT,
-            version BIGINT NOT NULL DEFAULT 1
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_sc_clipboard_category ON superclipboard.clipboard_entries(category);
-        CREATE INDEX IF NOT EXISTS idx_sc_clipboard_created_at ON superclipboard.clipboard_entries(created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_sc_clipboard_archived_at ON superclipboard.clipboard_entries(archived_at);
-        CREATE INDEX IF NOT EXISTS idx_sc_clipboard_active_order
-            ON superclipboard.clipboard_entries(pinned DESC, created_at DESC)
-            WHERE archived_at IS NULL AND deleted_at IS NULL;
-        ALTER TABLE superclipboard.clipboard_entries
-            ADD COLUMN IF NOT EXISTS category_tags TEXT NOT NULL DEFAULT '[]';
-        ALTER TABLE superclipboard.clipboard_entries
-            ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT '';
-        ALTER TABLE superclipboard.clipboard_entries
-            ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT '';
-        CREATE INDEX IF NOT EXISTS idx_sc_clipboard_content_hash
-            ON superclipboard.clipboard_entries(content_hash);
-
-        CREATE TABLE IF NOT EXISTS superclipboard.memos (
-            id BIGSERIAL PRIMARY KEY,
-            uuid TEXT NOT NULL UNIQUE,
-            title TEXT NOT NULL DEFAULT '',
-            body TEXT NOT NULL DEFAULT '',
-            tags TEXT NOT NULL DEFAULT '',
-            auto_tags TEXT NOT NULL DEFAULT '[]',
-            search_text TEXT NOT NULL DEFAULT '',
-            pinned BOOLEAN NOT NULL DEFAULT false,
-            sort_order BIGINT NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            archived_at TEXT,
-            deleted_at TEXT,
-            version BIGINT NOT NULL DEFAULT 1
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_sc_memos_sort_order ON superclipboard.memos(sort_order DESC);
-        CREATE INDEX IF NOT EXISTS idx_sc_memos_updated_at ON superclipboard.memos(updated_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_sc_memos_archived_at ON superclipboard.memos(archived_at);
-        CREATE INDEX IF NOT EXISTS idx_sc_memos_active_order
-            ON superclipboard.memos(pinned DESC, sort_order DESC)
-            WHERE archived_at IS NULL AND deleted_at IS NULL;
-        ALTER TABLE superclipboard.memos
-            ADD COLUMN IF NOT EXISTS auto_tags TEXT NOT NULL DEFAULT '[]';
-        ALTER TABLE superclipboard.memos
-            ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT '';
-
-        CREATE TABLE IF NOT EXISTS superclipboard.sync_events (
-            event_id BIGSERIAL PRIMARY KEY,
-            entity_type TEXT NOT NULL,
-            entity_id BIGINT NOT NULL,
-            operation TEXT NOT NULL,
-            changed_at TEXT NOT NULL
-        );
-
-        CREATE OR REPLACE FUNCTION superclipboard.notify_change() RETURNS trigger AS $$
-        DECLARE
-            payload text;
-            row_id bigint;
-            operation text;
-        BEGIN
-            IF TG_OP = 'DELETE' THEN
-                row_id := OLD.id;
-                operation := 'delete';
-            ELSE
-                row_id := NEW.id;
-                operation := lower(TG_OP);
-            END IF;
-
-            INSERT INTO superclipboard.sync_events(entity_type, entity_id, operation, changed_at)
-            VALUES (TG_ARGV[0], row_id, operation, now()::text);
-
-            payload := json_build_object(
-                'entityType', TG_ARGV[0],
-                'entityId', row_id,
-                'operation', operation
-            )::text;
-            PERFORM pg_notify('superclipboard_changes', payload);
-            RETURN COALESCE(NEW, OLD);
-        END;
-        $$ LANGUAGE plpgsql;
-
-        DROP TRIGGER IF EXISTS sc_clipboard_notify ON superclipboard.clipboard_entries;
-        CREATE TRIGGER sc_clipboard_notify
-        AFTER INSERT OR UPDATE OR DELETE ON superclipboard.clipboard_entries
-        FOR EACH ROW EXECUTE FUNCTION superclipboard.notify_change('clipboard');
-
-        DROP TRIGGER IF EXISTS sc_memo_notify ON superclipboard.memos;
-        CREATE TRIGGER sc_memo_notify
-        AFTER INSERT OR UPDATE OR DELETE ON superclipboard.memos
-        FOR EACH ROW EXECUTE FUNCTION superclipboard.notify_change('memo');
-        ",
-        )?;
-
-        if applied_version < 1 {
-            transaction.execute(
-                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
-                &[&1_i64, &"initial clipboard and memo schema"],
-            )?;
-        }
-        if applied_version < 2 {
-            transaction.execute(
-                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
-                &[&2_i64, &"sync events, notifications, and optimistic record versions"],
-            )?;
-        }
-        if applied_version < 3 {
-            let rows = transaction.query(
-                "SELECT id, title, body FROM superclipboard.memos WHERE auto_tags = '[]' OR auto_tags = ''",
-                &[],
-            )?;
-            for row in rows {
-                let id: i64 = row.get("id");
-                let title: String = row.get("title");
-                let body: String = row.get("body");
-                let auto_tags = serde_json::to_string(&memo_tags::infer(&title, &body))
-                    .unwrap_or_else(|_| "[]".to_string());
-                transaction.execute(
-                    "UPDATE superclipboard.memos SET auto_tags = $1 WHERE id = $2",
-                    &[&auto_tags, &id],
-                )?;
-            }
-            transaction.execute(
-                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
-                &[&3_i64, &"persisted memo auto tags"],
-            )?;
-        }
-        if applied_version < 4 {
-            transaction.batch_execute(REMOTE_SEARCH_BACKFILL_SQL)?;
-
-            transaction.execute(
-                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
-                &[&4_i64, &"search text excludes embedded image data"],
-            )?;
-        }
-        if applied_version < 5 {
-            let rows = transaction.query(
-                "SELECT id, title, body, tags, auto_tags FROM superclipboard.memos",
-                &[],
-            )?;
-            for row in rows {
-                let id: i64 = row.get("id");
-                let title: String = row.get("title");
-                let body: String = row.get("body");
-                let tags = memo_tags::manual_only(row.get::<_, String>("tags").as_str());
-                let auto_tags =
-                    serde_json::from_str::<Vec<String>>(row.get::<_, String>("auto_tags").as_str())
-                        .unwrap_or_default();
-                let search_text = memo_search_text(&title, &body, &tags, &auto_tags);
-                transaction.execute(
-                    "UPDATE superclipboard.memos SET tags = $1, search_text = $2 WHERE id = $3",
-                    &[&tags, &search_text, &id],
-                )?;
-            }
-            transaction.execute(
-                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
-                &[&5_i64, &"separate manual memo tags from localized auto tags"],
-            )?;
-        }
-        if applied_version < 6 {
-            let rows = transaction.query(
-                "SELECT id, content FROM superclipboard.clipboard_entries",
-                &[],
-            )?;
-            for row in rows {
-                let id: i64 = row.get("id");
-                let content: String = row.get("content");
-                let content_hash = Storage::hash_content(&content);
-                transaction.execute(
-                    "UPDATE superclipboard.clipboard_entries SET content_hash = $1 WHERE id = $2",
-                    &[&content_hash, &id],
-                )?;
-            }
-            transaction.execute(
-                "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
-                &[&6_i64, &"current clipboard content hashes for deduplication"],
-            )?;
-        }
+        remote_migrations::apply(&mut transaction, applied_version)?;
         transaction.commit()?;
         Ok(())
     });
     if result.is_ok() {
         if let Ok(config) = remote_config(storage) {
             let key = format!("{REMOTE_SCHEMA_CACHE_PREFIX}{}", config.cache_key());
-            let _ = storage.set_setting(&key, &REMOTE_SCHEMA_VERSION.to_string());
+            let _ = storage.set_setting(&key, &remote_migrations::VERSION.to_string());
         }
     }
     result
+}
+
+/// Recompute classification metadata for existing non-image clipboard entries.
+/// This is intentionally user-triggered and never runs as part of schema setup.
+pub fn reclassify_clipboard_entries(storage: &Storage) -> RemoteResult<u64> {
+    with_client(storage, |client| {
+        let mut transaction = client.transaction()?;
+        let rows = transaction.query(
+            "SELECT id, content_type, content, preview
+             FROM superclipboard.clipboard_entries
+             WHERE deleted_at IS NULL AND content_type NOT LIKE 'image/%'",
+            &[],
+        )?;
+
+        let mut ids = Vec::with_capacity(rows.len());
+        let mut categories = Vec::with_capacity(rows.len());
+        let mut category_tags = Vec::with_capacity(rows.len());
+        let mut search_texts = Vec::with_capacity(rows.len());
+        for row in rows {
+            let content_type: String = row.get("content_type");
+            let content: String = row.get("content");
+            let preview: String = row.get("preview");
+            let detected = classify_text_tags(&content);
+            let category = detected.first().cloned().unwrap_or(Category::Text);
+
+            ids.push(row.get::<_, i64>("id"));
+            categories.push(category.to_string());
+            category_tags.push(category_tags_json(&detected));
+            search_texts.push(clipboard_search_text(
+                &content_type,
+                &content,
+                &preview,
+                &detected,
+            ));
+        }
+
+        let changed = if ids.is_empty() {
+            0
+        } else {
+            transaction.execute(
+                "UPDATE superclipboard.clipboard_entries AS target
+             SET category = changes.category,
+                 category_tags = changes.category_tags,
+                 search_text = changes.search_text
+             FROM UNNEST($1::bigint[], $2::text[], $3::text[], $4::text[])
+                  AS changes(id, category, category_tags, search_text)
+             WHERE target.id = changes.id
+               AND (target.category, target.category_tags, target.search_text)
+                   IS DISTINCT FROM
+                   (changes.category, changes.category_tags, changes.search_text)",
+                &[&ids, &categories, &category_tags, &search_texts],
+            )?
+        };
+        transaction.execute(
+            "INSERT INTO superclipboard.metadata (key, value, updated_at)
+             VALUES ('classification_rules_applied_version', $1, now()::text)
+             ON CONFLICT (key) DO UPDATE
+             SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+            &[&CLASSIFICATION_RULES_VERSION.to_string()],
+        )?;
+        transaction.commit()?;
+        Ok(changed)
+    })
+}
+
+pub fn classification_rules_applied_version(storage: &Storage) -> RemoteResult<Option<i64>> {
+    with_client(storage, |client| {
+        let value = client.query_opt(
+            "SELECT value FROM superclipboard.metadata
+             WHERE key = 'classification_rules_applied_version'",
+            &[],
+        )?;
+        Ok(value.and_then(|row| row.get::<_, String>(0).parse::<i64>().ok()))
+    })
 }
 
 fn category_from_str(value: &str) -> Category {
@@ -831,13 +696,12 @@ pub fn query_clipboard(
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
 
     if let Some(category) = &filter.category {
-        values.push(Box::new(category.clone()));
-        let category_index = values.len();
-        values.push(Box::new(category_tag_pattern(category)));
-        let tag_index = values.len();
-        sql.push_str(&format!(
-            " AND (category = ${category_index} OR category_tags LIKE ${tag_index})"
-        ));
+        append_category_filter(
+            &mut sql,
+            &mut values,
+            category,
+            filter.include_auxiliary_tags,
+        );
     }
     if let Some(search) = &filter.search {
         append_token_search(&mut sql, &mut values, search, &["search_text"]);
@@ -873,6 +737,26 @@ pub fn get_clipboard_by_id(storage: &Storage, id: i64) -> RemoteResult<Option<Cl
     })
 }
 
+pub fn get_clipboard_by_ids(
+    storage: &Storage,
+    requested_ids: &[i64],
+) -> RemoteResult<Vec<ClipboardEntry>> {
+    let ids = requested_ids.to_vec();
+    with_client(storage, |client| {
+        let rows = client.query(
+            "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
+             FROM superclipboard.clipboard_entries
+             WHERE id = ANY($1) AND deleted_at IS NULL",
+            &[&ids],
+        )?;
+        let entries = rows.iter().map(row_to_entry).collect::<Vec<_>>();
+        Ok(ids
+            .iter()
+            .filter_map(|id| entries.iter().find(|entry| entry.id == *id).cloned())
+            .collect())
+    })
+}
+
 pub fn delete_clipboard(storage: &Storage, id: i64, archive: bool) -> RemoteResult<bool> {
     with_client(storage, |client| {
         let rows = if archive {
@@ -882,11 +766,33 @@ pub fn delete_clipboard(storage: &Storage, id: i64, archive: bool) -> RemoteResu
             )?
         } else {
             client.execute(
-                "UPDATE superclipboard.clipboard_entries SET deleted_at = now()::text, version = version + 1 WHERE id = $1",
+                "DELETE FROM superclipboard.clipboard_entries WHERE id = $1",
                 &[&id],
             )?
         };
         Ok(rows > 0)
+    })
+}
+
+pub fn delete_clipboards(storage: &Storage, ids: &[i64], archive: bool) -> RemoteResult<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let ids = ids.to_vec();
+    with_client(storage, |client| {
+        if archive {
+            Ok(client.execute(
+                "UPDATE superclipboard.clipboard_entries
+                 SET archived_at = now()::text, version = version + 1
+                 WHERE id = ANY($1) AND archived_at IS NULL AND deleted_at IS NULL",
+                &[&ids],
+            )?)
+        } else {
+            Ok(client.execute(
+                "DELETE FROM superclipboard.clipboard_entries WHERE id = ANY($1)",
+                &[&ids],
+            )?)
+        }
     })
 }
 
@@ -969,18 +875,18 @@ pub fn update_clipboard(
     })
 }
 
-pub fn stats(storage: &Storage) -> RemoteResult<RemoteStats> {
+pub fn stats(storage: &Storage, include_auxiliary_tags: bool) -> RemoteResult<RemoteStats> {
     with_client(storage, |client| {
         let row = client.query_one(
             "
         SELECT
             COUNT(*) FILTER (WHERE ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS total,
-            COUNT(*) FILTER (WHERE (ce.category = 'text' OR ce.category_tags LIKE '%\"text\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS text,
-            COUNT(*) FILTER (WHERE (ce.category = 'link' OR ce.category_tags LIKE '%\"link\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS link,
-            COUNT(*) FILTER (WHERE (ce.category = 'image' OR ce.category_tags LIKE '%\"image\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS image,
-            COUNT(*) FILTER (WHERE (ce.category = 'code' OR ce.category_tags LIKE '%\"code\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS code,
-            COUNT(*) FILTER (WHERE (ce.category = 'email' OR ce.category_tags LIKE '%\"email\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS email,
-            COUNT(*) FILTER (WHERE (ce.category = 'file_path' OR ce.category_tags LIKE '%\"file_path\"%') AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS file_path,
+            COUNT(*) FILTER (WHERE (ce.category = 'text' OR ($1 AND ce.category_tags LIKE '%\"text\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS text,
+            COUNT(*) FILTER (WHERE (ce.category = 'link' OR ($1 AND ce.category_tags LIKE '%\"link\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS link,
+            COUNT(*) FILTER (WHERE (ce.category = 'image' OR ($1 AND ce.category_tags LIKE '%\"image\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS image,
+            COUNT(*) FILTER (WHERE (ce.category = 'code' OR ($1 AND ce.category_tags LIKE '%\"code\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS code,
+            COUNT(*) FILTER (WHERE (ce.category = 'email' OR ($1 AND ce.category_tags LIKE '%\"email\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS email,
+            COUNT(*) FILTER (WHERE (ce.category = 'file_path' OR ($1 AND ce.category_tags LIKE '%\"file_path\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS file_path,
             COUNT(*) FILTER (WHERE ce.archived_at IS NOT NULL AND ce.deleted_at IS NULL)::bigint AS archive,
             COALESCE(SUM(LENGTH(ce.content) + LENGTH(ce.preview) + LENGTH(COALESCE(ce.original_content, '')))
                 FILTER (WHERE ce.archived_at IS NULL AND ce.deleted_at IS NULL), 0)::bigint AS clipboard_size,
@@ -990,7 +896,7 @@ pub fn stats(storage: &Storage) -> RemoteResult<RemoteStats> {
              FROM superclipboard.memos WHERE archived_at IS NULL AND deleted_at IS NULL) AS memo_size
         FROM superclipboard.clipboard_entries ce
         ",
-            &[],
+            &[&include_auxiliary_tags],
         )?;
         Ok(RemoteStats {
             total: row.get("total"),
@@ -1009,8 +915,33 @@ pub fn stats(storage: &Storage) -> RemoteResult<RemoteStats> {
     })
 }
 
-pub fn clear_clipboard_unpinned(storage: &Storage, archive: bool) -> RemoteResult<u64> {
+pub fn clear_clipboard_unpinned(
+    storage: &Storage,
+    archive: bool,
+    category: Option<&str>,
+    include_auxiliary_tags: bool,
+) -> RemoteResult<u64> {
     with_client(storage, |client| {
+        if let Some(category) = category {
+            let tag_pattern = category_tag_pattern(category);
+            return if archive {
+                Ok(client.execute(
+                    "UPDATE superclipboard.clipboard_entries
+                     SET archived_at = now()::text, version = version + 1
+                     WHERE pinned = false AND archived_at IS NULL AND deleted_at IS NULL
+                       AND (category = $1 OR ($2 AND category_tags LIKE $3))",
+                    &[&category, &include_auxiliary_tags, &tag_pattern],
+                )?)
+            } else {
+                Ok(client.execute(
+                    "DELETE FROM superclipboard.clipboard_entries
+                     WHERE pinned = false AND archived_at IS NULL AND deleted_at IS NULL
+                       AND (category = $1 OR ($2 AND category_tags LIKE $3))",
+                    &[&category, &include_auxiliary_tags, &tag_pattern],
+                )?)
+            };
+        }
+
         if archive {
             Ok(client.execute(
                 "UPDATE superclipboard.clipboard_entries SET archived_at = now()::text, version = version + 1
@@ -1019,8 +950,8 @@ pub fn clear_clipboard_unpinned(storage: &Storage, archive: bool) -> RemoteResul
             )?)
         } else {
             Ok(client.execute(
-                "UPDATE superclipboard.clipboard_entries SET deleted_at = now()::text, version = version + 1
-                 WHERE pinned = false AND deleted_at IS NULL",
+                "DELETE FROM superclipboard.clipboard_entries
+                 WHERE pinned = false AND archived_at IS NULL AND deleted_at IS NULL",
                 &[],
             )?)
         }
@@ -1039,13 +970,12 @@ pub fn query_archived_clipboard(
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
     if let Some(category) = &filter.category {
-        values.push(Box::new(category.clone()));
-        let category_index = values.len();
-        values.push(Box::new(category_tag_pattern(category)));
-        let tag_index = values.len();
-        sql.push_str(&format!(
-            " AND (category = ${category_index} OR category_tags LIKE ${tag_index})"
-        ));
+        append_category_filter(
+            &mut sql,
+            &mut values,
+            category,
+            filter.include_auxiliary_tags,
+        );
     }
     if let Some(search) = &filter.search {
         append_token_search(&mut sql, &mut values, search, &["search_text"]);
@@ -1096,9 +1026,18 @@ pub fn permanent_delete_clipboard(storage: &Storage, id: i64) -> RemoteResult<bo
 pub fn purge_old_clipboard_archives(storage: &Storage, days: i64) -> RemoteResult<u64> {
     with_client(storage, |client| {
         Ok(client.execute(
-            "UPDATE superclipboard.clipboard_entries SET deleted_at = now()::text, version = version + 1
-             WHERE archived_at IS NOT NULL AND deleted_at IS NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
+            "DELETE FROM superclipboard.clipboard_entries
+             WHERE archived_at IS NOT NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
             &[&days],
+        )?)
+    })
+}
+
+pub fn empty_clipboard_archive(storage: &Storage) -> RemoteResult<u64> {
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "DELETE FROM superclipboard.clipboard_entries WHERE archived_at IS NOT NULL",
+            &[],
         )?)
     })
 }
@@ -1201,10 +1140,7 @@ pub fn delete_memo(storage: &Storage, id: i64, archive: bool) -> RemoteResult<bo
                 &[&id],
             )?
         } else {
-            client.execute(
-                "UPDATE superclipboard.memos SET deleted_at = now()::text, version = version + 1 WHERE id = $1",
-                &[&id],
-            )?
+            client.execute("DELETE FROM superclipboard.memos WHERE id = $1", &[&id])?
         };
         Ok(rows > 0)
     })
@@ -1300,9 +1236,18 @@ pub fn permanent_delete_memo(storage: &Storage, id: i64) -> RemoteResult<bool> {
 pub fn purge_old_memo_archives(storage: &Storage, days: i64) -> RemoteResult<u64> {
     with_client(storage, |client| {
         Ok(client.execute(
-            "UPDATE superclipboard.memos SET deleted_at = now()::text, version = version + 1
-             WHERE archived_at IS NOT NULL AND deleted_at IS NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
+            "DELETE FROM superclipboard.memos
+             WHERE archived_at IS NOT NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
             &[&days],
+        )?)
+    })
+}
+
+pub fn empty_memo_archive(storage: &Storage) -> RemoteResult<u64> {
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "DELETE FROM superclipboard.memos WHERE archived_at IS NOT NULL",
+            &[],
         )?)
     })
 }
@@ -1356,9 +1301,21 @@ mod tests {
 
         ensure_schema(&storage).expect("ensure remote schema");
         assert!(is_schema_current(&storage));
+        reclassify_clipboard_entries(&storage).expect("record active classification rules");
+        assert_eq!(
+            classification_rules_applied_version(&storage).expect("read classification rules"),
+            Some(CLASSIFICATION_RULES_VERSION)
+        );
         with_client(&storage, |client| {
+            let event_table: Option<String> = client
+                .query_one(
+                    "SELECT to_regclass('superclipboard.sync_events')::text",
+                    &[],
+                )?
+                .get(0);
+            assert!(event_table.is_none());
             let mut transaction = client.transaction()?;
-            transaction.batch_execute(REMOTE_SEARCH_BACKFILL_SQL)?;
+            transaction.batch_execute(remote_migrations::SEARCH_BACKFILL_SQL)?;
             transaction.rollback()?;
             Ok(())
         })
@@ -1423,6 +1380,17 @@ mod tests {
         assert!(updated.updated);
 
         assert!(delete_memo(&storage, memo.id, false).expect("delete remote memo"));
+        with_client(&storage, |client| {
+            let count: i64 = client
+                .query_one(
+                    "SELECT COUNT(*) FROM superclipboard.memos WHERE id = $1",
+                    &[&memo.id],
+                )?
+                .get(0);
+            assert_eq!(count, 0);
+            Ok(())
+        })
+        .expect("verify physical memo deletion");
 
         let text_token = format!("RemoteText{}", Uuid::new_v4().simple());
         let entry = ClipboardEntry {
@@ -1454,9 +1422,20 @@ mod tests {
             .iter()
             .find(|item| item.hash == entry.hash)
             .expect("inserted remote clipboard entry");
-        let current_stats = stats(&storage).expect("query remote stats");
+        let current_stats = stats(&storage, false).expect("query remote stats");
         assert!(current_stats.total >= 1);
         assert!(delete_clipboard(&storage, inserted.id, false).expect("delete remote clipboard"));
+        with_client(&storage, |client| {
+            let count: i64 = client
+                .query_one(
+                    "SELECT COUNT(*) FROM superclipboard.clipboard_entries WHERE id = $1",
+                    &[&inserted.id],
+                )?
+                .get(0);
+            assert_eq!(count, 0);
+            Ok(())
+        })
+        .expect("verify physical clipboard deletion");
 
         let image_preview_token = format!("RemoteImage{}", Uuid::new_v4().simple());
         let image_payload = format!("iVBORw0KGgo{}", Uuid::new_v4().simple());

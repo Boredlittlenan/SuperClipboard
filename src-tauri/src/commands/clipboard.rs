@@ -1,12 +1,185 @@
 use crate::classifier;
 use crate::clipboard;
 use crate::storage::{ClipboardEntry, QueryFilter, UpdateResult};
-use crate::{run_storage, storage_backend, AppState};
+use crate::{memo_tags, run_storage, storage_backend, AppState};
+use serde::Serialize;
 use tauri::Emitter;
 
 const MAX_DROPPED_TEXT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_DROPPED_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 const MAX_DROPPED_IMAGE_RGBA_BYTES: usize = 64 * 1024 * 1024;
+const MAX_MERGE_ITEMS: usize = 20;
+const MAX_BATCH_DELETE_ITEMS: usize = 500;
+const MAX_MERGED_TEXT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_MERGED_IMAGE_BYTES: usize = 50 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeEntriesResult {
+    kind: String,
+    created: bool,
+    deleted_originals: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MergePayload {
+    Text(String),
+    ImageMemo(String),
+}
+
+fn build_merge_payload(entries: &[ClipboardEntry]) -> Result<MergePayload, String> {
+    let first = entries
+        .first()
+        .ok_or_else(|| "Select at least two clipboard entries.".to_string())?;
+    if entries.len() < 2 {
+        return Err("Select at least two clipboard entries.".to_string());
+    }
+    if entries.iter().any(|entry| entry.archived_at.is_some()) {
+        return Err("Archived entries cannot be merged.".to_string());
+    }
+    if entries.iter().any(|entry| entry.category != first.category) {
+        return Err("Only clipboard entries of the same type can be merged.".to_string());
+    }
+
+    if first.category == classifier::Category::Image {
+        let total_bytes = entries
+            .iter()
+            .map(|entry| entry.content.len())
+            .sum::<usize>();
+        if total_bytes > MAX_MERGED_IMAGE_BYTES {
+            return Err("The selected images are too large to merge (maximum 50 MB).".to_string());
+        }
+        let body = entries
+            .iter()
+            .map(|entry| {
+                format!(
+                    "![image](data:{};base64,{})",
+                    entry.content_type, entry.content
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Ok(MergePayload::ImageMemo(body));
+    }
+
+    let total_bytes = entries
+        .iter()
+        .map(|entry| entry.content.len())
+        .sum::<usize>()
+        .saturating_add(entries.len().saturating_sub(1));
+    if total_bytes > MAX_MERGED_TEXT_BYTES {
+        return Err("The merged text is too large (maximum 4 MB).".to_string());
+    }
+    let content = entries
+        .iter()
+        .map(|entry| entry.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if content.trim().is_empty() {
+        return Err("The merged text is empty.".to_string());
+    }
+    Ok(MergePayload::Text(content))
+}
+
+#[tauri::command]
+pub async fn merge_entries(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    ids: Vec<i64>,
+    memo_title: String,
+    delete_originals: Option<bool>,
+    archive_originals: Option<bool>,
+) -> Result<MergeEntriesResult, String> {
+    let delete_originals = delete_originals.unwrap_or(false);
+    let archive_originals = archive_originals.unwrap_or(false);
+    let mut unique_ids = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !unique_ids.contains(&id) {
+            unique_ids.push(id);
+        }
+    }
+    if !(2..=MAX_MERGE_ITEMS).contains(&unique_ids.len()) {
+        return Err(format!(
+            "Select between 2 and {MAX_MERGE_ITEMS} clipboard entries."
+        ));
+    }
+
+    let (result, created_entry) = run_storage(state.storage.clone(), move |storage| {
+        let entries = storage_backend::get_entries_by_ids(storage, &unique_ids)?;
+        if entries.len() != unique_ids.len() {
+            return Err("Some selected clipboard entries are no longer available.".to_string());
+        }
+
+        let (mut result, created_entry) = match build_merge_payload(&entries)? {
+            MergePayload::Text(content) => {
+                let entry = clipboard::make_text_entry(content);
+                let created = storage_backend::insert_entry(storage, &entry)?;
+                (
+                    MergeEntriesResult {
+                        kind: "clipboard".to_string(),
+                        created,
+                        deleted_originals: 0,
+                    },
+                    created.then_some(entry),
+                )
+            }
+            MergePayload::ImageMemo(body) => {
+                let title = memo_title.trim();
+                if title.is_empty() {
+                    return Err("A title is required for the merged image memo.".to_string());
+                }
+                let auto_tags = memo_tags::infer(title, &body);
+                storage_backend::create_memo(storage, title, &body, "", &auto_tags)?;
+                (
+                    MergeEntriesResult {
+                        kind: "memo".to_string(),
+                        created: true,
+                        deleted_originals: 0,
+                    },
+                    None,
+                )
+            }
+        };
+        if delete_originals {
+            result.deleted_originals =
+                storage_backend::delete_entries(storage, &unique_ids, archive_originals)?;
+        }
+        Ok((result, created_entry))
+    })
+    .await?;
+
+    if let Some(entry) = created_entry {
+        let _ = app.emit("clipboard-changed", entry);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn delete_entries(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<i64>,
+    archive: Option<bool>,
+) -> Result<u64, String> {
+    let mut unique_ids = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !unique_ids.contains(&id) {
+            unique_ids.push(id);
+        }
+    }
+    if unique_ids.is_empty() {
+        return Err("Select at least one clipboard entry.".to_string());
+    }
+    if unique_ids.len() > MAX_BATCH_DELETE_ITEMS {
+        return Err(format!(
+            "Up to {MAX_BATCH_DELETE_ITEMS} clipboard entries can be deleted at once."
+        ));
+    }
+    let archive = archive.unwrap_or(false);
+    run_storage(state.storage.clone(), move |storage| {
+        storage_backend::delete_entries(storage, &unique_ids, archive)
+    })
+    .await
+}
 
 #[tauri::command]
 pub async fn import_dropped_text(
@@ -218,18 +391,55 @@ pub async fn update_entry(
 }
 
 #[tauri::command]
-pub async fn get_stats(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
-    run_storage(state.storage.clone(), storage_backend::get_stats).await
+pub async fn get_stats(
+    state: tauri::State<'_, AppState>,
+    include_auxiliary_tags: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let include_auxiliary_tags = include_auxiliary_tags.unwrap_or(false);
+    run_storage(state.storage.clone(), move |storage| {
+        storage_backend::get_stats(storage, include_auxiliary_tags)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn reclassify_clipboard_entries(
+    state: tauri::State<'_, AppState>,
+) -> Result<u64, String> {
+    run_storage(
+        state.storage.clone(),
+        storage_backend::reclassify_clipboard_entries,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn get_classification_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<storage_backend::ClassificationStatusInfo, String> {
+    run_storage(
+        state.storage.clone(),
+        storage_backend::classification_status,
+    )
+    .await
 }
 
 #[tauri::command]
 pub async fn clear_unpinned(
     state: tauri::State<'_, AppState>,
     archive: Option<bool>,
+    category: Option<String>,
+    include_auxiliary_tags: Option<bool>,
 ) -> Result<u64, String> {
     let archive = archive.unwrap_or(false);
+    let include_auxiliary_tags = include_auxiliary_tags.unwrap_or(false);
     run_storage(state.storage.clone(), move |storage| {
-        storage_backend::clear_unpinned(storage, archive)
+        storage_backend::clear_unpinned(
+            storage,
+            archive,
+            category.as_deref(),
+            include_auxiliary_tags,
+        )
     })
     .await
 }
@@ -287,6 +497,11 @@ pub async fn purge_old_archives(
 }
 
 #[tauri::command]
+pub async fn empty_archive(state: tauri::State<'_, AppState>) -> Result<u64, String> {
+    run_storage(state.storage.clone(), storage_backend::empty_archive).await
+}
+
+#[tauri::command]
 pub async fn copy_to_clipboard(
     state: tauri::State<'_, AppState>,
     id: i64,
@@ -330,5 +545,69 @@ pub async fn copy_to_clipboard(
         Ok(true)
     } else {
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn entry(id: i64, category: classifier::Category, content: &str) -> ClipboardEntry {
+        ClipboardEntry {
+            id,
+            category: category.clone(),
+            category_tags: vec![category.clone()],
+            content_type: if category == classifier::Category::Image {
+                "image/png".to_string()
+            } else {
+                "text/plain".to_string()
+            },
+            content: content.to_string(),
+            preview: content.to_string(),
+            hash: id.to_string(),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        }
+    }
+
+    #[test]
+    fn merged_text_keeps_the_requested_display_order() {
+        let entries = vec![
+            entry(2, classifier::Category::Text, "second"),
+            entry(1, classifier::Category::Text, "first"),
+        ];
+        assert_eq!(
+            build_merge_payload(&entries).unwrap(),
+            MergePayload::Text("second\nfirst".to_string())
+        );
+    }
+
+    #[test]
+    fn different_primary_categories_cannot_be_merged() {
+        let entries = vec![
+            entry(1, classifier::Category::Text, "text"),
+            entry(2, classifier::Category::Link, "https://example.com"),
+        ];
+        assert!(build_merge_payload(&entries).is_err());
+    }
+
+    #[test]
+    fn images_are_serialized_as_an_editable_memo_body() {
+        let entries = vec![
+            entry(1, classifier::Category::Image, "aaa"),
+            entry(2, classifier::Category::Image, "bbb"),
+        ];
+        assert_eq!(
+            build_merge_payload(&entries).unwrap(),
+            MergePayload::ImageMemo(
+                "![image](data:image/png;base64,aaa)\n![image](data:image/png;base64,bbb)"
+                    .to_string()
+            )
+        );
     }
 }

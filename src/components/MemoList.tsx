@@ -550,12 +550,12 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
           <button className="memo-new-button" style={styles.newBtn} onClick={handleCreate}><Plus size={14} strokeWidth={2.25} /> {t.memoNew}</button>
           {editConflictMessage && <div style={styles.editConflict}>{editConflictMessage}</div>}
         </div>
-      <div ref={listRef} style={styles.list}>
+      <div ref={listRef} className="entry-list" style={styles.list}>
         {displayedMemos.map(m => renderMemoItem(
           m,
           !m.pinned && m.id !== newMemoId,
         ))}
-        <div ref={loadMoreRef} style={styles.loadMore} aria-hidden={!loadingMore}>
+        <div ref={loadMoreRef} className="entry-list-tail" style={styles.loadMore} aria-hidden={!loadingMore}>
           {loadingMore && <div style={styles.loadMoreSpinner} />}
         </div>
       </div>
@@ -656,7 +656,6 @@ const styles: Record<string, React.CSSProperties> = {
   // ─── Memo item ────────────────────────────────────────────
   memoItem: {
     padding: '10px 12px',
-    borderBottom: '1px solid var(--border)',
     transition: 'background 0.15s ease, border-top 0.15s ease',
     userSelect: 'none' as const,
     cursor: 'default',

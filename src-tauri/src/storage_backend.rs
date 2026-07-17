@@ -1,3 +1,4 @@
+use crate::classifier::CLASSIFICATION_RULES_VERSION;
 use crate::remote_storage;
 use crate::storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage, UpdateResult};
 use serde::Serialize;
@@ -10,6 +11,13 @@ pub struct StorageStatusInfo {
     pub mode: String,
     pub health: String,
     pub message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationStatusInfo {
+    pub current_version: i64,
+    pub applied_version: Option<i64>,
 }
 
 fn remote(storage: &Storage) -> bool {
@@ -43,6 +51,16 @@ pub fn delete_entry(storage: &Storage, id: i64, archive: bool) -> BackendResult<
     }
 }
 
+pub fn delete_entries(storage: &Storage, ids: &[i64], archive: bool) -> BackendResult<u64> {
+    if remote(storage) {
+        remote_storage::delete_clipboards(storage, ids, archive).map_err(|error| error.to_string())
+    } else {
+        storage
+            .delete_entries(ids, archive)
+            .map_err(|error| error.to_string())
+    }
+}
+
 pub fn toggle_pin(storage: &Storage, id: i64) -> BackendResult<bool> {
     if remote(storage) {
         remote_storage::toggle_clipboard_pin(storage, id).map_err(|error| error.to_string())
@@ -68,9 +86,13 @@ pub fn update_entry(
     }
 }
 
-pub fn get_stats(storage: &Storage) -> BackendResult<serde_json::Value> {
+pub fn get_stats(
+    storage: &Storage,
+    include_auxiliary_tags: bool,
+) -> BackendResult<serde_json::Value> {
     if remote(storage) {
-        let stats = remote_storage::stats(storage).map_err(|error| error.to_string())?;
+        let stats = remote_storage::stats(storage, include_auxiliary_tags)
+            .map_err(|error| error.to_string())?;
         return Ok(serde_json::json!({
             "total": stats.total,
             "text": stats.text,
@@ -89,13 +111,13 @@ pub fn get_stats(storage: &Storage) -> BackendResult<serde_json::Value> {
     }
 
     Ok(serde_json::json!({
-        "total": storage.count(None).map_err(|error| error.to_string())?,
-        "text": storage.count(Some("text")).map_err(|error| error.to_string())?,
-        "link": storage.count(Some("link")).map_err(|error| error.to_string())?,
-        "image": storage.count(Some("image")).map_err(|error| error.to_string())?,
-        "code": storage.count(Some("code")).map_err(|error| error.to_string())?,
-        "email": storage.count(Some("email")).map_err(|error| error.to_string())?,
-        "file_path": storage.count(Some("file_path")).map_err(|error| error.to_string())?,
+        "total": storage.count(None, include_auxiliary_tags).map_err(|error| error.to_string())?,
+        "text": storage.count(Some("text"), include_auxiliary_tags).map_err(|error| error.to_string())?,
+        "link": storage.count(Some("link"), include_auxiliary_tags).map_err(|error| error.to_string())?,
+        "image": storage.count(Some("image"), include_auxiliary_tags).map_err(|error| error.to_string())?,
+        "code": storage.count(Some("code"), include_auxiliary_tags).map_err(|error| error.to_string())?,
+        "email": storage.count(Some("email"), include_auxiliary_tags).map_err(|error| error.to_string())?,
+        "file_path": storage.count(Some("file_path"), include_auxiliary_tags).map_err(|error| error.to_string())?,
         "dbSize": storage.db_size().map_err(|error| error.to_string())?,
         "clipboardSize": storage.clipboard_storage_size().map_err(|error| error.to_string())?,
         "memoSize": storage.memo_storage_size().map_err(|error| error.to_string())?,
@@ -105,13 +127,44 @@ pub fn get_stats(storage: &Storage) -> BackendResult<serde_json::Value> {
     }))
 }
 
-pub fn clear_unpinned(storage: &Storage, archive: bool) -> BackendResult<u64> {
+pub fn reclassify_clipboard_entries(storage: &Storage) -> BackendResult<u64> {
     if remote(storage) {
-        remote_storage::clear_clipboard_unpinned(storage, archive)
+        remote_storage::reclassify_clipboard_entries(storage).map_err(|error| error.to_string())
+    } else {
+        storage
+            .reclassify_clipboard_entries()
+            .map_err(|error| error.to_string())
+    }
+}
+
+pub fn classification_status(storage: &Storage) -> BackendResult<ClassificationStatusInfo> {
+    let applied_version = if remote(storage) {
+        remote_storage::classification_rules_applied_version(storage)
+            .map_err(|error| error.to_string())?
+    } else {
+        storage
+            .get_setting("classification_rules_applied_version")
+            .map_err(|error| error.to_string())?
+            .and_then(|value| value.parse::<i64>().ok())
+    };
+    Ok(ClassificationStatusInfo {
+        current_version: CLASSIFICATION_RULES_VERSION,
+        applied_version,
+    })
+}
+
+pub fn clear_unpinned(
+    storage: &Storage,
+    archive: bool,
+    category: Option<&str>,
+    include_auxiliary_tags: bool,
+) -> BackendResult<u64> {
+    if remote(storage) {
+        remote_storage::clear_clipboard_unpinned(storage, archive, category, include_auxiliary_tags)
             .map_err(|error| error.to_string())
     } else {
         storage
-            .clear_unpinned(archive)
+            .clear_unpinned(archive, category, include_auxiliary_tags)
             .map_err(|error| error.to_string())
     }
 }
@@ -176,12 +229,30 @@ pub fn purge_old_archives(storage: &Storage, days: i64) -> BackendResult<u64> {
     }
 }
 
+pub fn empty_archive(storage: &Storage) -> BackendResult<u64> {
+    if remote(storage) {
+        remote_storage::empty_clipboard_archive(storage).map_err(|error| error.to_string())
+    } else {
+        storage.empty_archive().map_err(|error| error.to_string())
+    }
+}
+
 pub fn get_entry_by_id(storage: &Storage, id: i64) -> BackendResult<Option<ClipboardEntry>> {
     if remote(storage) {
         remote_storage::get_clipboard_by_id(storage, id).map_err(|error| error.to_string())
     } else {
         storage
             .get_entry_by_id(id)
+            .map_err(|error| error.to_string())
+    }
+}
+
+pub fn get_entries_by_ids(storage: &Storage, ids: &[i64]) -> BackendResult<Vec<ClipboardEntry>> {
+    if remote(storage) {
+        remote_storage::get_clipboard_by_ids(storage, ids).map_err(|error| error.to_string())
+    } else {
+        storage
+            .get_entries_by_ids(ids)
             .map_err(|error| error.to_string())
     }
 }
@@ -323,6 +394,16 @@ pub fn purge_old_memo_archives(storage: &Storage, days: i64) -> BackendResult<u6
     } else {
         storage
             .purge_old_memo_archives(days)
+            .map_err(|error| error.to_string())
+    }
+}
+
+pub fn empty_memo_archive(storage: &Storage) -> BackendResult<u64> {
+    if remote(storage) {
+        remote_storage::empty_memo_archive(storage).map_err(|error| error.to_string())
+    } else {
+        storage
+            .empty_memo_archive()
             .map_err(|error| error.to_string())
     }
 }

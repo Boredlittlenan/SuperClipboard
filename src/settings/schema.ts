@@ -42,6 +42,11 @@ export const APP_SETTING_SCHEMA = {
     parse: parseBoolean(false),
     serialize: serializeBoolean,
   },
+  multiSelectEnabled: {
+    key: 'multi_select_enabled',
+    parse: parseBoolean(false),
+    serialize: serializeBoolean,
+  },
   hideEntryColorStripEnabled: {
     key: 'hide_entry_color_strip_enabled',
     parse: parseBoolean(false),

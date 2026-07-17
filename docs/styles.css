@@ -222,7 +222,7 @@ summary:focus-visible {
 .eyebrow {
   margin: 0 0 11px;
   color: var(--blue);
-  font-size: 12px;
+  font-size: 18px;
   font-weight: 800;
   text-transform: uppercase;
 }
@@ -783,7 +783,7 @@ h3 {
 
 .workflow-list li > span {
   color: var(--blue);
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 820;
 }
 

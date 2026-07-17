@@ -27,12 +27,14 @@ describe('AppSettingsProvider', () => {
   it('loads and parses the settings schema', async () => {
     getSettingsMock.mockResolvedValue({
       memo_enabled: 'true',
+      multi_select_enabled: 'true',
       theme_mode: 'dark',
     });
     const { result } = renderHook(useAppSettings, { wrapper });
 
     await waitFor(() => expect(result.current.ready).toBe(true));
     expect(result.current.settings.memoEnabled).toBe(true);
+    expect(result.current.settings.multiSelectEnabled).toBe(true);
     expect(result.current.settings.themeMode).toBe('dark');
   });
 
