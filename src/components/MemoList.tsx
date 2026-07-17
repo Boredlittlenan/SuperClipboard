@@ -27,6 +27,7 @@ import { formatRelativeTime, getCategoryColor } from '../utils';
 import MemoRichEditor from './MemoRichEditor';
 import {
   hasMemoImage,
+  isImageOnlyMemo,
   parseMemoBody,
   renderMemoBody,
 } from './MemoBody';
@@ -312,7 +313,9 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     const hasImages = hasMemoImage(memo.body);
     const canExpand = !isEditing && isMemoBodyCollapsible(memo.body);
     const memoTagLabels = getMemoTagLabels(t);
-    const detectedAutoTagTypes = memo.auto_tags ?? [];
+    const detectedAutoTagTypes = isImageOnlyMemo(memo.body)
+      ? (memo.auto_tags ?? []).filter((tag) => tag !== 'code')
+      : memo.auto_tags ?? [];
     const displayedTags = visibleMemoTags(memo.tags, detectedAutoTagTypes, memoTagLabels);
 
     return (

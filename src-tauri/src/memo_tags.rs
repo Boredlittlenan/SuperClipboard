@@ -1,4 +1,7 @@
-use crate::classifier::{self, Category};
+use crate::{
+    classifier::{self, Category},
+    search_index,
+};
 
 const GENERATED_TAG_ALIASES: &[&str] = &[
     "image", "图片", "email", "邮箱", "path", "路径", "link", "链接", "code", "代码",
@@ -43,7 +46,10 @@ fn tag_from_category(category: &Category) -> Option<&'static str> {
 }
 
 pub fn infer(title: &str, body: &str) -> Vec<String> {
-    let content = format!("{title}\n{body}");
+    // Image Data URIs are storage payloads, not memo text. Classifying their Base64 bytes
+    // can falsely look like code and produce an irrelevant automatic tag.
+    let readable_body = search_index::strip_image_data(body);
+    let content = format!("{title}\n{readable_body}");
     let mut tags = Vec::new();
 
     if body_has_image(body) {
@@ -86,6 +92,16 @@ mod tests {
     fn keeps_image_signal() {
         let tags = infer("", "note\n![image](data:image/png;base64,abc)");
         assert_eq!(tags.first().map(String::as_str), Some("image"));
+    }
+
+    #[test]
+    fn image_data_does_not_create_a_code_tag() {
+        let tags = infer(
+            "Merged images (2)",
+            "![image](data:image/png;base64,aGVsbG8rLz0=)\n![image](data:image/png;base64,Zm9vYmFyKys=)",
+        );
+
+        assert_eq!(tags, vec!["image"]);
     }
 
     #[test]

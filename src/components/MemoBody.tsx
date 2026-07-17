@@ -11,6 +11,12 @@ export function hasMemoImage(body: string): boolean {
   return MEMO_IMAGE_TEST_RE.test(body);
 }
 
+export function isImageOnlyMemo(body: string): boolean {
+  const blocks = parseMemoBody(body);
+  return blocks.some((block) => block.type === 'image')
+    && blocks.every((block) => block.type === 'image' || !block.text.trim());
+}
+
 export function parseMemoBody(body: string, includeEmptyText = false): MemoBodyBlock[] {
   const blocks: MemoBodyBlock[] = [];
   let lastIndex = 0;
