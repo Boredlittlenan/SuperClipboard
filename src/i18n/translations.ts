@@ -417,7 +417,7 @@ export const zhCN: Translations = {
   hideEntryColorStripDesc: '隐藏剪贴板条目左侧的分类色条和原文左侧边框',
   categoryTabSelectedColors: '多色模式(Tab标签)',
   categoryTabSelectedColorsDesc: '让选中的 Tab 标签使用对应分类颜色',
-  reclassifyHistory: '更新历史分类',
+  reclassifyHistory: '更新历史分类标签',
   reclassifyHistoryDesc: '建议在版本更新或分类规则变化后重新识别当前存储中的历史条目',
   reclassifyHistoryPending: '正在更新分类',
   reclassifyHistoryConfirmTitle: '重新识别历史条目',

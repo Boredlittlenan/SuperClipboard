@@ -2,7 +2,9 @@ use crate::classifier::{classify_text_tags, Category, CLASSIFICATION_RULES_VERSI
 use crate::memo_tags;
 use crate::remote_migrations;
 use crate::search_index::{clipboard_search_text, memo_search_text};
-use crate::storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage, UpdateResult};
+use crate::storage::{
+    ClipboardEntry, ClipboardInsertResult, Memo, MemoFilter, QueryFilter, Storage, UpdateResult,
+};
 use chrono::{DateTime, Utc};
 use fallible_iterator::FallibleIterator;
 use log::warn;
@@ -644,7 +646,10 @@ fn row_to_memo(row: &Row) -> Memo {
     }
 }
 
-pub fn insert_clipboard(storage: &Storage, entry: &ClipboardEntry) -> RemoteResult<bool> {
+pub fn insert_clipboard(
+    storage: &Storage,
+    entry: &ClipboardEntry,
+) -> RemoteResult<ClipboardInsertResult> {
     let uuid = Uuid::new_v4().to_string();
     let category_tags = normalize_category_tags(entry.category_tags.clone());
     let category = category_tags.first().cloned().unwrap_or(Category::Text);
@@ -657,7 +662,8 @@ pub fn insert_clipboard(storage: &Storage, entry: &ClipboardEntry) -> RemoteResu
     let category_tags = category_tags_json(&category_tags);
     let content_hash = Storage::hash_content(&entry.content);
     with_client(storage, |client| {
-        Ok(client.execute(
+        let mut transaction = client.transaction()?;
+        let inserted = transaction.execute(
             "INSERT INTO superclipboard.clipboard_entries
              (uuid, category, category_tags, content_type, content, preview, search_text, hash, content_hash, pinned, created_at)
              SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
@@ -679,7 +685,30 @@ pub fn insert_clipboard(storage: &Storage, entry: &ClipboardEntry) -> RemoteResu
                 &entry.pinned,
                 &entry.created_at.to_rfc3339(),
             ],
-        )? > 0)
+        )?;
+        if inserted > 0 {
+            transaction.commit()?;
+            return Ok(ClipboardInsertResult::Inserted);
+        }
+
+        let promoted = transaction.execute(
+            "UPDATE superclipboard.clipboard_entries
+             SET created_at = $1
+             WHERE id = (
+                SELECT id FROM superclipboard.clipboard_entries
+                WHERE archived_at IS NULL AND deleted_at IS NULL
+                  AND (hash = $2 OR content_hash = $3)
+                ORDER BY created_at DESC
+                LIMIT 1
+             )",
+            &[&entry.created_at.to_rfc3339(), &entry.hash, &content_hash],
+        )?;
+        transaction.commit()?;
+        Ok(if promoted > 0 {
+            ClipboardInsertResult::Promoted
+        } else {
+            ClipboardInsertResult::Ignored
+        })
     })
 }
 
@@ -1408,7 +1437,9 @@ mod tests {
             archived_at: None,
             version: 1,
         };
-        assert!(insert_clipboard(&storage, &entry).expect("insert remote clipboard"));
+        assert!(insert_clipboard(&storage, &entry)
+            .expect("insert remote clipboard")
+            .inserted());
 
         let entries = query_clipboard(
             &storage,
@@ -1454,7 +1485,9 @@ mod tests {
             archived_at: None,
             version: 1,
         };
-        assert!(insert_clipboard(&storage, &image_entry).expect("insert remote image"));
+        assert!(insert_clipboard(&storage, &image_entry)
+            .expect("insert remote image")
+            .inserted());
         let payload_matches = query_clipboard(
             &storage,
             &QueryFilter {

@@ -1,6 +1,8 @@
 use crate::classifier::CLASSIFICATION_RULES_VERSION;
 use crate::remote_storage;
-use crate::storage::{ClipboardEntry, Memo, MemoFilter, QueryFilter, Storage, UpdateResult};
+use crate::storage::{
+    ClipboardEntry, ClipboardInsertResult, Memo, MemoFilter, QueryFilter, Storage, UpdateResult,
+};
 use serde::Serialize;
 
 pub type BackendResult<T> = Result<T, String>;
@@ -25,11 +27,16 @@ fn remote(storage: &Storage) -> bool {
 }
 
 /// Store a captured clipboard entry in whichever storage mode is active.
-pub fn insert_entry(storage: &Storage, entry: &ClipboardEntry) -> BackendResult<bool> {
+pub fn insert_entry(
+    storage: &Storage,
+    entry: &ClipboardEntry,
+) -> BackendResult<ClipboardInsertResult> {
     if remote(storage) {
         remote_storage::insert_clipboard(storage, entry).map_err(|error| error.to_string())
     } else {
-        storage.insert(entry).map_err(|error| error.to_string())
+        storage
+            .insert_or_promote(entry)
+            .map_err(|error| error.to_string())
     }
 }
 

@@ -113,14 +113,15 @@ pub async fn merge_entries(
         let (mut result, created_entry) = match build_merge_payload(&entries)? {
             MergePayload::Text(content) => {
                 let entry = clipboard::make_text_entry(content);
-                let created = storage_backend::insert_entry(storage, &entry)?;
+                let outcome = storage_backend::insert_entry(storage, &entry)?;
+                let created = outcome.inserted();
                 (
                     MergeEntriesResult {
                         kind: "clipboard".to_string(),
                         created,
                         deleted_originals: 0,
                     },
-                    created.then_some(entry),
+                    outcome.refreshes_list().then_some(entry),
                 )
             }
             MergePayload::ImageMemo(body) => {
@@ -201,14 +202,14 @@ pub async fn import_dropped_text(
 
     let entry = clipboard::make_text_entry(text);
     let entry_to_store = entry.clone();
-    let inserted = run_storage(state.storage.clone(), move |storage| {
+    let outcome = run_storage(state.storage.clone(), move |storage| {
         storage_backend::insert_entry(storage, &entry_to_store)
     })
     .await?;
-    if inserted {
+    if outcome.refreshes_list() {
         let _ = app.emit("clipboard-changed", entry);
     }
-    Ok(inserted)
+    Ok(outcome.refreshes_list())
 }
 
 #[tauri::command]
@@ -232,14 +233,14 @@ pub async fn import_dropped_image(
         .map_err(|error| error.to_string())?;
 
     let entry_to_store = entry.clone();
-    let inserted = run_storage(state.storage.clone(), move |storage| {
+    let outcome = run_storage(state.storage.clone(), move |storage| {
         storage_backend::insert_entry(storage, &entry_to_store)
     })
     .await?;
-    if inserted {
+    if outcome.refreshes_list() {
         let _ = app.emit("clipboard-changed", entry);
     }
-    Ok(inserted)
+    Ok(outcome.refreshes_list())
 }
 
 fn decode_dropped_image(data_url: &str) -> Result<(arboard::ImageData<'static>, String), String> {

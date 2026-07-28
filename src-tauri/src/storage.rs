@@ -21,6 +21,24 @@ pub enum StorageError {
     Serialization(#[from] serde_json::Error),
 }
 
+/// Result of capturing clipboard content that may already exist in history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardInsertResult {
+    Inserted,
+    Promoted,
+    Ignored,
+}
+
+impl ClipboardInsertResult {
+    pub fn inserted(self) -> bool {
+        matches!(self, Self::Inserted)
+    }
+
+    pub fn refreshes_list(self) -> bool {
+        matches!(self, Self::Inserted | Self::Promoted)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingEntry {
     pub key: String,
@@ -380,8 +398,17 @@ impl Storage {
         Ok(changed)
     }
 
-    /// Insert a new clipboard entry, returns Ok(true) if inserted, Ok(false) if duplicate
+    /// Insert a new clipboard entry, returns Ok(true) if inserted, Ok(false) if duplicate.
+    #[cfg(test)]
     pub fn insert(&self, entry: &ClipboardEntry) -> Result<bool, StorageError> {
+        Ok(self.insert_or_promote(entry)?.inserted())
+    }
+
+    /// Capture clipboard content and promote an active duplicate to the newest position.
+    pub fn insert_or_promote(
+        &self,
+        entry: &ClipboardEntry,
+    ) -> Result<ClipboardInsertResult, StorageError> {
         let conn = self.conn.lock().unwrap();
         let category_tags = normalize_category_tags(entry.category_tags.clone());
         let category = category_tags.first().cloned().unwrap_or(Category::Text);
@@ -392,6 +419,7 @@ impl Storage {
             &category_tags,
         );
         let category_tags = category_tags_json(&category_tags)?;
+        let content_hash = Self::hash_content(&entry.content);
         let result = conn.execute(
             "INSERT OR IGNORE INTO clipboard_entries 
              (category, category_tags, content_type, content, preview, search_text, hash, content_hash, pinned, created_at)
@@ -407,12 +435,32 @@ impl Storage {
                 entry.preview,
                 search_text,
                 entry.hash,
-                Self::hash_content(&entry.content),
+                content_hash,
                 entry.pinned as i32,
                 entry.created_at.to_rfc3339(),
             ],
         )?;
-        Ok(result > 0)
+        if result > 0 {
+            return Ok(ClipboardInsertResult::Inserted);
+        }
+
+        let promoted = conn.execute(
+            "UPDATE clipboard_entries
+             SET created_at = ?1
+             WHERE id = (
+                SELECT id FROM clipboard_entries
+                WHERE archived_at IS NULL AND (hash = ?2 OR content_hash = ?3)
+                ORDER BY created_at DESC
+                LIMIT 1
+             )",
+            params![entry.created_at.to_rfc3339(), entry.hash, content_hash],
+        )?;
+
+        Ok(if promoted > 0 {
+            ClipboardInsertResult::Promoted
+        } else {
+            ClipboardInsertResult::Ignored
+        })
     }
 
     /// Query entries with optional filters
@@ -1942,6 +1990,84 @@ mod tests {
             version: 1,
         };
         assert!(!storage.insert(&copied_edited_content).unwrap());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn duplicate_capture_promotes_active_entry_without_overwriting_edits() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let first_created_at = Utc::now() - chrono::Duration::minutes(10);
+        let original = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Text],
+            content_type: "text/plain".to_string(),
+            content: "first copy".to_string(),
+            preview: "first copy".to_string(),
+            hash: Storage::hash_content("first copy"),
+            pinned: false,
+            created_at: first_created_at,
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        assert_eq!(
+            storage.insert_or_promote(&original).unwrap(),
+            ClipboardInsertResult::Inserted
+        );
+        let original_id = storage.query(&QueryFilter::default()).unwrap()[0].id;
+        assert!(storage.update_entry(original_id, "edited copy").unwrap());
+
+        let another = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Text],
+            content_type: "text/plain".to_string(),
+            content: "another item".to_string(),
+            preview: "another item".to_string(),
+            hash: Storage::hash_content("another item"),
+            pinned: false,
+            created_at: first_created_at + chrono::Duration::minutes(5),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        assert_eq!(
+            storage.insert_or_promote(&another).unwrap(),
+            ClipboardInsertResult::Inserted
+        );
+
+        let recaptured_at = first_created_at + chrono::Duration::minutes(15);
+        let recaptured = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Text],
+            content_type: "text/plain".to_string(),
+            content: "edited copy".to_string(),
+            preview: "edited copy".to_string(),
+            hash: Storage::hash_content("edited copy"),
+            pinned: false,
+            created_at: recaptured_at,
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        assert_eq!(
+            storage.insert_or_promote(&recaptured).unwrap(),
+            ClipboardInsertResult::Promoted
+        );
+
+        let entries = storage.query(&QueryFilter::default()).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, original_id);
+        assert_eq!(entries[0].content, "edited copy");
+        assert_eq!(entries[0].original_content.as_deref(), Some("first copy"));
+        assert_eq!(entries[0].created_at, recaptured_at);
 
         std::fs::remove_file(db_path).ok();
     }

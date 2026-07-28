@@ -66,11 +66,11 @@ impl ClipboardMonitor {
                                     let insert_result =
                                         storage_backend::insert_entry(&storage, &entry);
                                     match insert_result {
-                                        Ok(true) => {
+                                        Ok(result) if result.refreshes_list() => {
                                             debug!("Captured image: {}x{}", img.width, img.height);
                                             let _ = app_handle.emit("clipboard-changed", &entry);
                                         }
-                                        Ok(false) => {} // duplicate
+                                        Ok(_) => {}
                                         Err(e) => {
                                             warn!("Failed to store image: {}", e);
                                         }
@@ -97,11 +97,11 @@ impl ClipboardMonitor {
                         let category = entry.category.clone();
                         let insert_result = storage_backend::insert_entry(&storage, &entry);
                         match insert_result {
-                            Ok(true) => {
+                            Ok(result) if result.refreshes_list() => {
                                 debug!("Captured {}: {:?}", category, entry.preview);
                                 let _ = app_handle.emit("clipboard-changed", &entry);
                             }
-                            Ok(false) => {} // duplicate
+                            Ok(_) => {}
                             Err(e) => {
                                 warn!("Failed to store entry: {}", e);
                             }

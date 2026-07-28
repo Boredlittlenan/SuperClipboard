@@ -50,7 +50,7 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `3.5.0` (2026-07-17)
+- Version: `3.6.0` (in development)
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - UI style: classic UI by default, with Modern UI available in Experimental Features
