@@ -5,7 +5,7 @@ import { Archive, Check, Download, ExternalLink, Image as ImageIcon, Maximize2, 
 import type { ClipboardEntry } from '../types';
 import { getArchiveDaysRemaining, getArchiveTone, getCategoryColor, getCategoryLabel, formatRelativeTime } from '../utils';
 import { useI18n } from '../i18n';
-import { exportClipboardImage, getEntryContent, type UpdateResult } from '../api/clipboard';
+import { exportClipboardImage, getEntry, getEntryContent, type UpdateResult } from '../api/clipboard';
 import ImagePreviewDialog from './ImagePreviewDialog';
 import { shouldToggleEntrySelection } from '../clipboardMerge';
 
@@ -34,6 +34,8 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
   const [showOriginal, setShowOriginal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState('');
+  const [editConflict, setEditConflict] = useState<ClipboardEntry | null>(null);
+  const [showLatestConflict, setShowLatestConflict] = useState(false);
   const [imageContent, setImageContent] = useState(entry.category === 'image' ? entry.content : '');
   const [imageLoading, setImageLoading] = useState(false);
   const [exportingImage, setExportingImage] = useState(false);
@@ -71,6 +73,8 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
     if (selectionMode) {
       setEditing(false);
       setEditError('');
+      setEditConflict(null);
+      setShowLatestConflict(false);
     }
   }, [selectionMode]);
 
@@ -129,26 +133,32 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
     e.stopPropagation();
     setEditContent(entry.content);
     setEditError('');
+    setEditConflict(null);
+    setShowLatestConflict(false);
     setEditing(true);
     setTimeout(() => textareaRef.current?.focus(), 50);
   }, [entry.content]);
 
-  const handleSave = useCallback(async (e: React.MouseEvent) => {
+  const saveWithVersion = useCallback(async (e: React.MouseEvent, expectedVersion: number) => {
     e.stopPropagation();
     if (saving) return;
     if (editContent === entry.content) {
       setEditing(false);
       setEditError('');
+      setEditConflict(null);
       return;
     }
     setSaving(true);
     try {
-      const result = await onEdit(entry.id, editContent, entry.version);
+      const result = await onEdit(entry.id, editContent, expectedVersion);
       if (result.conflict) {
         setEditError(t.editConflict);
-        setEditing(false);
+        const latest = await getEntry(entry.id);
+        setEditConflict(latest);
+        setShowLatestConflict(false);
       } else if (result.updated) {
         setEditing(false);
+        setEditConflict(null);
       } else {
         throw new Error('Clipboard entry update failed');
       }
@@ -157,13 +167,33 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
     } finally {
       setSaving(false);
     }
-  }, [entry.content, entry.id, entry.version, editContent, onEdit, saving, t.editConflict]);
+  }, [entry.content, entry.id, editContent, onEdit, saving, t.editConflict]);
+
+  const handleSave = useCallback((e: React.MouseEvent) => {
+    void saveWithVersion(e, entry.version);
+  }, [entry.version, saveWithVersion]);
+
+  const handleCopyMyChanges = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(editContent);
+    } catch (error) {
+      console.error('Failed to copy conflicting clipboard draft:', error);
+    }
+  }, [editContent]);
+
+  const handleReapplyChanges = useCallback((e: React.MouseEvent) => {
+    if (!editConflict) return;
+    void saveWithVersion(e, editConflict.version);
+  }, [editConflict, saveWithVersion]);
 
   const handleCancel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     setEditing(false);
     setEditContent(entry.content);
     setEditError('');
+    setEditConflict(null);
+    setShowLatestConflict(false);
   }, [entry.content]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -396,6 +426,21 @@ export default function ClipboardItem({ entry, onCopy, onDelete, onTogglePin, on
               style={styles.textarea}
               rows={Math.min(Math.max(editContent.split('\n').length, 3), 15)}
             />
+            {editConflict && (
+              <div style={styles.conflictPanel}>
+                <span style={styles.editError}>{editError}</span>
+                <div style={styles.conflictActions}>
+                  <button style={styles.conflictBtn} onClick={handleCopyMyChanges}>{t.copyMyChanges}</button>
+                  <button style={styles.conflictBtn} onClick={(event) => { event.stopPropagation(); setShowLatestConflict((value) => !value); }}>
+                    {t.viewLatestContent}
+                  </button>
+                  <button style={styles.conflictPrimaryBtn} onClick={handleReapplyChanges}>{t.reapplyMyChanges}</button>
+                </div>
+                {showLatestConflict && (
+                  <pre style={styles.latestConflictContent}>{t.latestContent}{': '}\n{editConflict.content}</pre>
+                )}
+              </div>
+            )}
             <div style={styles.editActions}>
               <span style={styles.editHint}>Ctrl+Enter {t.save} / Esc {t.cancel}</span>
               <button style={styles.cancelBtn} onClick={handleCancel} disabled={saving}>
@@ -609,6 +654,49 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--danger)',
     fontSize: '11px',
     lineHeight: 1.4,
+  },
+  conflictPanel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '7px',
+    border: '1px solid color-mix(in srgb, var(--danger) 35%, transparent)',
+    borderRadius: '4px',
+    background: 'color-mix(in srgb, var(--danger) 5%, transparent)',
+  },
+  conflictActions: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '6px',
+    alignItems: 'center',
+  },
+  conflictBtn: {
+    fontSize: '11px',
+    padding: '4px 8px',
+    borderRadius: '4px',
+    border: '1px solid var(--border)',
+    background: 'var(--bg-primary)',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+  },
+  conflictPrimaryBtn: {
+    fontSize: '11px',
+    padding: '4px 8px',
+    borderRadius: '4px',
+    border: 'none',
+    background: 'var(--accent)',
+    color: '#fff',
+    cursor: 'pointer',
+  },
+  latestConflictContent: {
+    margin: 0,
+    maxHeight: '120px',
+    overflow: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    fontSize: '11px',
+    lineHeight: 1.45,
+    color: 'var(--text-secondary)',
   },
   textPreview: {
     margin: 0,

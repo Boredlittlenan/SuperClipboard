@@ -9,7 +9,7 @@ interface PaginatedMemos {
   setMemos: Dispatch<SetStateAction<Memo[]>>;
   hasMore: boolean;
   loadingMore: boolean;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<Memo[]>;
   loadMore: () => Promise<void>;
 }
 
@@ -31,11 +31,13 @@ export function usePaginatedMemos(searchQuery: string, refreshKey: number): Pagi
     const requestId = ++requestRef.current;
     try {
       const data = await getMemos(buildFilter(searchQuery));
-      if (requestRef.current !== requestId) return;
+      if (requestRef.current !== requestId) return [];
       setMemos(data);
       setHasMore(data.length === MEMO_PAGE_SIZE);
+      return data;
     } catch (error) {
       console.error('Failed to fetch memos:', error);
+      return [];
     }
   }, [searchQuery]);
 

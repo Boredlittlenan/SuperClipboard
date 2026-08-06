@@ -1,7 +1,8 @@
 use crate::classifier::CLASSIFICATION_RULES_VERSION;
 use crate::remote_storage;
 use crate::storage::{
-    ClipboardEntry, ClipboardInsertResult, Memo, MemoFilter, QueryFilter, Storage, UpdateResult,
+    ClipboardEntry, ClipboardInsertResult, Memo, MemoFilter, MergeMemoRequest, QueryFilter,
+    Storage, UpdateResult,
 };
 use serde::Serialize;
 
@@ -68,6 +69,41 @@ pub fn delete_entries(storage: &Storage, ids: &[i64], archive: bool) -> BackendR
     }
 }
 
+/// Store a merged text entry and optionally remove all selected source entries atomically.
+pub fn merge_clipboard_entry(
+    storage: &Storage,
+    entry: &ClipboardEntry,
+    source_ids: &[i64],
+    delete_sources: bool,
+    archive_sources: bool,
+) -> BackendResult<(ClipboardInsertResult, u64)> {
+    if remote(storage) {
+        remote_storage::merge_clipboard_entry(
+            storage,
+            entry,
+            source_ids,
+            delete_sources,
+            archive_sources,
+        )
+        .map_err(|error| error.to_string())
+    } else {
+        storage
+            .merge_clipboard_entry(entry, source_ids, delete_sources, archive_sources)
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Create a merged image memo and optionally remove all selected source entries atomically.
+pub fn merge_memo_entry(storage: &Storage, request: MergeMemoRequest<'_>) -> BackendResult<u64> {
+    if remote(storage) {
+        remote_storage::merge_memo_entry(storage, request).map_err(|error| error.to_string())
+    } else {
+        storage
+            .merge_memo_entry(request)
+            .map_err(|error| error.to_string())
+    }
+}
+
 pub fn toggle_pin(storage: &Storage, id: i64) -> BackendResult<bool> {
     if remote(storage) {
         remote_storage::toggle_clipboard_pin(storage, id).map_err(|error| error.to_string())
@@ -117,20 +153,23 @@ pub fn get_stats(
         }));
     }
 
+    let stats = storage
+        .stats(include_auxiliary_tags)
+        .map_err(|error| error.to_string())?;
     Ok(serde_json::json!({
-        "total": storage.count(None, include_auxiliary_tags).map_err(|error| error.to_string())?,
-        "text": storage.count(Some("text"), include_auxiliary_tags).map_err(|error| error.to_string())?,
-        "link": storage.count(Some("link"), include_auxiliary_tags).map_err(|error| error.to_string())?,
-        "image": storage.count(Some("image"), include_auxiliary_tags).map_err(|error| error.to_string())?,
-        "code": storage.count(Some("code"), include_auxiliary_tags).map_err(|error| error.to_string())?,
-        "email": storage.count(Some("email"), include_auxiliary_tags).map_err(|error| error.to_string())?,
-        "file_path": storage.count(Some("file_path"), include_auxiliary_tags).map_err(|error| error.to_string())?,
+        "total": stats.total,
+        "text": stats.text,
+        "link": stats.link,
+        "image": stats.image,
+        "code": stats.code,
+        "email": stats.email,
+        "file_path": stats.file_path,
         "dbSize": storage.db_size().map_err(|error| error.to_string())?,
-        "clipboardSize": storage.clipboard_storage_size().map_err(|error| error.to_string())?,
-        "memoSize": storage.memo_storage_size().map_err(|error| error.to_string())?,
-        "archive": storage.archive_count().map_err(|error| error.to_string())?,
-        "memoCount": storage.memo_count().map_err(|error| error.to_string())?,
-        "memoArchive": storage.memo_archive_count().map_err(|error| error.to_string())?,
+        "clipboardSize": stats.clipboard_size,
+        "memoSize": stats.memo_size,
+        "archive": stats.archive,
+        "memoCount": stats.memo_count,
+        "memoArchive": stats.memo_archive,
     }))
 }
 

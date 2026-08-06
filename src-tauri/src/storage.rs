@@ -2,7 +2,7 @@ use crate::classifier::{classify_text_tags, Category, CLASSIFICATION_RULES_VERSI
 use crate::memo_tags;
 use crate::search_index::{clipboard_search_text, memo_search_text};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, Result as SqlResult};
+use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -19,6 +19,8 @@ pub enum StorageError {
     Database(#[from] rusqlite::Error),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("Storage operation failed: {0}")]
+    InvalidOperation(String),
 }
 
 /// Result of capturing clipboard content that may already exist in history.
@@ -26,6 +28,7 @@ pub enum StorageError {
 pub enum ClipboardInsertResult {
     Inserted,
     Promoted,
+    ArchivedDuplicate(i64),
     Ignored,
 }
 
@@ -36,6 +39,13 @@ impl ClipboardInsertResult {
 
     pub fn refreshes_list(self) -> bool {
         matches!(self, Self::Inserted | Self::Promoted)
+    }
+
+    pub fn archived_duplicate_id(self) -> Option<i64> {
+        match self {
+            Self::ArchivedDuplicate(id) => Some(id),
+            _ => None,
+        }
     }
 }
 
@@ -54,6 +64,35 @@ pub struct BackupData {
     pub clipboard_entries: Vec<ClipboardEntry>,
     pub memos: Vec<Memo>,
     pub settings: Vec<SettingEntry>,
+}
+
+/// Aggregate values used by the footer and category tabs. Keeping these in one
+/// query prevents every refresh from scanning the local database repeatedly.
+#[derive(Debug, Clone, Copy)]
+pub struct StorageStats {
+    pub total: i64,
+    pub text: i64,
+    pub link: i64,
+    pub image: i64,
+    pub code: i64,
+    pub email: i64,
+    pub file_path: i64,
+    pub archive: i64,
+    pub memo_count: i64,
+    pub memo_archive: i64,
+    pub clipboard_size: i64,
+    pub memo_size: i64,
+}
+
+/// All inputs needed to create a merged image memo atomically.
+pub struct MergeMemoRequest<'a> {
+    pub title: &'a str,
+    pub body: &'a str,
+    pub tags: &'a str,
+    pub auto_tags: &'a [String],
+    pub source_ids: &'a [i64],
+    pub delete_sources: bool,
+    pub archive_sources: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +154,7 @@ pub struct Memo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<String>,
     #[serde(default = "default_record_version")]
+    /// Version of editable memo content. Local storage always returns 1.
     pub version: i64,
 }
 
@@ -410,6 +450,16 @@ impl Storage {
         entry: &ClipboardEntry,
     ) -> Result<ClipboardInsertResult, StorageError> {
         let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        let outcome = Self::insert_or_promote_in_transaction(&tx, entry)?;
+        tx.commit()?;
+        Ok(outcome)
+    }
+
+    fn insert_or_promote_in_transaction(
+        tx: &rusqlite::Transaction<'_>,
+        entry: &ClipboardEntry,
+    ) -> Result<ClipboardInsertResult, StorageError> {
         let category_tags = normalize_category_tags(entry.category_tags.clone());
         let category = category_tags.first().cloned().unwrap_or(Category::Text);
         let search_text = clipboard_search_text(
@@ -420,7 +470,7 @@ impl Storage {
         );
         let category_tags = category_tags_json(&category_tags)?;
         let content_hash = Self::hash_content(&entry.content);
-        let result = conn.execute(
+        let result = tx.execute(
             "INSERT OR IGNORE INTO clipboard_entries 
              (category, category_tags, content_type, content, preview, search_text, hash, content_hash, pinned, created_at)
              SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
@@ -444,7 +494,7 @@ impl Storage {
             return Ok(ClipboardInsertResult::Inserted);
         }
 
-        let promoted = conn.execute(
+        let promoted = tx.execute(
             "UPDATE clipboard_entries
              SET created_at = ?1
              WHERE id = (
@@ -456,11 +506,98 @@ impl Storage {
             params![entry.created_at.to_rfc3339(), entry.hash, content_hash],
         )?;
 
-        Ok(if promoted > 0 {
-            ClipboardInsertResult::Promoted
+        if promoted > 0 {
+            return Ok(ClipboardInsertResult::Promoted);
+        }
+
+        let archived_duplicate_id = tx
+            .query_row(
+                "SELECT id FROM clipboard_entries
+                 WHERE archived_at IS NOT NULL AND (hash = ?1 OR content_hash = ?2)
+                 ORDER BY archived_at DESC
+                 LIMIT 1",
+                params![entry.hash, content_hash],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(archived_duplicate_id
+            .map(ClipboardInsertResult::ArchivedDuplicate)
+            .unwrap_or(ClipboardInsertResult::Ignored))
+    }
+
+    /// Atomically store a merged text entry and optionally remove its source entries.
+    pub fn merge_clipboard_entry(
+        &self,
+        entry: &ClipboardEntry,
+        source_ids: &[i64],
+        delete_sources: bool,
+        archive_sources: bool,
+    ) -> Result<(ClipboardInsertResult, u64), StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        let outcome = Self::insert_or_promote_in_transaction(&tx, entry)?;
+        let deleted = if delete_sources {
+            Self::delete_active_entries_in_transaction(&tx, source_ids, archive_sources)?
         } else {
-            ClipboardInsertResult::Ignored
-        })
+            0
+        };
+        tx.commit()?;
+        Ok((outcome, deleted))
+    }
+
+    /// Atomically create a merged image memo and optionally remove its source entries.
+    pub fn merge_memo_entry(&self, request: MergeMemoRequest<'_>) -> Result<u64, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        let tags = memo_tags::manual_only(request.tags);
+        let search_text = memo_search_text(request.title, request.body, &tags, request.auto_tags);
+        let auto_tags = serde_json::to_string(request.auto_tags)?;
+        tx.execute(
+            "INSERT INTO memos (title, body, tags, auto_tags, search_text, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM memos), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            params![request.title, request.body, tags, auto_tags, search_text],
+        )?;
+        let deleted = if request.delete_sources {
+            Self::delete_active_entries_in_transaction(
+                &tx,
+                request.source_ids,
+                request.archive_sources,
+            )?
+        } else {
+            0
+        };
+        tx.commit()?;
+        Ok(deleted)
+    }
+
+    fn delete_active_entries_in_transaction(
+        tx: &rusqlite::Transaction<'_>,
+        ids: &[i64],
+        archive: bool,
+    ) -> Result<u64, StorageError> {
+        let mut affected = 0_u64;
+        for id in ids {
+            let rows = if archive {
+                tx.execute(
+                    "UPDATE clipboard_entries
+                     SET archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                     WHERE id = ?1 AND archived_at IS NULL",
+                    params![id],
+                )?
+            } else {
+                tx.execute(
+                    "DELETE FROM clipboard_entries WHERE id = ?1 AND archived_at IS NULL",
+                    params![id],
+                )?
+            };
+            affected += rows as u64;
+        }
+        if affected != ids.len() as u64 {
+            return Err(StorageError::InvalidOperation(
+                "Some selected clipboard entries are no longer available.".to_string(),
+            ));
+        }
+        Ok(affected)
     }
 
     /// Query entries with optional filters
@@ -775,6 +912,7 @@ impl Storage {
     }
 
     /// Get total count of entries, optionally filtered by category
+    #[cfg(test)]
     pub fn count(
         &self,
         category: Option<&str>,
@@ -798,36 +936,51 @@ impl Storage {
         Ok(count)
     }
 
+    /// Fetch all UI statistics with one aggregate scan of clipboard entries.
+    pub fn stats(&self, include_auxiliary_tags: bool) -> Result<StorageStats, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT
+                COUNT(*) FILTER (WHERE ce.archived_at IS NULL) AS total,
+                COUNT(*) FILTER (WHERE ce.archived_at IS NULL AND (ce.category = 'text' OR (?1 AND ce.category_tags LIKE '%\"text\"%'))) AS text,
+                COUNT(*) FILTER (WHERE ce.archived_at IS NULL AND (ce.category = 'link' OR (?1 AND ce.category_tags LIKE '%\"link\"%'))) AS link,
+                COUNT(*) FILTER (WHERE ce.archived_at IS NULL AND (ce.category = 'image' OR (?1 AND ce.category_tags LIKE '%\"image\"%'))) AS image,
+                COUNT(*) FILTER (WHERE ce.archived_at IS NULL AND (ce.category = 'code' OR (?1 AND ce.category_tags LIKE '%\"code\"%'))) AS code,
+                COUNT(*) FILTER (WHERE ce.archived_at IS NULL AND (ce.category = 'email' OR (?1 AND ce.category_tags LIKE '%\"email\"%'))) AS email,
+                COUNT(*) FILTER (WHERE ce.archived_at IS NULL AND (ce.category = 'file_path' OR (?1 AND ce.category_tags LIKE '%\"file_path\"%'))) AS file_path,
+                COUNT(*) FILTER (WHERE ce.archived_at IS NOT NULL) AS archive,
+                COALESCE(SUM(LENGTH(ce.content) + LENGTH(ce.preview) + LENGTH(COALESCE(ce.original_content, ''))) FILTER (WHERE ce.archived_at IS NULL), 0) AS clipboard_size,
+                (SELECT COUNT(*) FROM memos WHERE archived_at IS NULL) AS memo_count,
+                (SELECT COUNT(*) FROM memos WHERE archived_at IS NOT NULL) AS memo_archive,
+                (SELECT COALESCE(SUM(LENGTH(title) + LENGTH(body) + LENGTH(tags)), 0) FROM memos WHERE archived_at IS NULL) AS memo_size
+             FROM clipboard_entries ce",
+            params![include_auxiliary_tags],
+            |row| {
+                Ok(StorageStats {
+                    total: row.get("total")?,
+                    text: row.get("text")?,
+                    link: row.get("link")?,
+                    image: row.get("image")?,
+                    code: row.get("code")?,
+                    email: row.get("email")?,
+                    file_path: row.get("file_path")?,
+                    archive: row.get("archive")?,
+                    clipboard_size: row.get("clipboard_size")?,
+                    memo_count: row.get("memo_count")?,
+                    memo_archive: row.get("memo_archive")?,
+                    memo_size: row.get("memo_size")?,
+                })
+            },
+        )
+        .map_err(StorageError::from)
+    }
+
     /// Get database size in bytes (page_count * page_size)
     pub fn db_size(&self) -> Result<i64, StorageError> {
         let conn = self.conn.lock().unwrap();
         let page_count: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
         let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
         Ok(page_count * page_size)
-    }
-
-    /// Get clipboard entries storage size in bytes (sum of content field lengths, excluding archived)
-    pub fn clipboard_storage_size(&self) -> Result<i64, StorageError> {
-        let conn = self.conn.lock().unwrap();
-        let size: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(LENGTH(content) + LENGTH(preview) + LENGTH(COALESCE(original_content, ''))), 0) FROM clipboard_entries WHERE archived_at IS NULL",
-                [],
-                |row| row.get(0),
-            )?;
-        Ok(size)
-    }
-
-    /// Get memos storage size in bytes (sum of title + body + tags field lengths, excluding archived)
-    pub fn memo_storage_size(&self) -> Result<i64, StorageError> {
-        let conn = self.conn.lock().unwrap();
-        let size: i64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(LENGTH(title) + LENGTH(body) + LENGTH(tags)), 0) FROM memos WHERE archived_at IS NULL",
-                [],
-                |row| row.get(0),
-            )?;
-        Ok(size)
     }
 
     /// Clear non-pinned entries, optionally limited to a category.
@@ -1110,8 +1263,8 @@ impl Storage {
         let tx = conn.unchecked_transaction()?;
         for (id, sort_order) in orders {
             tx.execute(
-                "UPDATE memos SET sort_order = ?1 WHERE id = ?2",
-                params![sort_order, id],
+                "UPDATE memos SET sort_order = ?1 WHERE id = ?2 AND sort_order IS NOT ?3",
+                params![sort_order, id, sort_order],
             )?;
         }
         tx.commit()?;
@@ -1344,6 +1497,49 @@ mod tests {
         assert_eq!(storage.count(Some("email"), false).unwrap(), 0);
         assert_eq!(storage.count(Some("email"), true).unwrap(), 1);
         assert_eq!(storage.count(Some("link"), false).unwrap(), 1);
+
+        drop(storage);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn stats_aggregates_categories_sizes_and_archives() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        let content = "https://example.com contact@example.com";
+        let entry = ClipboardEntry {
+            id: 0,
+            category: Category::Link,
+            category_tags: vec![Category::Link, Category::Email],
+            content_type: "text/plain".to_string(),
+            content: content.to_string(),
+            preview: content.to_string(),
+            hash: Storage::hash_content(content),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        assert!(storage.insert(&entry).unwrap());
+        storage.create_memo("Title", "Body", "tag", &[]).unwrap();
+
+        let primary = storage.stats(false).unwrap();
+        assert_eq!(primary.total, 1);
+        assert_eq!(primary.link, 1);
+        assert_eq!(primary.email, 0);
+        assert_eq!(primary.memo_count, 1);
+        assert!(primary.clipboard_size > 0);
+        assert!(primary.memo_size > 0);
+
+        let auxiliary = storage.stats(true).unwrap();
+        assert_eq!(auxiliary.email, 1);
+
+        assert!(storage.archive_entry(1).unwrap());
+        let archived = storage.stats(true).unwrap();
+        assert_eq!(archived.total, 0);
+        assert_eq!(archived.archive, 1);
 
         drop(storage);
         let _ = std::fs::remove_file(db_path);
@@ -2068,6 +2264,65 @@ mod tests {
         assert_eq!(entries[0].content, "edited copy");
         assert_eq!(entries[0].original_content.as_deref(), Some("first copy"));
         assert_eq!(entries[0].created_at, recaptured_at);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn merged_clipboard_entry_rolls_back_when_a_source_is_missing() {
+        let db_path = temp_db_path();
+        let storage = Storage::new(&db_path).unwrap();
+        for content in ["merge source one", "merge source two"] {
+            let entry = ClipboardEntry {
+                id: 0,
+                category: Category::Text,
+                category_tags: vec![Category::Text],
+                content_type: "text/plain".to_string(),
+                content: content.to_string(),
+                preview: content.to_string(),
+                hash: Storage::hash_content(content),
+                pinned: false,
+                created_at: Utc::now(),
+                original_content: None,
+                updated_at: None,
+                archived_at: None,
+                version: 1,
+            };
+            assert!(storage.insert(&entry).unwrap());
+        }
+        let source_ids = storage
+            .query(&QueryFilter::default())
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
+        let merged = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Text],
+            content_type: "text/plain".to_string(),
+            content: "merged result".to_string(),
+            preview: "merged result".to_string(),
+            hash: Storage::hash_content("merged result"),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        let mut ids_with_missing_source = source_ids.clone();
+        ids_with_missing_source.push(999_999);
+
+        assert!(storage
+            .merge_clipboard_entry(&merged, &ids_with_missing_source, true, false)
+            .is_err());
+
+        let remaining = storage.query(&QueryFilter::default()).unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining
+            .iter()
+            .all(|entry| entry.content != "merged result"));
 
         std::fs::remove_file(db_path).ok();
     }

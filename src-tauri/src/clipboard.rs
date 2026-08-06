@@ -43,6 +43,7 @@ impl ClipboardMonitor {
 
                 // Track last seen clipboard payload to avoid re-processing.
                 let mut last_clipboard_hash = String::new();
+                let mut last_storage_error_hash = String::new();
 
                 // Poll interval: 300ms — responsive enough for UX, low CPU usage
                 let poll_interval = Duration::from_millis(300);
@@ -56,8 +57,6 @@ impl ClipboardMonitor {
                             let image_hash = hash_image_payload(&img);
 
                             if image_hash != last_clipboard_hash {
-                                last_clipboard_hash = image_hash.clone();
-
                                 // Encode image as PNG base64
                                 let img_data = encode_image_to_base64(&img);
                                 if let Some(data) = img_data {
@@ -66,13 +65,29 @@ impl ClipboardMonitor {
                                     let insert_result =
                                         storage_backend::insert_entry(&storage, &entry);
                                     match insert_result {
-                                        Ok(result) if result.refreshes_list() => {
-                                            debug!("Captured image: {}x{}", img.width, img.height);
-                                            let _ = app_handle.emit("clipboard-changed", &entry);
+                                        Ok(result) => {
+                                            last_clipboard_hash = image_hash;
+                                            last_storage_error_hash.clear();
+                                            if result.refreshes_list() {
+                                                debug!(
+                                                    "Captured image: {}x{}",
+                                                    img.width, img.height
+                                                );
+                                                let _ =
+                                                    app_handle.emit("clipboard-changed", &entry);
+                                            }
+                                            if let Some(id) = result.archived_duplicate_id() {
+                                                let _ = app_handle
+                                                    .emit("clipboard-archived-duplicate", id);
+                                            }
                                         }
-                                        Ok(_) => {}
                                         Err(e) => {
-                                            warn!("Failed to store image: {}", e);
+                                            if last_storage_error_hash != image_hash {
+                                                last_storage_error_hash = image_hash;
+                                                warn!("Failed to store image: {}", e);
+                                                let _ =
+                                                    app_handle.emit("clipboard-storage-error", ());
+                                            }
                                         }
                                     }
                                 }
@@ -91,19 +106,28 @@ impl ClipboardMonitor {
                         if hash == last_clipboard_hash {
                             continue;
                         }
-                        last_clipboard_hash = hash.clone();
 
                         let entry = make_text_entry(text);
                         let category = entry.category.clone();
                         let insert_result = storage_backend::insert_entry(&storage, &entry);
                         match insert_result {
-                            Ok(result) if result.refreshes_list() => {
-                                debug!("Captured {}: {:?}", category, entry.preview);
-                                let _ = app_handle.emit("clipboard-changed", &entry);
+                            Ok(result) => {
+                                last_clipboard_hash = hash;
+                                last_storage_error_hash.clear();
+                                if result.refreshes_list() {
+                                    debug!("Captured {}: {:?}", category, entry.preview);
+                                    let _ = app_handle.emit("clipboard-changed", &entry);
+                                }
+                                if let Some(id) = result.archived_duplicate_id() {
+                                    let _ = app_handle.emit("clipboard-archived-duplicate", id);
+                                }
                             }
-                            Ok(_) => {}
                             Err(e) => {
-                                warn!("Failed to store entry: {}", e);
+                                if last_storage_error_hash != hash {
+                                    last_storage_error_hash = hash;
+                                    warn!("Failed to store entry: {}", e);
+                                    let _ = app_handle.emit("clipboard-storage-error", ());
+                                }
                             }
                         }
                     }

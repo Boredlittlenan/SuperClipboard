@@ -399,6 +399,18 @@ function AppContent() {
     };
   }, []);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen('clipboard-storage-error', () => {
+      setDropNotice({ message: t.clipboardCaptureFailed, tone: 'error' });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [t]);
+
   // Coalesce PostgreSQL LISTEN/NOTIFY events before refreshing the active view.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -522,6 +534,28 @@ function AppContent() {
     },
     [fetchStats, setEntries]
   );
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<number>('clipboard-archived-duplicate', async (event) => {
+      const confirmed = await requestConfirm({
+        title: t.archivedDuplicateTitle,
+        message: t.archivedDuplicateMessage,
+        confirmLabel: t.restore,
+        tone: 'normal',
+      });
+      if (confirmed) {
+        await handleRestore(event.payload);
+        emitAppEvent('clipboard:changed');
+      }
+    }).then((handler) => {
+      unlisten = handler;
+    }).catch(console.error);
+
+    return () => {
+      unlisten?.();
+    };
+  }, [handleRestore, requestConfirm, t]);
 
   const handlePermanentDelete = useCallback(
     async (id: number) => {

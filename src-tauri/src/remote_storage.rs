@@ -3,14 +3,15 @@ use crate::memo_tags;
 use crate::remote_migrations;
 use crate::search_index::{clipboard_search_text, memo_search_text};
 use crate::storage::{
-    ClipboardEntry, ClipboardInsertResult, Memo, MemoFilter, QueryFilter, Storage, UpdateResult,
+    ClipboardEntry, ClipboardInsertResult, Memo, MemoFilter, MergeMemoRequest, QueryFilter,
+    Storage, UpdateResult,
 };
 use chrono::{DateTime, Utc};
 use fallible_iterator::FallibleIterator;
 use log::warn;
 use native_tls::TlsConnector;
 use postgres::types::ToSql;
-use postgres::{Client, NoTls, Row};
+use postgres::{Client, NoTls, Row, Transaction};
 use postgres_native_tls::MakeTlsConnector;
 use r2d2::{CustomizeConnection, Pool, PooledConnection};
 use r2d2_postgres::PostgresConnectionManager;
@@ -39,6 +40,8 @@ pub enum RemoteStorageError {
     SchemaTooNew(i64),
     #[error("Remote storage connection pool error: {0}")]
     Pool(#[from] r2d2::Error),
+    #[error("Remote storage operation failed: {0}")]
+    InvalidOperation(String),
 }
 
 pub type RemoteResult<T> = Result<T, RemoteStorageError>;
@@ -650,6 +653,18 @@ pub fn insert_clipboard(
     storage: &Storage,
     entry: &ClipboardEntry,
 ) -> RemoteResult<ClipboardInsertResult> {
+    with_client(storage, |client| {
+        let mut transaction = client.transaction()?;
+        let outcome = insert_clipboard_in_transaction(&mut transaction, entry)?;
+        transaction.commit()?;
+        Ok(outcome)
+    })
+}
+
+fn insert_clipboard_in_transaction(
+    transaction: &mut Transaction<'_>,
+    entry: &ClipboardEntry,
+) -> RemoteResult<ClipboardInsertResult> {
     let uuid = Uuid::new_v4().to_string();
     let category_tags = normalize_category_tags(entry.category_tags.clone());
     let category = category_tags.first().cloned().unwrap_or(Category::Text);
@@ -661,54 +676,141 @@ pub fn insert_clipboard(
     );
     let category_tags = category_tags_json(&category_tags);
     let content_hash = Storage::hash_content(&entry.content);
+    let inserted = transaction.execute(
+        "INSERT INTO superclipboard.clipboard_entries
+         (uuid, category, category_tags, content_type, content, preview, search_text, hash, content_hash, pinned, created_at)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+         WHERE NOT EXISTS (
+            SELECT 1 FROM superclipboard.clipboard_entries
+            WHERE hash = $8 OR content_hash = $9
+         )
+         ON CONFLICT(hash) DO NOTHING",
+        &[
+            &uuid,
+            &category.to_string(),
+            &category_tags,
+            &entry.content_type,
+            &entry.content,
+            &entry.preview,
+            &search_text,
+            &entry.hash,
+            &content_hash,
+            &entry.pinned,
+            &entry.created_at.to_rfc3339(),
+        ],
+    )?;
+    if inserted > 0 {
+        return Ok(ClipboardInsertResult::Inserted);
+    }
+
+    let promoted = transaction.execute(
+        "UPDATE superclipboard.clipboard_entries
+         SET created_at = $1
+         WHERE id = (
+            SELECT id FROM superclipboard.clipboard_entries
+            WHERE archived_at IS NULL AND deleted_at IS NULL
+              AND (hash = $2 OR content_hash = $3)
+            ORDER BY created_at DESC
+            LIMIT 1
+         )",
+        &[&entry.created_at.to_rfc3339(), &entry.hash, &content_hash],
+    )?;
+    if promoted > 0 {
+        return Ok(ClipboardInsertResult::Promoted);
+    }
+
+    let archived_duplicate_id = transaction
+        .query_opt(
+            "SELECT id FROM superclipboard.clipboard_entries
+             WHERE archived_at IS NOT NULL AND deleted_at IS NULL
+               AND (hash = $1 OR content_hash = $2)
+             ORDER BY archived_at DESC
+             LIMIT 1",
+            &[&entry.hash, &content_hash],
+        )?
+        .map(|row| row.get(0));
+    Ok(archived_duplicate_id
+        .map(ClipboardInsertResult::ArchivedDuplicate)
+        .unwrap_or(ClipboardInsertResult::Ignored))
+}
+
+fn delete_active_clipboards_in_transaction(
+    transaction: &mut Transaction<'_>,
+    ids: &[i64],
+    archive: bool,
+) -> RemoteResult<u64> {
+    let affected = if archive {
+        transaction.execute(
+            "UPDATE superclipboard.clipboard_entries
+             SET archived_at = now()::text, version = version + 1
+             WHERE id = ANY($1) AND archived_at IS NULL AND deleted_at IS NULL",
+            &[&ids],
+        )?
+    } else {
+        transaction.execute(
+            "DELETE FROM superclipboard.clipboard_entries
+             WHERE id = ANY($1) AND archived_at IS NULL AND deleted_at IS NULL",
+            &[&ids],
+        )?
+    };
+    if affected != ids.len() as u64 {
+        return Err(RemoteStorageError::InvalidOperation(
+            "Some selected clipboard entries are no longer available.".to_string(),
+        ));
+    }
+    Ok(affected)
+}
+
+/// Atomically store a merged text entry and optionally remove its source entries.
+pub fn merge_clipboard_entry(
+    storage: &Storage,
+    entry: &ClipboardEntry,
+    source_ids: &[i64],
+    delete_sources: bool,
+    archive_sources: bool,
+) -> RemoteResult<(ClipboardInsertResult, u64)> {
     with_client(storage, |client| {
         let mut transaction = client.transaction()?;
-        let inserted = transaction.execute(
-            "INSERT INTO superclipboard.clipboard_entries
-             (uuid, category, category_tags, content_type, content, preview, search_text, hash, content_hash, pinned, created_at)
-             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
-             WHERE NOT EXISTS (
-                SELECT 1 FROM superclipboard.clipboard_entries
-                WHERE hash = $8 OR content_hash = $9
-             )
-             ON CONFLICT(hash) DO NOTHING",
-            &[
-                &uuid,
-                &category.to_string(),
-                &category_tags,
-                &entry.content_type,
-                &entry.content,
-                &entry.preview,
-                &search_text,
-                &entry.hash,
-                &content_hash,
-                &entry.pinned,
-                &entry.created_at.to_rfc3339(),
-            ],
-        )?;
-        if inserted > 0 {
-            transaction.commit()?;
-            return Ok(ClipboardInsertResult::Inserted);
-        }
-
-        let promoted = transaction.execute(
-            "UPDATE superclipboard.clipboard_entries
-             SET created_at = $1
-             WHERE id = (
-                SELECT id FROM superclipboard.clipboard_entries
-                WHERE archived_at IS NULL AND deleted_at IS NULL
-                  AND (hash = $2 OR content_hash = $3)
-                ORDER BY created_at DESC
-                LIMIT 1
-             )",
-            &[&entry.created_at.to_rfc3339(), &entry.hash, &content_hash],
-        )?;
-        transaction.commit()?;
-        Ok(if promoted > 0 {
-            ClipboardInsertResult::Promoted
+        let outcome = insert_clipboard_in_transaction(&mut transaction, entry)?;
+        let deleted = if delete_sources {
+            delete_active_clipboards_in_transaction(&mut transaction, source_ids, archive_sources)?
         } else {
-            ClipboardInsertResult::Ignored
-        })
+            0
+        };
+        transaction.commit()?;
+        Ok((outcome, deleted))
+    })
+}
+
+/// Atomically create a merged image memo and optionally remove its source entries.
+pub fn merge_memo_entry(storage: &Storage, request: MergeMemoRequest<'_>) -> RemoteResult<u64> {
+    let title = request.title.to_string();
+    let body = request.body.to_string();
+    let tags = memo_tags::manual_only(request.tags);
+    let auto_tags = request.auto_tags.to_vec();
+    let source_ids = request.source_ids.to_vec();
+    let delete_sources = request.delete_sources;
+    let archive_sources = request.archive_sources;
+    let search_text = memo_search_text(&title, &body, &tags, &auto_tags);
+    let auto_tags = serde_json::to_string(&auto_tags).unwrap_or_else(|_| "[]".to_string());
+    let now = Utc::now().to_rfc3339();
+    let uuid = Uuid::new_v4().to_string();
+    with_client(storage, |client| {
+        let mut transaction = client.transaction()?;
+        transaction.execute(
+            "INSERT INTO superclipboard.memos
+             (uuid, title, body, tags, auto_tags, search_text, sort_order, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6,
+                (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM superclipboard.memos), $7, $7)",
+            &[&uuid, &title, &body, &tags, &auto_tags, &search_text, &now],
+        )?;
+        let deleted = if delete_sources {
+            delete_active_clipboards_in_transaction(&mut transaction, &source_ids, archive_sources)?
+        } else {
+            0
+        };
+        transaction.commit()?;
+        Ok(deleted)
     })
 }
 
@@ -1073,7 +1175,7 @@ pub fn empty_clipboard_archive(storage: &Storage) -> RemoteResult<u64> {
 
 pub fn query_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
     let mut sql = String::from(
-        "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, version
+        "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, content_version AS version
          FROM superclipboard.memos WHERE archived_at IS NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -1115,7 +1217,7 @@ pub fn create_memo(
         let row = client.query_one(
             "INSERT INTO superclipboard.memos (uuid, title, body, tags, auto_tags, search_text, sort_order, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM superclipboard.memos), $7, $7)
-             RETURNING id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, version",
+             RETURNING id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, content_version AS version",
             &[&uuid, &title, &body, &tags, &auto_tags, &search_text, &now],
         )?;
         Ok(row_to_memo(&row))
@@ -1138,12 +1240,12 @@ pub fn update_memo(
     with_client(storage, |client| {
         let rows = if let Some(expected_version) = expected_version {
             client.execute(
-                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, auto_tags = $4, search_text = $5, updated_at = $6, version = version + 1 WHERE id = $7 AND version = $8",
+                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, auto_tags = $4, search_text = $5, updated_at = $6, version = version + 1, content_version = content_version + 1 WHERE id = $7 AND content_version = $8 AND archived_at IS NULL AND deleted_at IS NULL",
                 &[&title, &body, &tags, &auto_tags, &search_text, &now, &id, &expected_version],
             )?
         } else {
             client.execute(
-                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, auto_tags = $4, search_text = $5, updated_at = $6, version = version + 1 WHERE id = $7",
+                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, auto_tags = $4, search_text = $5, updated_at = $6, version = version + 1, content_version = content_version + 1 WHERE id = $7 AND archived_at IS NULL AND deleted_at IS NULL",
                 &[&title, &body, &tags, &auto_tags, &search_text, &now, &id],
             )?
         };
@@ -1201,7 +1303,10 @@ pub fn reorder_memos(storage: &Storage, orders: &[(i64, i64)]) -> RemoteResult<(
         let mut tx = client.transaction()?;
         for (id, sort_order) in orders {
             tx.execute(
-                "UPDATE superclipboard.memos SET sort_order = $1, version = version + 1 WHERE id = $2",
+                "UPDATE superclipboard.memos
+                 SET sort_order = $1, sort_version = sort_version + 1, version = version + 1
+                 WHERE id = $2 AND pinned = false AND archived_at IS NULL AND deleted_at IS NULL
+                   AND sort_order IS DISTINCT FROM $1",
                 &[sort_order, id],
             )?;
         }
@@ -1212,7 +1317,7 @@ pub fn reorder_memos(storage: &Storage, orders: &[(i64, i64)]) -> RemoteResult<(
 
 pub fn query_archived_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
     let mut sql = String::from(
-        "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, version
+        "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, content_version AS version
          FROM superclipboard.memos WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
     );
     let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
@@ -1384,6 +1489,21 @@ mod tests {
         .expect("exclude remote memo image payload");
         assert!(payload_matches.iter().all(|item| item.id != memo.id));
 
+        reorder_memos(&storage, &[(memo.id, memo.sort_order + 1)]).expect("reorder remote memo");
+        let reordered = query_memos(
+            &storage,
+            &MemoFilter {
+                search: Some(memo_token.clone()),
+                ..Default::default()
+            },
+        )
+        .expect("query reordered remote memo");
+        let reordered_memo = reordered
+            .iter()
+            .find(|item| item.id == memo.id)
+            .expect("find reordered remote memo");
+        assert_eq!(reordered_memo.version, memo.version);
+
         let conflict = update_memo(
             &storage,
             memo.id,
@@ -1403,7 +1523,7 @@ mod tests {
             "updated remote mode test body",
             "smoke",
             &[],
-            Some(memo.version),
+            Some(reordered_memo.version),
         )
         .expect("update remote memo");
         assert!(updated.updated);

@@ -1,6 +1,6 @@
 use crate::classifier;
 use crate::clipboard;
-use crate::storage::{ClipboardEntry, QueryFilter, UpdateResult};
+use crate::storage::{ClipboardEntry, MergeMemoRequest, QueryFilter, UpdateResult};
 use crate::{memo_tags, run_storage, storage_backend, AppState};
 use serde::Serialize;
 use tauri::Emitter;
@@ -110,16 +110,22 @@ pub async fn merge_entries(
             return Err("Some selected clipboard entries are no longer available.".to_string());
         }
 
-        let (mut result, created_entry) = match build_merge_payload(&entries)? {
+        let (result, created_entry) = match build_merge_payload(&entries)? {
             MergePayload::Text(content) => {
                 let entry = clipboard::make_text_entry(content);
-                let outcome = storage_backend::insert_entry(storage, &entry)?;
+                let (outcome, deleted_originals) = storage_backend::merge_clipboard_entry(
+                    storage,
+                    &entry,
+                    &unique_ids,
+                    delete_originals,
+                    archive_originals,
+                )?;
                 let created = outcome.inserted();
                 (
                     MergeEntriesResult {
                         kind: "clipboard".to_string(),
                         created,
-                        deleted_originals: 0,
+                        deleted_originals,
                     },
                     outcome.refreshes_list().then_some(entry),
                 )
@@ -130,21 +136,28 @@ pub async fn merge_entries(
                     return Err("A title is required for the merged image memo.".to_string());
                 }
                 let auto_tags = memo_tags::infer(title, &body);
-                storage_backend::create_memo(storage, title, &body, "", &auto_tags)?;
+                let deleted_originals = storage_backend::merge_memo_entry(
+                    storage,
+                    MergeMemoRequest {
+                        title,
+                        body: &body,
+                        tags: "",
+                        auto_tags: &auto_tags,
+                        source_ids: &unique_ids,
+                        delete_sources: delete_originals,
+                        archive_sources: archive_originals,
+                    },
+                )?;
                 (
                     MergeEntriesResult {
                         kind: "memo".to_string(),
                         created: true,
-                        deleted_originals: 0,
+                        deleted_originals,
                     },
                     None,
                 )
             }
         };
-        if delete_originals {
-            result.deleted_originals =
-                storage_backend::delete_entries(storage, &unique_ids, archive_originals)?;
-        }
         Ok((result, created_entry))
     })
     .await?;
@@ -315,6 +328,19 @@ pub async fn get_entry_content(
 ) -> Result<Option<String>, String> {
     run_storage(state.storage.clone(), move |storage| {
         storage_backend::get_entry_by_id(storage, id).map(|entry| entry.map(|item| item.content))
+    })
+    .await
+}
+
+/// Fetch a complete clipboard entry. Used to resolve optimistic-edit conflicts
+/// without discarding the editor's local draft.
+#[tauri::command]
+pub async fn get_entry(
+    state: tauri::State<'_, AppState>,
+    id: i64,
+) -> Result<Option<ClipboardEntry>, String> {
+    run_storage(state.storage.clone(), move |storage| {
+        storage_backend::get_entry_by_id(storage, id)
     })
     .await
 }

@@ -1042,6 +1042,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::clipboard::get_entries,
             commands::clipboard::get_entry_content,
+            commands::clipboard::get_entry,
             commands::clipboard::export_clipboard_image,
             commands::clipboard::delete_entry,
             commands::clipboard::delete_entries,

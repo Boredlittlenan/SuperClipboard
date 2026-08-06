@@ -3,7 +3,7 @@ use crate::search_index::memo_search_text;
 use crate::storage::Storage;
 use postgres::Transaction;
 
-pub const VERSION: i64 = 9;
+pub const VERSION: i64 = 10;
 
 pub(crate) const SEARCH_BACKFILL_SQL: &str = r#"
     UPDATE superclipboard.clipboard_entries
@@ -67,7 +67,9 @@ pub fn apply(
         updated_at TEXT,
         archived_at TEXT,
         deleted_at TEXT,
-        version BIGINT NOT NULL DEFAULT 1
+        version BIGINT NOT NULL DEFAULT 1,
+        content_version BIGINT NOT NULL DEFAULT 1,
+        sort_version BIGINT NOT NULL DEFAULT 1
     );
 
     CREATE INDEX IF NOT EXISTS idx_sc_clipboard_category ON superclipboard.clipboard_entries(category);
@@ -112,6 +114,10 @@ pub fn apply(
         ADD COLUMN IF NOT EXISTS auto_tags TEXT NOT NULL DEFAULT '[]';
     ALTER TABLE superclipboard.memos
         ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT '';
+    ALTER TABLE superclipboard.memos
+        ADD COLUMN IF NOT EXISTS content_version BIGINT NOT NULL DEFAULT 1;
+    ALTER TABLE superclipboard.memos
+        ADD COLUMN IF NOT EXISTS sort_version BIGINT NOT NULL DEFAULT 1;
 
     CREATE OR REPLACE FUNCTION superclipboard.notify_change() RETURNS trigger AS $$
     DECLARE
@@ -263,6 +269,19 @@ pub fn apply(
         transaction.execute(
             "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
             &[&9_i64, &"classification rules metadata"],
+        )?;
+    }
+    if applied_version < 10 {
+        transaction.batch_execute(
+            "UPDATE superclipboard.memos
+             SET content_version = version, sort_version = version;",
+        )?;
+        transaction.execute(
+            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            &[
+                &10_i64,
+                &"separate memo content and sort versions for optimistic updates",
+            ],
         )?;
     }
 

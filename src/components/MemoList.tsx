@@ -34,6 +34,12 @@ import {
 
 const MEMO_COLLAPSE_TEXT_LIMIT = 300;
 const MEMO_COLLAPSE_LINE_LIMIT = 5;
+const NEW_MEMO_DRAFT_ID = -1;
+
+interface MemoEditConflict {
+  latest: Memo | null;
+  showLatest: boolean;
+}
 
 const AUTO_TAG_CATEGORY: Record<MemoAutoTagType, Parameters<typeof getCategoryColor>[0]> = {
   image: 'image',
@@ -87,13 +93,11 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   const [editDraft, setEditDraft] = useState<{ title: string; body: string; tags: string } | null>(null);
   const [savingMemo, setSavingMemo] = useState(false);
   const [expandedMemoIds, setExpandedMemoIds] = useState<Set<number>>(() => new Set());
-  const [editConflictMessage, setEditConflictMessage] = useState('');
+  const [editConflict, setEditConflict] = useState<MemoEditConflict | null>(null);
   const [newMemoId, setNewMemoId] = useState<number | null>(null);
+  const [editingVersion, setEditingVersion] = useState(1);
 
   const editingItemRef = useRef<HTMLDivElement>(null);
-  const editingIdRef = useRef<number | null>(null);
-  const editingVersionRef = useRef(1);
-  const newMemoIdRef = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   useInfiniteScroll(listRef, loadMoreRef, hasMore && !loadingMore, () => { void loadMore(); });
@@ -106,11 +110,6 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       console.error('Failed to refresh memo count:', err);
     }
   }, [onTotalCountChange]);
-
-  // Keep editingIdRef in sync with editingId state
-  useEffect(() => {
-    editingIdRef.current = editingId;
-  }, [editingId]);
 
   useEffect(() => {
     onCountChange?.(memos.length);
@@ -128,20 +127,18 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
 
   // ─── Editing handlers ─────────────────────────────────────
   const startEditing = useCallback((memo: Memo) => {
-    editingIdRef.current = memo.id;
-    editingVersionRef.current = memo.version;
-    setEditConflictMessage('');
+    setEditingVersion(memo.version);
+    setEditConflict(null);
     setEditingId(memo.id);
     setEditDraft({ title: memo.title, body: memo.body, tags: manualMemoTags(memo.tags) });
   }, []);
 
   const stopEditing = useCallback(() => {
-    editingIdRef.current = null;
-    editingVersionRef.current = 1;
-    newMemoIdRef.current = null;
+    setEditingVersion(1);
     setNewMemoId(null);
     setEditingId(null);
     setEditDraft(null);
+    setEditConflict(null);
     setSavingMemo(false);
   }, []);
 
@@ -149,31 +146,38 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     setEditDraft(prev => prev ? { ...prev, [field]: value } : null);
   };
 
-  const handleSaveEditing = useCallback(async () => {
-    const id = editingIdRef.current;
+  const handleSaveEditing = useCallback(async (expectedVersion = editingVersion) => {
+    const id = editingId;
     if (id === null || editDraft === null || savingMemo) return;
 
     setSavingMemo(true);
     try {
-      const autoTagTypes = await inferMemoTagTypes(editDraft.title, editDraft.body);
       const finalTags = manualMemoTags(editDraft.tags);
       const hasContent = editDraft.title.trim() || editDraft.body.trim() || finalTags.trim();
-      if (!hasContent && newMemoIdRef.current === id) {
-        await deleteMemo(id);
-        setMemos(prev => prev.filter(m => m.id !== id));
+      if (newMemoId === id) {
+        if (!hasContent) {
+          stopEditing();
+          return;
+        }
+        const created = await createMemo(editDraft.title, editDraft.body, finalTags);
+        setMemos(prev => [created, ...prev]);
         void refreshTotalCount();
       } else {
+        const autoTagTypes = await inferMemoTagTypes(editDraft.title, editDraft.body);
         const result = await updateMemo(
           id,
           editDraft.title,
           editDraft.body,
           finalTags,
-          editingVersionRef.current,
+          expectedVersion,
         );
         if (result.conflict) {
-          await fetchMemos();
-          stopEditing();
-          setEditConflictMessage(t.editConflict);
+          const latestMemos = await fetchMemos();
+          setEditConflict({
+            latest: latestMemos.find((memo) => memo.id === id) ?? null,
+            showLatest: false,
+          });
+          setSavingMemo(false);
           return;
         }
         if (!result.updated) throw new Error('Memo update failed');
@@ -197,27 +201,30 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       console.error('Failed to save memo:', err);
       setSavingMemo(false);
     }
-  }, [editDraft, fetchMemos, refreshTotalCount, savingMemo, setMemos, stopEditing, t]);
+  }, [editDraft, editingId, editingVersion, fetchMemos, newMemoId, refreshTotalCount, savingMemo, setMemos, stopEditing]);
 
   const handleCancelEditing = useCallback(async () => {
-    const id = editingIdRef.current;
-    if (id === null) {
-      stopEditing();
-      return;
-    }
+    stopEditing();
+  }, [stopEditing]);
 
+  const handleCopyMyMemoChanges = useCallback(async () => {
+    if (!editDraft) return;
+    const content = [editDraft.title, editDraft.body, editDraft.tags ? `# ${editDraft.tags}` : '']
+      .filter(Boolean)
+      .join('\n');
     try {
-      if (newMemoIdRef.current === id) {
-        await deleteMemo(id);
-        setMemos(prev => prev.filter(m => m.id !== id));
-        void refreshTotalCount();
-      }
-    } catch (err) {
-      console.error('Failed to cancel memo editing:', err);
-    } finally {
-      stopEditing();
+      await navigator.clipboard.writeText(content);
+    } catch (error) {
+      console.error('Failed to copy conflicting memo draft:', error);
     }
-  }, [refreshTotalCount, setMemos, stopEditing]);
+  }, [editDraft]);
+
+  const handleReapplyMemoChanges = useCallback(() => {
+    if (!editConflict?.latest) return;
+    setEditingVersion(editConflict.latest.version);
+    setEditConflict(null);
+    void handleSaveEditing(editConflict.latest.version);
+  }, [editConflict, handleSaveEditing]);
 
   const expandMemo = useCallback((id: number) => {
     setExpandedMemoIds(prev => {
@@ -240,20 +247,29 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   // ─── Create new memo (toggle editor) ───────────────────────
   const handleCreate = async () => {
     try {
-      // Use ref for synchronous check — state is stale during rapid clicks
-      if (editingIdRef.current !== null) {
+      // A second click while editing saves the current draft instead of opening another one.
+      if (editingId !== null) {
         await handleSaveEditing();
         return;
       }
 
-      // Not editing — create new memo and start editing
-      const newMemo = await createMemo('', '', '');
-      setMemos(prev => [newMemo, ...prev]);
-      void refreshTotalCount();
-      newMemoIdRef.current = newMemo.id;
-      setNewMemoId(newMemo.id);
-      editingIdRef.current = newMemo.id;
-      startEditing(newMemo);
+      // A new memo is a front-end-only draft until the first non-empty save.
+      const now = new Date().toISOString();
+      const draft: Memo = {
+        id: NEW_MEMO_DRAFT_ID,
+        title: '',
+        body: '',
+        tags: '',
+        auto_tags: [],
+        pinned: false,
+        sort_order: -1,
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+        version: 1,
+      };
+      setNewMemoId(NEW_MEMO_DRAFT_ID);
+      startEditing(draft);
     } catch (err) {
       console.error('Failed to create memo:', err);
     }
@@ -421,6 +437,35 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                 }}
                 placeholder={t.memoTagsPlaceholder}
               />
+              {editConflict && (
+                <div style={styles.editConflict}>
+                  <span style={styles.conflictMessage}>{t.editConflict}</span>
+                  <div style={styles.conflictActions}>
+                    <button style={styles.conflictBtn} onClick={() => { void handleCopyMyMemoChanges(); }}>
+                      {t.copyMyChanges}
+                    </button>
+                    <button
+                      style={styles.conflictBtn}
+                      onClick={() => setEditConflict((current) => current ? { ...current, showLatest: !current.showLatest } : current)}
+                      disabled={!editConflict.latest}
+                    >
+                      {t.viewLatestContent}
+                    </button>
+                    <button
+                      style={{ ...styles.conflictPrimaryBtn, ...(!editConflict.latest ? styles.conflictBtnDisabled : {}) }}
+                      onClick={handleReapplyMemoChanges}
+                      disabled={!editConflict.latest || savingMemo}
+                    >
+                      {t.reapplyMyChanges}
+                    </button>
+                  </div>
+                  {editConflict.showLatest && editConflict.latest && (
+                    <pre style={styles.latestConflictContent}>
+                      {editConflict.latest.title}{editConflict.latest.title && editConflict.latest.body ? '\n' : ''}{editConflict.latest.body}
+                    </pre>
+                  )}
+                </div>
+              )}
               <div style={styles.editActions}>
                 <span style={styles.editHint}>Ctrl+Enter {t.save} / Esc {t.cancel}</span>
                 <button
@@ -531,7 +576,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   };
 
   // ─── Empty state ──────────────────────────────────────────
-  if (memos.length === 0) {
+  if (memos.length === 0 && newMemoId === null) {
     return (
       <div style={styles.container}>
         <div style={{ padding: '8px 12px' }}>
@@ -551,9 +596,21 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
     <div style={styles.container}>
         <div style={{ padding: '8px 12px', flexShrink: 0 }}>
           <button className="memo-new-button" style={styles.newBtn} onClick={handleCreate}><Plus size={14} strokeWidth={2.25} /> {t.memoNew}</button>
-          {editConflictMessage && <div style={styles.editConflict}>{editConflictMessage}</div>}
         </div>
       <div ref={listRef} className="entry-list" style={styles.list}>
+        {newMemoId === NEW_MEMO_DRAFT_ID && editDraft && renderMemoItem({
+          id: NEW_MEMO_DRAFT_ID,
+          title: editDraft.title,
+          body: editDraft.body,
+          tags: editDraft.tags,
+          auto_tags: [],
+          pinned: false,
+          sort_order: -1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          archived_at: null,
+          version: 1,
+        }, false)}
         {displayedMemos.map(m => renderMemoItem(
           m,
           !m.pinned && m.id !== newMemoId,
@@ -608,10 +665,56 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 0',
   },
   editConflict: {
-    marginTop: '6px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    padding: '7px',
+    border: '1px solid color-mix(in srgb, var(--danger) 35%, transparent)',
+    borderRadius: '4px',
+    background: 'color-mix(in srgb, var(--danger) 5%, transparent)',
+  },
+  conflictMessage: {
     color: 'var(--danger)',
     fontSize: '11px',
     lineHeight: 1.4,
+  },
+  conflictActions: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '6px',
+    alignItems: 'center',
+  },
+  conflictBtn: {
+    fontSize: '11px',
+    padding: '4px 8px',
+    borderRadius: '4px',
+    border: '1px solid var(--border)',
+    background: 'var(--bg-primary)',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+  },
+  conflictPrimaryBtn: {
+    fontSize: '11px',
+    padding: '4px 8px',
+    borderRadius: '4px',
+    border: 'none',
+    background: 'var(--memo-contrast)',
+    color: '#fff',
+    cursor: 'pointer',
+  },
+  conflictBtnDisabled: {
+    opacity: 0.55,
+    cursor: 'not-allowed',
+  },
+  latestConflictContent: {
+    margin: 0,
+    maxHeight: '120px',
+    overflow: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    fontSize: '11px',
+    lineHeight: 1.45,
+    color: 'var(--text-secondary)',
   },
   list: {
     flex: 1,

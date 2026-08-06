@@ -34,6 +34,11 @@ export async function getEntryContent(id: number): Promise<string | null> {
   return loadEntryContent(id);
 }
 
+/** Fetch one complete clipboard entry, including its latest edit version. */
+export async function getEntry(id: number): Promise<ClipboardEntry | null> {
+  return invoke('get_entry', { id });
+}
+
 /** Save an image clipboard entry as a PNG file selected by the user. */
 export async function exportClipboardImage(id: number, path: string): Promise<void> {
   return invoke('export_clipboard_image', { id, path });

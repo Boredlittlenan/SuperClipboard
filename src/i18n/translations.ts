@@ -29,6 +29,10 @@ export interface Translations {
   edit: string;
   save: string;
   editConflict: string;
+  copyMyChanges: string;
+  viewLatestContent: string;
+  reapplyMyChanges: string;
+  latestContent: string;
   cancel: string;
   openInBrowser: string;
   exportImage: string;
@@ -129,6 +133,9 @@ export interface Translations {
   dropImporting: string;
   dropImportDone: string;
   dropImportFailed: string;
+  clipboardCaptureFailed: string;
+  archivedDuplicateTitle: string;
+  archivedDuplicateMessage: string;
 
   // Settings
   settings: string;
@@ -272,7 +279,11 @@ export const zhCN: Translations = {
   delete: '删除',
   edit: '编辑',
   save: '保存',
-  editConflict: '内容已被其他设备修改，已刷新最新内容，请重新编辑后再保存',
+  editConflict: '内容已被其他设备修改，当前草稿已保留',
+  copyMyChanges: '复制我的修改',
+  viewLatestContent: '查看最新内容',
+  reapplyMyChanges: '重新应用',
+  latestContent: '最新内容',
   cancel: '取消',
   openInBrowser: '在浏览器中打开',
   exportImage: '另存为图片',
@@ -381,6 +392,9 @@ export const zhCN: Translations = {
   dropImporting: '正在收录...',
   dropImportDone: '已收录到剪贴板',
   dropImportFailed: '收录失败，请重试',
+  clipboardCaptureFailed: '剪贴板收录失败，将自动重试',
+  archivedDuplicateTitle: '内容已在回收站',
+  archivedDuplicateMessage: '相同内容已在回收站中，是否恢复到剪贴板列表？',
 
   settings: '设置',
   language: '语言',
@@ -523,7 +537,11 @@ export const en: Translations = {
   delete: 'Delete',
   edit: 'Edit',
   save: 'Save',
-  editConflict: 'This item changed on another device. The latest content has been refreshed; review and save again.',
+  editConflict: 'This item changed on another device. Your draft has been kept.',
+  copyMyChanges: 'Copy my changes',
+  viewLatestContent: 'View latest content',
+  reapplyMyChanges: 'Reapply changes',
+  latestContent: 'Latest content',
   cancel: 'Cancel',
   openInBrowser: 'Open in browser',
   exportImage: 'Save image as',
@@ -632,6 +650,9 @@ export const en: Translations = {
   dropImporting: 'Adding to clipboard...',
   dropImportDone: 'Added to clipboard',
   dropImportFailed: 'Could not add to clipboard. Try again.',
+  clipboardCaptureFailed: 'Clipboard capture failed. Retrying automatically.',
+  archivedDuplicateTitle: 'Content is in the Recycle Bin',
+  archivedDuplicateMessage: 'This content already exists in the Recycle Bin. Restore it to the clipboard list?',
 
   settings: 'Settings',
   language: 'Language',

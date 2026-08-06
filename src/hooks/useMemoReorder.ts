@@ -78,23 +78,27 @@ export function useMemoReorder(
           reordered.splice(targetIndex, 0, moved);
 
           const maxOrder = Math.max(...unpinned.map(memo => memo.sort_order), 0);
+          const existingOrders = new Map(unpinned.map(memo => [memo.id, memo.sort_order]));
           const orders = reordered.map((memo, index) => ({
             id: memo.id,
             sort_order: maxOrder - index,
-          }));
-          const orderById = new Map(orders.map(order => [order.id, order.sort_order]));
-          setMemos(current => current
-            .map(memo => orderById.has(memo.id)
-              ? { ...memo, sort_order: orderById.get(memo.id)! }
-              : memo)
-            .sort((left, right) => left.pinned === right.pinned
-              ? right.sort_order - left.sort_order
-              : left.pinned ? -1 : 1));
+          })).filter(order => existingOrders.get(order.id) !== order.sort_order);
 
-          reorderMemos(orders).catch(error => {
-            console.error('Reorder failed, refreshing:', error);
-            refresh();
-          });
+          if (orders.length > 0) {
+            const orderById = new Map(orders.map(order => [order.id, order.sort_order]));
+            setMemos(current => current
+              .map(memo => orderById.has(memo.id)
+                ? { ...memo, sort_order: orderById.get(memo.id)! }
+                : memo)
+              .sort((left, right) => left.pinned === right.pinned
+                ? right.sort_order - left.sort_order
+                : left.pinned ? -1 : 1));
+
+            reorderMemos(orders).catch(error => {
+              console.error('Reorder failed, refreshing:', error);
+              refresh();
+            });
+          }
         }
       }
 
