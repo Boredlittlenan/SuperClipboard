@@ -6,17 +6,6 @@ SuperClipboard，中文名「超级剪贴板」，是一个基于 Rust、Tauri�
 
 [官网](https://boredlittlenan.github.io/SuperClipboard/) · [最新版本下载](https://github.com/Boredlittlenan/SuperClipboard/releases/latest) · [版本日志](VERSIONS.md) · [更新记录](CHANGELOG.md)
 
-## 使用 OpenAI Codex 与 GPT-5.6 构建
-
-SuperClipboard 3.x 是一个由作者主导、并与 **OpenAI Codex 和 GPT-5.6** 深度协作完成的重制版本。早期的 C# 原型确立了最初的产品想法，但受个人经验与开发时间限制，当时未能达到预期效果。即使作者在重制开始前从未接触过 Rust，Codex 仍帮助作者使用更高效的 Rust 与 Tauri 架构重新实现了这个曾经留下遗憾的想法。
-
-- **架构与规划：** Codex 和 GPT-5.6 协助把产品需求整理为 Rust/Tauri 后端、React 前端、本地/外部统一存储边界和带版本控制的数据库迁移方案。
-- **功能实现：** 协助编写和完善 Rust、React、TypeScript、SQLite 与 PostgreSQL 代码，包括剪贴板监控、备忘录编辑、内容分类、搜索索引、连接管理和双语界面。
-- **排错与优化：** 用于分析 Windows 窗口与托盘行为、WebView 渲染差异、外部存储延迟、并发问题和大量 Base64 图片数据处理。
-- **质量与交付：** 协助补充回归测试，执行 lint、构建和 Clippy 检查，维护文档，制作安装包，并验证 GitHub Releases 与项目官网。
-
-项目的产品方向、需求、界面决策、实际测试和最终确认始终由作者主导。Codex 与 GPT-5.6 是开发协作者，而不是软件运行时依赖：SuperClipboard 运行时不会调用 OpenAI 服务，也不会把用户的剪贴板或备忘录内容发送给 OpenAI。
-
 ## 下载
 
 从 [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest) 下载最新 Windows 安装包。

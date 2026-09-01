@@ -1547,7 +1547,7 @@ mod tests {
             category: Category::Text,
             category_tags: vec![Category::Text],
             content_type: "text/plain".to_string(),
-            content: format!("Codex remote smoke {text_token}"),
+            content: format!("Remote storage smoke {text_token}"),
             preview: text_token.clone(),
             hash: Uuid::new_v4().to_string(),
             pinned: false,

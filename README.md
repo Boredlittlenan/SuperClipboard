@@ -8,17 +8,6 @@ Chinese display name: `超级剪贴板`.
 
 [Website](https://boredlittlenan.github.io/SuperClipboard/) · [Latest Release](https://github.com/Boredlittlenan/SuperClipboard/releases/latest) · [Version Notes](VERSIONS.md) · [Changelog](CHANGELOG.md)
 
-## Built with OpenAI Codex and GPT-5.6
-
-SuperClipboard 3.x is a human-directed rebuild developed in close collaboration with **OpenAI Codex and GPT-5.6**. An earlier C# prototype established the original idea, but limited experience and development time kept it from reaching the intended quality. Codex made it possible to revisit that idea with a more efficient Rust and Tauri architecture, even though Rust was new to the creator when the rebuild began.
-
-- **Architecture and planning:** Codex and GPT-5.6 helped translate product requirements into the Rust/Tauri backend, React frontend, unified local/external storage boundary, and versioned database migration design.
-- **Implementation:** They assisted with Rust, React, TypeScript, SQLite, and PostgreSQL code, including clipboard monitoring, memo editing, classification, search indexing, connection management, and bilingual UI work.
-- **Debugging and optimization:** They were used to investigate Windows window and tray behavior, WebView rendering differences, remote-storage latency, concurrency issues, and large Base64 image handling.
-- **Quality and delivery:** They helped create regression tests, run lint/build/Clippy checks, maintain documentation, prepare installers, and verify GitHub Releases and the project website.
-
-The product vision, requirements, interface decisions, hands-on testing, and final approval remained human-led throughout the project. Codex and GPT-5.6 were development collaborators, not runtime dependencies: SuperClipboard does not call OpenAI services or send clipboard and memo content to OpenAI while the application is running.
-
 ## Download
 
 Download the latest Windows installer from [GitHub Releases](https://github.com/Boredlittlenan/SuperClipboard/releases/latest).
