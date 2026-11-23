@@ -40,6 +40,7 @@ export function ToggleSettingRow({
           ...(checked ? styles.toggleOn : {}),
           ...(disabled ? styles.toggleDisabled : {}),
         }}
+        aria-label={typeof label === 'string' ? label : undefined}
         aria-pressed={checked}
         disabled={disabled}
         onClick={() => void onChange()}

@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { GripVertical, Trash2 } from 'lucide-react';
 import { parseMemoBody, type MemoBodyBlock } from './MemoBody';
 
 type MemoImageElement = HTMLElement & {
@@ -23,9 +21,6 @@ interface Props {
   onEscape: () => void;
   onSave: () => void;
 }
-
-const dragIconSvg = renderToStaticMarkup(<GripVertical size={13} strokeWidth={2} aria-hidden="true" />);
-const trashIconSvg = renderToStaticMarkup(<Trash2 size={13} strokeWidth={2} aria-hidden="true" />);
 
 function appendTextBlock(blocks: MemoBodyBlock[], text: string) {
   const normalized = text.replace(/\u00A0/g, ' ');
@@ -140,14 +135,15 @@ export default function MemoRichEditor({
     dragHandle.className = 'memo-editor-image-btn memo-editor-image-drag';
     dragHandle.dataset.memoImageDrag = 'true';
     dragHandle.title = dragLabel;
-    dragHandle.innerHTML = dragIconSvg;
+    dragHandle.textContent = '⠿';
 
     const deleteButton = document.createElement('button');
     deleteButton.className = 'memo-editor-image-btn memo-editor-image-delete';
     deleteButton.dataset.memoImageDelete = 'true';
     deleteButton.type = 'button';
     deleteButton.title = deleteLabel;
-    deleteButton.innerHTML = trashIconSvg;
+    deleteButton.setAttribute('aria-label', deleteLabel);
+    deleteButton.textContent = '×';
 
     const image = document.createElement('img');
     image.src = dataUrl;

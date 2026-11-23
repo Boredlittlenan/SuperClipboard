@@ -467,6 +467,8 @@ export default function SettingsButton({
           </SettingRow>
 
           {/* Autostart */}
+          <ToggleSettingRow label={t.captureClipboard} checked={!settings.capturePaused}
+            onChange={async () => { await setAppSetting('capturePaused', !settings.capturePaused); }} />
           <ToggleSettingRow label={t.autostart} title={t.autostartDesc} checked={autostart} onChange={handleAutostartToggle} />
 
           {/* Always on top */}
@@ -656,7 +658,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid var(--border)',
   },
   versionBadge: {
-    fontSize: '10px',
+    fontSize: '12px',
     fontWeight: 500,
     color: 'var(--text-muted)',
     fontFamily: 'monospace',
@@ -677,7 +679,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    fontSize: '10px',
+    fontSize: '12px',
     fontWeight: 600,
     color: 'var(--text-muted)',
     lineHeight: '16px',
@@ -703,7 +705,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'transparent',
     color: 'var(--text-secondary)',
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 500,
     cursor: 'pointer',
     transition: 'all 0.15s',
@@ -726,7 +728,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     background: 'transparent',
     color: 'var(--text-secondary)',
-    fontSize: '10px',
+    fontSize: '12px',
     fontWeight: 500,
     cursor: 'pointer',
     transition: 'all 0.15s',
@@ -750,7 +752,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'transparent',
     color: 'var(--text-secondary)',
-    fontSize: '10px',
+    fontSize: '12px',
     fontWeight: 500,
     cursor: 'pointer',
     transition: 'all 0.15s',
@@ -773,7 +775,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'transparent',
     color: 'var(--text-primary)',
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 600,
     fontFamily: 'monospace',
     cursor: 'pointer',
@@ -791,7 +793,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#e74c3c',
   },
   errorText: {
-    fontSize: '10px',
+    fontSize: '12px',
     color: '#e74c3c',
     marginTop: '2px',
   },
@@ -802,7 +804,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'transparent',
     color: 'var(--text-primary)',
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 500,
     cursor: 'pointer',
     transition: 'all 0.15s',
@@ -842,7 +844,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '8px',
   },
   updateMeta: {
-    fontSize: '10px',
+    fontSize: '12px',
     color: 'var(--text-muted)',
     lineHeight: 1.35,
   },
@@ -853,7 +855,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg)',
   },
   releaseNotesTitle: {
-    fontSize: '10px',
+    fontSize: '12px',
     fontWeight: 600,
     color: 'var(--text-secondary)',
     marginBottom: '4px',
@@ -865,7 +867,7 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
     fontFamily: 'inherit',
-    fontSize: '10px',
+    fontSize: '12px',
     lineHeight: 1.45,
     color: 'var(--text-secondary)',
   },
@@ -876,12 +878,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   updateOkText: {
-    fontSize: '11px',
+    fontSize: '12px',
     color: 'var(--success)',
     flex: 1,
   },
   updateNewText: {
-    fontSize: '11px',
+    fontSize: '12px',
     color: 'var(--accent)',
     fontWeight: 500,
     flex: 1,
@@ -892,7 +894,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'var(--accent)',
     color: '#ffffff',
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 600,
     cursor: 'pointer',
     transition: 'background-color 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease',
@@ -904,7 +906,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'transparent',
     color: 'var(--text-secondary)',
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 500,
     cursor: 'pointer',
     flexShrink: 0,
@@ -928,7 +930,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   memoColorResetMini: {
-    fontSize: '9px',
+    fontSize: '12px',
     color: 'var(--text-muted)',
     lineHeight: 1,
     padding: '0 2px',
@@ -968,7 +970,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '4px',
   },
   colorHash: {
-    fontSize: '11px',
+    fontSize: '12px',
     color: 'var(--text-muted)',
     fontFamily: 'monospace',
   },
@@ -979,7 +981,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     background: 'var(--bg)',
     color: 'var(--text-primary)',
-    fontSize: '11px',
+    fontSize: '12px',
     fontFamily: 'monospace',
     outline: 'none',
     minWidth: 0,
@@ -990,7 +992,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     background: 'transparent',
     color: 'var(--text-secondary)',
-    fontSize: '10px',
+    fontSize: '12px',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     flexShrink: 0,

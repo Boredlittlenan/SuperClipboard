@@ -97,7 +97,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     background: 'var(--surface)',
     color: 'var(--text-secondary)',
-    fontSize: 11,
+    fontSize: 12,
     cursor: 'pointer',
   },
   deleteBtn: {
@@ -118,11 +118,11 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: '2px',
   },
   time: {
-    fontSize: '11px',
+    fontSize: '12px',
     color: 'var(--text-muted)',
   },
   archiveTimer: {
-    fontSize: '10px',
+    fontSize: '12px',
     padding: '1px 6px',
     borderRadius: '8px',
     fontWeight: 500,

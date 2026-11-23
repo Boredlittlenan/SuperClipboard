@@ -12,16 +12,15 @@ import {
   onClipboardChanged,
   unarchiveEntry,
   permanentDelete,
-  purgeOldArchives,
   emptyArchive,
   mergeEntries,
   deleteEntries,
   reclassifyClipboardEntries,
 } from './api/clipboard';
 import { getShortcut, checkUpdate, openUrl, pasteToActiveWindow } from './api/settings';
-import { unarchiveMemo, permanentDeleteMemo, purgeOldMemoArchives, emptyMemoArchive } from './api/memos';
+import { unarchiveMemo, permanentDeleteMemo, emptyMemoArchive } from './api/memos';
 import { formatShortcutLabel, getTabLabel } from './utils';
-import { I18nProvider, useI18n } from './i18n';
+import { useI18n } from './i18n';
 import CategoryTabs from './components/CategoryTabs';
 import ClipboardList from './components/ClipboardList';
 import ArchivedMemoItem from './components/ArchivedMemoItem';
@@ -31,7 +30,6 @@ import { useAppSettings } from './hooks/useAppSettings';
 import { useClipboardDropImport } from './hooks/useClipboardDropImport';
 import { useClipboardEntries } from './hooks/useClipboardEntries';
 import { useArchivedMemos } from './hooks/useArchivedMemos';
-import AppSettingsProvider from './components/settings/AppSettingsProvider';
 import { canMergeEntries, getMergeCategory, getSelectedEntriesInListOrder, isBatchDeleteShortcut, MAX_MERGE_SELECTION } from './clipboardMerge';
 import { getFooterItemCount } from './footerItemCount';
 import './App.css';
@@ -48,7 +46,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-function AppContent() {
+export default function App() {
   const { t } = useI18n();
   const { settings } = useAppSettings();
   const {
@@ -377,12 +375,6 @@ function AppContent() {
   useEffect(() => {
     void fetchStats();
   }, [fetchStats, storageRevision]);
-
-  useEffect(() => {
-    if (!archiveEnabled) return;
-    purgeOldArchives(30).catch(() => {});
-    purgeOldMemoArchives(30).catch(() => {});
-  }, [archiveEnabled]);
 
   // Listen for real-time clipboard events
   useEffect(() => {
@@ -953,7 +945,7 @@ function AppContent() {
                   onReclassifyHistory={handleReclassifyHistory}
                 />
               )}
-              <RemoteStorageButton onStorageModeChange={handleStorageModeChange} />
+              <RemoteStorageButton onStorageModeChange={handleStorageModeChange} theme={resolvedTheme} />
               <SettingsButton
                 onShortcutChange={setCurrentShortcut}
                 onVersionTitleTrigger={handleVersionTitleTrigger}
@@ -1006,6 +998,7 @@ function AppContent() {
       {activeTab === 'memo' ? (
         <Suspense fallback={<div className="view-loading">{t.loading}</div>}>
           <MemoList
+            theme={resolvedTheme}
             searchQuery={searchQuery}
             archiveEnabled={archiveEnabled}
             refreshKey={storageRevision}
@@ -1041,7 +1034,7 @@ function AppContent() {
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '40px 20px' }}>
                 <Trash2 size={36} strokeWidth={1.8} style={{ opacity: 0.5 }} />
                 <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 500 }}>{t.archiveEmpty}</span>
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.archiveEmptyHint}</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t.archiveEmptyHint}</span>
               </div>
             ) : (
               <ClipboardList
@@ -1068,7 +1061,7 @@ function AppContent() {
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '40px 20px' }}>
                 <NotebookText size={36} strokeWidth={1.8} style={{ opacity: 0.5 }} />
                 <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontWeight: 500 }}>{t.archiveEmpty}</span>
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.archiveEmptyHint}</span>
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{t.archiveEmptyHint}</span>
               </div>
             ) : (
               <div ref={archivedMemoListRef} className="entry-list" style={{ flex: 1, overflowY: 'auto' }}>
@@ -1228,15 +1221,3 @@ function AppContent() {
     </div>
   );
 }
-
-function App() {
-  return (
-    <I18nProvider>
-      <AppSettingsProvider>
-        <AppContent />
-      </AppSettingsProvider>
-    </I18nProvider>
-  );
-}
-
-export default App;

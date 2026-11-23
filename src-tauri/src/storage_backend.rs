@@ -123,8 +123,7 @@ pub fn update_entry(
             .map_err(|error| error.to_string())
     } else {
         storage
-            .update_entry(id, content)
-            .map(UpdateResult::updated)
+            .update_entry_checked(id, content, expected_version)
             .map_err(|error| error.to_string())
     }
 }
@@ -311,6 +310,14 @@ pub fn get_memos(storage: &Storage, filter: &MemoFilter) -> BackendResult<Vec<Me
     }
 }
 
+pub fn get_memo(storage: &Storage, id: i64) -> BackendResult<Option<Memo>> {
+    if remote(storage) {
+        remote_storage::get_memo(storage, id).map_err(|e| e.to_string())
+    } else {
+        storage.get_memo(id).map_err(|e| e.to_string())
+    }
+}
+
 pub fn create_memo(
     storage: &Storage,
     title: &str,
@@ -342,8 +349,7 @@ pub fn update_memo(
             .map_err(|error| error.to_string())
     } else {
         storage
-            .update_memo(id, title, body, tags, auto_tags)
-            .map(UpdateResult::updated)
+            .update_memo(id, title, body, tags, auto_tags, expected_version)
             .map_err(|error| error.to_string())
     }
 }

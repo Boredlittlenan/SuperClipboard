@@ -4,24 +4,26 @@ mod classifier;
 mod clipboard;
 mod commands;
 mod memo_tags;
+mod reminders;
 mod remote_migrations;
 mod remote_storage;
 mod search_index;
 mod storage;
 mod storage_backend;
 mod storage_migrations;
+mod transfer;
 mod update;
 mod window_position;
+mod workspace_config;
 
 use clipboard::ClipboardMonitor;
-use log::{debug, info, warn};
-use serde::Serialize;
+use log::{info, warn};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
-use storage::{RestoreSummary, Storage};
+use std::time::Duration;
+use storage::Storage;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Emitter;
 use tauri::Manager;
@@ -33,20 +35,15 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_SHORTCUT: &str = "Alt+X";
 const DEFAULT_SETTINGS_VERSION: &str = "2";
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackupFileInfo {
-    pub file_name: String,
-    pub created_at: String,
-    pub size_bytes: u64,
-    pub display_path: String,
-    pub app_version: String,
-    pub backup_version: u32,
-}
-
 /// Tauri-managed application state
 pub struct AppState {
     pub(crate) storage: Arc<Storage>,
+    transfers: transfer::Transfers,
+    pub(crate) reminder_path: PathBuf,
+    data_directory: PathBuf,
+    capture_paused: Arc<AtomicBool>,
+    #[cfg(windows)]
+    paste_target: std::sync::atomic::AtomicIsize,
     _monitor: std::sync::Mutex<ClipboardMonitor>,
     current_shortcut: std::sync::Mutex<String>,
     shortcut_recording: Arc<AtomicBool>,
@@ -102,67 +99,25 @@ fn restart_remote_listener(app: &tauri::AppHandle, state: &AppState) {
 
 static REMOTE_TASK_LIMIT: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
-async fn run_remote<T, F>(storage: Arc<Storage>, operation: F) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: FnOnce(&Storage) -> remote_storage::RemoteResult<T> + Send + 'static,
-{
-    let task_limit = REMOTE_TASK_LIMIT
-        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
-        .clone();
-    let permit = tokio::time::timeout(Duration::from_secs(2), task_limit.acquire_owned())
-        .await
-        .map_err(|_| "Remote storage is busy. Try again in a moment.".to_string())?
-        .map_err(|_| "Remote storage task queue is unavailable.".to_string())?;
-    let started_at = Instant::now();
-    let task = tauri::async_runtime::spawn_blocking(move || {
-        let _permit = permit;
-        operation(storage.as_ref()).map_err(|err| err.to_string())
-    });
-
-    let result = tokio::time::timeout(Duration::from_secs(18), task)
-        .await
-        .map_err(|_| "Remote storage operation timed out.".to_string())?
-        .map_err(|err| format!("Remote storage task failed: {err}"))?;
-    let elapsed = started_at.elapsed();
-    if elapsed > Duration::from_millis(750) {
-        debug!("Remote storage operation completed in {elapsed:?}");
-    }
-    result
-}
-
 pub(crate) async fn run_storage<T, F>(storage: Arc<Storage>, operation: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce(&Storage) -> Result<T, String> + Send + 'static,
 {
-    if remote_storage::is_remote_mode(&storage) {
-        let task_limit = REMOTE_TASK_LIMIT
-            .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
-            .clone();
-        let permit = tokio::time::timeout(Duration::from_secs(2), task_limit.acquire_owned())
-            .await
-            .map_err(|_| "Remote storage is busy. Try again in a moment.".to_string())?
-            .map_err(|_| "Remote storage task queue is unavailable.".to_string())?;
-        let started_at = Instant::now();
-        let task = tauri::async_runtime::spawn_blocking(move || {
-            let _permit = permit;
-            operation(storage.as_ref())
-        });
-        let result = tokio::time::timeout(Duration::from_secs(18), task)
-            .await
-            .map_err(|_| "Remote storage operation timed out.".to_string())?
-            .map_err(|err| format!("Storage task failed: {err}"))?;
-        let elapsed = started_at.elapsed();
-        if elapsed > Duration::from_millis(750) {
-            debug!("Remote storage operation completed in {elapsed:?}");
-        }
-        result
-    } else {
-        tauri::async_runtime::spawn_blocking(move || operation(storage.as_ref()))
-            .await
-            .map_err(|err| format!("Storage task failed: {err}"))?
-    }
+    let task_limit = REMOTE_TASK_LIMIT
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
+        .clone();
+    let permit = tokio::time::timeout(Duration::from_secs(4), task_limit.acquire_owned())
+        .await
+        .map_err(|_| "Storage is busy. Try again in a moment.".to_string())?
+        .map_err(|_| "Storage task queue is unavailable.".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        let _workspace = storage.workspace.read().map_err(|e| e.to_string())?;
+        operation(&storage)
+    })
+    .await
+    .map_err(|e| format!("Storage task failed: {e}"))?
 }
 
 fn tray_menu_labels(language: &str) -> (&'static str, &'static str) {
@@ -210,50 +165,6 @@ fn detect_system_locale() -> &'static str {
         .unwrap_or("en")
 }
 
-fn copy_file_if_missing(from: &Path, to: &Path) {
-    if from.exists() && !to.exists() {
-        let _ = std::fs::copy(from, to);
-    }
-}
-
-fn migrate_legacy_app_data(app_dir: &Path) {
-    let Some(parent) = app_dir.parent() else {
-        return;
-    };
-
-    let candidates = [
-        parent.join("com.superclipboard3.app"),
-        parent.join("SuperClipboard3"),
-        parent.join("superclipboard3"),
-    ];
-    let current_db = app_dir.join("clipboard.db");
-
-    if current_db.exists() {
-        return;
-    }
-
-    for legacy_dir in candidates {
-        let legacy_db = legacy_dir.join("clipboard.db");
-        if legacy_db.exists() {
-            let _ = std::fs::create_dir_all(app_dir);
-            copy_file_if_missing(&legacy_db, &current_db);
-            copy_file_if_missing(
-                &legacy_dir.join("clipboard.db-wal"),
-                &app_dir.join("clipboard.db-wal"),
-            );
-            copy_file_if_missing(
-                &legacy_dir.join("clipboard.db-shm"),
-                &app_dir.join("clipboard.db-shm"),
-            );
-            info!(
-                "Migrated legacy app data from {:?} to {:?}",
-                legacy_dir, app_dir
-            );
-            break;
-        }
-    }
-}
-
 fn update_tray_menu(app: &tauri::AppHandle, language: &str) -> tauri::Result<()> {
     if let Some(tray) = app.tray_by_id("main-tray") {
         let (settings_label, quit_label) = tray_menu_labels(language);
@@ -282,18 +193,24 @@ fn initialize_first_run_defaults(storage: &Storage) {
     // Only run this for a newly-created database. Existing users keep their saved data/settings.
     set_default_setting_if_missing(storage, "shortcut", DEFAULT_SHORTCUT);
     set_default_setting_if_missing(storage, "theme_mode", "system");
-    set_default_setting_if_missing(storage, "theme_accent", "default");
     set_default_setting_if_missing(storage, "always_on_top", "false");
-    set_default_setting_if_missing(storage, "raw_preview", "false");
-    set_default_setting_if_missing(storage, "auto_update", "true");
-    set_default_setting_if_missing(storage, "memo_enabled", "false");
-    set_default_setting_if_missing(storage, "archive_enabled", "false");
-    set_default_setting_if_missing(storage, "modern_ui_enabled", "false");
-    set_default_setting_if_missing(storage, "autostart", "true");
     set_default_setting_if_missing(storage, "language", detect_system_locale());
     set_default_setting_if_missing(storage, "defaults_schema_version", DEFAULT_SETTINGS_VERSION);
+}
 
-    let _ = autostart::enable();
+fn apply_workspace_size(window: &tauri::WebviewWindow, beta: bool) -> tauri::Result<()> {
+    let (width, height, minimum_width, minimum_height) = if beta {
+        (1120., 720., 540., 500.)
+    } else {
+        (420., 600., 360., 450.)
+    };
+    if window.is_maximized()? {
+        window.unmaximize()?;
+    }
+    window.set_min_size(Some(tauri::LogicalSize::new(minimum_width, minimum_height)))?;
+    window.set_size(tauri::LogicalSize::new(width, height))?;
+    move_window_to_default_position(window, "workspace-mode");
+    Ok(())
 }
 
 fn current_window_size(window: &tauri::WebviewWindow) -> WindowSize {
@@ -403,6 +320,14 @@ fn toggle_window(app: &tauri::AppHandle, window: &tauri::WebviewWindow, source: 
     if should_hide {
         let _ = window.hide();
     } else {
+        #[cfg(windows)]
+        if source == "shortcut" {
+            use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+            let foreground = unsafe { GetForegroundWindow() }.0 as isize;
+            app.state::<AppState>()
+                .paste_target
+                .store(foreground, Ordering::SeqCst);
+        }
         show_window(app, window, source, false);
     }
 }
@@ -436,53 +361,6 @@ mod window_toggle_tests {
         assert!(!should_hide_window(false, false, false, true));
     }
 }
-
-fn backups_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?
-        .join("backups");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create backup directory: {}", e))?;
-    Ok(dir)
-}
-
-fn backup_file_info(path: PathBuf) -> Result<BackupFileInfo, String> {
-    let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-    let backup_metadata = backup::read_backup_metadata(&path)?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "Invalid backup file name".to_string())?
-        .to_string();
-
-    Ok(BackupFileInfo {
-        file_name,
-        created_at: backup_metadata.created_at,
-        size_bytes: metadata.len(),
-        display_path: path.display().to_string(),
-        app_version: backup_metadata.app_version,
-        backup_version: backup_metadata.backup_version,
-    })
-}
-
-fn resolve_backup_path(app: &tauri::AppHandle, file_name: &str) -> Result<PathBuf, String> {
-    if file_name.contains(['/', '\\']) {
-        return Err("Invalid backup file name".to_string());
-    }
-
-    let path = backups_dir(app)?.join(file_name);
-    if !backup::is_supported_backup_path(&path) {
-        return Err("Backup file must be a .scbackup file".to_string());
-    }
-    if !path.exists() {
-        return Err("Backup file not found".to_string());
-    }
-    Ok(path)
-}
-
-// ─── Shortcut Helpers ────────────────────────────────────────────────
 
 fn normalize_shortcut(shortcut: &str) -> String {
     shortcut
@@ -546,17 +424,6 @@ fn get_settings(
     state.storage.get_settings(&keys).map_err(|e| e.to_string())
 }
 
-fn setting_affects_remote_pool(key: &str) -> bool {
-    key == "storage_mode"
-        || (key.starts_with("remote_db_")
-            && key != "remote_db_ready"
-            && key != "remote_db_profiles")
-}
-
-fn setting_affects_remote_listener(key: &str) -> bool {
-    setting_affects_remote_pool(key) || key == "remote_db_ready"
-}
-
 /// Set a user setting value
 #[tauri::command]
 fn set_setting(
@@ -565,6 +432,31 @@ fn set_setting(
     key: String,
     value: String,
 ) -> Result<(), String> {
+    if !matches!(
+        key.as_str(),
+        "language"
+            | "theme_mode"
+            | "capture_paused"
+            | "workspace_mode_beta"
+            | "memo_enabled"
+            | "memo_color"
+            | "raw_preview"
+            | "archive_enabled"
+            | "experimental_features_enabled"
+            | "clipboard_multi_tag_enabled"
+            | "multi_select_enabled"
+            | "hide_entry_color_strip_enabled"
+            | "category_tab_selected_colors_enabled"
+            | "category_tab_sorting_enabled"
+            | "category_tab_order"
+            | "modern_ui_enabled"
+            | "theme_accent"
+            | "auto_update"
+            | "always_on_top"
+            | "autostart"
+    ) {
+        return Err("Unknown writable preference".into());
+    }
     state
         .storage
         .set_setting(&key, &value)
@@ -574,38 +466,17 @@ fn set_setting(
             warn!("Failed to update tray language: {error}");
         }
     }
-    if setting_affects_remote_pool(&key) {
-        remote_storage::invalidate_pool();
-    }
-    if setting_affects_remote_listener(&key) {
-        restart_remote_listener(&app, &state);
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn set_settings(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    values: HashMap<String, String>,
-) -> Result<(), String> {
-    state
-        .storage
-        .set_settings(&values)
-        .map_err(|e| e.to_string())?;
-    if let Some(language) = values.get("language") {
-        if let Err(error) = update_tray_menu(&app, language) {
-            warn!("Failed to update tray language: {error}");
+    if key == "workspace_mode_beta" {
+        if let Some(window) = app.get_webview_window("main") {
+            if let Err(error) = apply_workspace_size(&window, value == "true") {
+                warn!("Failed to resize window for the layout: {error}");
+            }
         }
     }
-    if values.keys().any(|key| setting_affects_remote_pool(key)) {
-        remote_storage::invalidate_pool();
-    }
-    if values
-        .keys()
-        .any(|key| setting_affects_remote_listener(key))
-    {
-        restart_remote_listener(&app, &state);
+    if key == "capture_paused" {
+        state
+            .capture_paused
+            .store(value == "true", Ordering::Relaxed);
     }
     Ok(())
 }
@@ -705,118 +576,12 @@ fn set_always_on_top(
             .map_err(|e| e.to_string())?;
     }
     state.always_on_top.store(enabled, Ordering::SeqCst);
+    state
+        .storage
+        .set_setting("always_on_top", &enabled.to_string())
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
-
-#[tauri::command]
-fn create_backup(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-) -> Result<BackupFileInfo, String> {
-    let data = state
-        .storage
-        .export_backup_data(APP_VERSION)
-        .map_err(|e| e.to_string())?;
-    let file_name = format!(
-        "SuperClipboard-backup-{}.scbackup",
-        chrono::Utc::now().format("%Y%m%d-%H%M%S")
-    );
-    let path = backups_dir(&app)?.join(file_name);
-    backup::write_backup_data(&path, &data)?;
-    backup_file_info(path)
-}
-
-#[tauri::command]
-fn list_backups(app: tauri::AppHandle) -> Result<Vec<BackupFileInfo>, String> {
-    let dir = backups_dir(&app)?;
-    let mut backups = std::fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| backup::is_supported_backup_path(path))
-        .filter_map(|path| backup_file_info(path).ok())
-        .collect::<Vec<_>>();
-
-    backups.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    Ok(backups)
-}
-
-#[tauri::command]
-fn restore_backup(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    file_name: String,
-) -> Result<RestoreSummary, String> {
-    let path = resolve_backup_path(&app, &file_name)?;
-    let data = backup::read_backup_data(&path)?;
-    if data.app != "SuperClipboard" {
-        return Err("This backup does not belong to SuperClipboard".to_string());
-    }
-    let summary = state
-        .storage
-        .restore_backup_data(&data)
-        .map_err(|e| e.to_string())?;
-
-    let restored_setting = |key: &str| {
-        data.settings
-            .iter()
-            .find(|setting| setting.key == key)
-            .map(|setting| setting.value.as_str())
-    };
-
-    if let Some(language) = restored_setting("language") {
-        update_tray_menu(&app, language).map_err(|e| e.to_string())?;
-    }
-
-    if let Some(shortcut) = restored_setting("shortcut") {
-        use tauri_plugin_global_shortcut::GlobalShortcutExt;
-        let old_shortcut = state.current_shortcut.lock().unwrap().clone();
-        let new_shortcut = normalize_shortcut(shortcut);
-        state.shortcut_recording.store(false, Ordering::SeqCst);
-        let _ = app.global_shortcut().unregister(old_shortcut.as_str());
-        if register_toggle_shortcut(
-            &app,
-            new_shortcut.as_str(),
-            state.shortcut_recording.clone(),
-        )
-        .is_ok()
-        {
-            *state.current_shortcut.lock().unwrap() = new_shortcut;
-        } else if !old_shortcut.is_empty() {
-            let _ = register_toggle_shortcut(
-                &app,
-                old_shortcut.as_str(),
-                state.shortcut_recording.clone(),
-            );
-        }
-    }
-
-    if let Some(always_on_top) = restored_setting("always_on_top") {
-        let enabled = always_on_top == "true";
-        if let Some(window) = app.get_webview_window("main") {
-            if window.set_always_on_top(enabled).is_ok() {
-                state.always_on_top.store(enabled, Ordering::SeqCst);
-            }
-        }
-    }
-
-    if let Some(autostart) = restored_setting("autostart") {
-        let _ = if autostart == "true" {
-            autostart::enable()
-        } else {
-            autostart::disable()
-        };
-    }
-
-    Ok(summary)
-}
-
-#[tauri::command]
-fn open_backup_folder(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = backups_dir(&app)?;
-    open::that(dir).map_err(|e| format!("Failed to open backup folder: {}", e))
-}
-
-// ─── Paste Commands ─────────────────────────────────────────
 
 #[tauri::command]
 async fn paste_to_active_window(
@@ -824,45 +589,58 @@ async fn paste_to_active_window(
     state: tauri::State<'_, AppState>,
     id: i64,
 ) -> Result<bool, String> {
-    // Copy content to clipboard first
     let entry = run_storage(state.storage.clone(), move |storage| {
         storage_backend::get_entry_by_id(storage, id)
     })
     .await?;
-
-    if let Some(entry) = entry {
-        let mut clip = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-        match entry.category {
-            classifier::Category::Image => {
-                use base64::Engine;
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(&entry.content)
-                    .map_err(|e| e.to_string())?;
-                let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
-                let rgba = img.to_rgba8();
-                let (w, h) = rgba.dimensions();
-                let img_data = arboard::ImageData {
-                    width: w as usize,
-                    height: h as usize,
-                    bytes: rgba.into_raw().into(),
-                };
-                clip.set_image(img_data).map_err(|e| e.to_string())?;
-            }
-            _ => {
-                clip.set_text(&entry.content).map_err(|e| e.to_string())?;
-            }
-        }
-    } else {
+    let Some(entry) = entry.filter(|entry| entry.archived_at.is_none()) else {
         return Ok(false);
-    }
+    };
+    commands::clipboard::write_to_system(&entry, false)?;
 
+    #[cfg(not(windows))]
+    return Err("Copied to clipboard. Quick paste requires Windows.".into());
+
+    #[cfg(windows)]
+    paste_into_previous_window(app, &state).await
+}
+
+#[cfg(windows)]
+async fn paste_into_previous_window(
+    app: tauri::AppHandle,
+    state: &AppState,
+) -> Result<bool, String> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, IsWindow, SetForegroundWindow,
+    };
+
+    let target = HWND(state.paste_target.load(Ordering::SeqCst) as *mut _);
+    if target.0.is_null() || !unsafe { IsWindow(target) }.as_bool() {
+        return Err("Copied to clipboard. The previous window is unavailable.".into());
+    }
     // Hide the window
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
 
-    // Wait for focus to return to previous window, then simulate Ctrl+V
-    std::thread::sleep(std::time::Duration::from_millis(150));
+    // Keep the raw handle as an integer across the wait.
+    let target = target.0 as isize;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let target = HWND(target as *mut _);
+    unsafe {
+        if GetForegroundWindow() != target {
+            let _ = SetForegroundWindow(target);
+        }
+        if GetForegroundWindow() != target {
+            if let Some(window) = app.get_webview_window("main") {
+                show_window(&app, &window, "paste-fallback", false);
+            }
+            return Err(
+                "Copied to clipboard. Windows did not restore focus to the previous app.".into(),
+            );
+        }
+    }
 
     #[cfg(windows)]
     {
@@ -872,12 +650,11 @@ async fn paste_to_active_window(
         enigo
             .key(enigo::Key::Control, enigo::Direction::Press)
             .map_err(|e| format!("Key press failed: {:?}", e))?;
-        enigo
-            .key(enigo::Key::Unicode('v'), enigo::Direction::Click)
-            .map_err(|e| format!("Key click failed: {:?}", e))?;
-        enigo
-            .key(enigo::Key::Control, enigo::Direction::Release)
-            .map_err(|e| format!("Key release failed: {:?}", e))?;
+        let paste = enigo.key(enigo::Key::Unicode('v'), enigo::Direction::Click);
+        let release = enigo.key(enigo::Key::Control, enigo::Direction::Release);
+        paste
+            .and(release)
+            .map_err(|e| format!("Key injection failed: {e:?}"))?;
     }
 
     Ok(true)
@@ -886,19 +663,16 @@ async fn paste_to_active_window(
 /// Open a URL in the system default browser
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
-    open::that(&url).map_err(|e| format!("Failed to open URL: {}", e))
-}
-
-#[tauri::command]
-async fn test_remote_storage(state: tauri::State<'_, AppState>) -> Result<String, String> {
-    let storage = state.storage.clone();
-    run_remote(storage, remote_storage::test_connection).await
-}
-
-#[tauri::command]
-async fn initialize_remote_storage(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let storage = state.storage.clone();
-    run_remote(storage, remote_storage::ensure_schema).await
+    let url: url::Url = url.parse().map_err(|_| "Invalid release URL")?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || !url
+            .path()
+            .starts_with("/Boredlittlenan/SuperClipboard/releases/")
+    {
+        return Err("Only SuperClipboard release URLs can be opened".into());
+    }
+    open::that(url.as_str()).map_err(|e| format!("Failed to open URL: {e}"))
 }
 
 #[tauri::command]
@@ -916,25 +690,47 @@ async fn get_storage_status(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--reminder-tick") {
+        if let Some(path) = args.get(1) {
+            if let Err(error) = reminders::headless(&PathBuf::from(path)) {
+                log::error!("Reminder worker: {error}");
+            }
+        }
+        return;
+    }
+    let start_hidden = args.iter().any(|arg| arg == "--background");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                show_window(app, &window, "single-instance", false);
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|arg| arg == "--background") {
+                if let Some(window) = app.get_webview_window("main") {
+                    show_window(app, &window, "single-instance", false);
+                }
             }
         }))
-        .setup(|app| {
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .setup(move |app| {
             // Initialize storage in app data directory
             let app_dir = app
                 .path()
                 .app_data_dir()
                 .expect("Failed to get app data directory");
-            migrate_legacy_app_data(&app_dir);
+            #[cfg(debug_assertions)]
+            let app_dir = std::env::var_os("SUPERCLIPBOARD_DEV_DATA_DIR")
+                .map(PathBuf::from)
+                .unwrap_or(app_dir);
             std::fs::create_dir_all(&app_dir).expect("Failed to create app data directory");
 
-            let db_path = app_dir.join("clipboard.db");
+            let db_path = app_dir.join("workspace.db");
+            let reminder_path = app_dir.join("reminders.db");
             info!("Database path: {:?}", db_path);
             let is_new_database = !db_path.exists();
 
@@ -943,20 +739,21 @@ pub fn run() {
                 initialize_first_run_defaults(storage.as_ref());
             }
 
-            // Remote writes can begin as soon as clipboard monitoring starts, so schema
-            // migrations must finish before the monitor and notification listener run.
-            if remote_storage::is_remote_mode(storage.as_ref())
-                && !remote_storage::is_schema_current(storage.as_ref())
-            {
-                info!("Checking remote storage schema before startup");
-                if let Err(error) = remote_storage::ensure_schema(storage.as_ref()) {
-                    warn!("Failed to initialize remote storage schema: {error:?}");
-                }
-            }
-
             // Start clipboard monitor
             let mut monitor = ClipboardMonitor::new();
-            monitor.start(app.handle().clone(), storage.clone());
+            let capture_paused = Arc::new(AtomicBool::new(
+                storage
+                    .get_setting("capture_paused")
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    == Some("true"),
+            ));
+            monitor.start(
+                app.handle().clone(),
+                storage.clone(),
+                capture_paused.clone(),
+            );
 
             // Read saved shortcut or use default
             let saved_shortcut = storage.get_setting("shortcut").ok().flatten();
@@ -978,6 +775,12 @@ pub fn run() {
 
             app.manage(AppState {
                 storage: storage.clone(),
+                transfers: transfer::Transfers::default(),
+                reminder_path: reminder_path.clone(),
+                data_directory: app_dir,
+                capture_paused,
+                #[cfg(windows)]
+                paste_target: std::sync::atomic::AtomicIsize::new(0),
                 _monitor: std::sync::Mutex::new(monitor),
                 current_shortcut: std::sync::Mutex::new(shortcut.clone()),
                 shortcut_recording: Arc::new(AtomicBool::new(false)),
@@ -987,6 +790,24 @@ pub fn run() {
 
             let state = app.state::<AppState>();
             restart_remote_listener(app.handle(), &state);
+            reminders::start(app.handle().clone(), reminder_path);
+            if remote_storage::is_remote_mode(&storage)
+                && !remote_storage::is_schema_current(&storage)
+            {
+                let storage = storage.clone();
+                std::thread::spawn(move || {
+                    let Ok(_workspace) = storage.workspace.read() else {
+                        return;
+                    };
+                    if remote_storage::is_remote_mode(&storage)
+                        && !remote_storage::is_schema_current(&storage)
+                    {
+                        if let Err(error) = remote_storage::ensure_schema(&storage) {
+                            warn!("Could not initialize remote workspace: {error}");
+                        }
+                    }
+                });
+            }
 
             // Register global shortcut to show/hide window
             let shortcut_recording = app.state::<AppState>().shortcut_recording.clone();
@@ -994,12 +815,19 @@ pub fn run() {
 
             // Apply always-on-top setting.
             if let Some(window) = app.get_webview_window("main") {
+                if storage.get_setting("workspace_mode_beta")?.as_deref() == Some("true") {
+                    if let Err(error) = apply_workspace_size(&window, true) {
+                        warn!("Failed to restore workspace layout: {error}");
+                    }
+                }
                 if window.set_always_on_top(always_on_top).is_ok() {
                     app.state::<AppState>()
                         .always_on_top
                         .store(always_on_top, Ordering::SeqCst);
                 }
-                show_window(app.handle(), &window, "startup", true);
+                if !start_hidden {
+                    show_window(app.handle(), &window, "startup", true);
+                }
             }
 
             // Set up system tray menu and click handler
@@ -1066,7 +894,6 @@ pub fn run() {
             get_setting,
             get_settings,
             set_setting,
-            set_settings,
             get_autostart_enabled,
             set_autostart_enabled,
             get_shortcut,
@@ -1074,6 +901,7 @@ pub fn run() {
             set_shortcut_recording,
             memo_tags::infer_memo_tag_types,
             commands::memos::get_memos,
+            commands::memos::get_memo,
             commands::memos::create_memo,
             commands::memos::update_memo,
             commands::memos::delete_memo,
@@ -1088,16 +916,21 @@ pub fn run() {
             commands::memos::purge_old_memo_archives,
             commands::memos::empty_memo_archive,
             set_always_on_top,
-            create_backup,
-            list_backups,
-            restore_backup,
-            open_backup_folder,
             paste_to_active_window,
             update::check_update,
             open_url,
-            test_remote_storage,
-            initialize_remote_storage,
             get_storage_status,
+            transfer::discover_legacy_sources,
+            transfer::preview_import,
+            transfer::commit_import,
+            transfer::export_workspace,
+            workspace_config::switch_workspace,
+            workspace_config::get_classic_remote_settings,
+            workspace_config::replace_classic_remote_profiles,
+            reminders::list_reminders,
+            reminders::save_reminder,
+            reminders::finish_reminder,
+            reminders::test_reminder_notification,
         ])
         .run(tauri::generate_context!())
         .expect("Error while running tauri application");

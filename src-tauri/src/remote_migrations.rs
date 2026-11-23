@@ -6,7 +6,7 @@ use postgres::Transaction;
 pub const VERSION: i64 = 10;
 
 pub(crate) const SEARCH_BACKFILL_SQL: &str = r#"
-    UPDATE superclipboard.clipboard_entries
+    UPDATE superclipboard_v4.clipboard_entries
     SET search_text = regexp_replace(trim(concat_ws(' ',
         CASE WHEN content_type LIKE 'image/%' THEN '' ELSE content END,
         preview,
@@ -18,7 +18,7 @@ pub(crate) const SEARCH_BACKFILL_SQL: &str = r#"
         CASE WHEN category = 'file_path' OR category_tags LIKE '%"file_path"%' THEN 'file path 文件 路径' ELSE '' END
     )), '\s+', ' ', 'g');
 
-    UPDATE superclipboard.memos
+    UPDATE superclipboard_v4.memos
     SET search_text = regexp_replace(trim(concat_ws(' ',
         title,
         regexp_replace(
@@ -42,15 +42,17 @@ pub fn apply(
 ) -> Result<(), postgres::Error> {
     transaction.batch_execute(
     "
-    CREATE SCHEMA IF NOT EXISTS superclipboard;
+    CREATE SCHEMA IF NOT EXISTS superclipboard_v4;
 
-    CREATE TABLE IF NOT EXISTS superclipboard.metadata (
+    CREATE TABLE IF NOT EXISTS superclipboard_v4.workspace_imports (key TEXT PRIMARY KEY);
+
+    CREATE TABLE IF NOT EXISTS superclipboard_v4.metadata (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT now()::text
     );
 
-    CREATE TABLE IF NOT EXISTS superclipboard.clipboard_entries (
+    CREATE TABLE IF NOT EXISTS superclipboard_v4.clipboard_entries (
         id BIGSERIAL PRIMARY KEY,
         uuid TEXT NOT NULL UNIQUE,
         category TEXT NOT NULL,
@@ -72,22 +74,22 @@ pub fn apply(
         sort_version BIGINT NOT NULL DEFAULT 1
     );
 
-    CREATE INDEX IF NOT EXISTS idx_sc_clipboard_category ON superclipboard.clipboard_entries(category);
-    CREATE INDEX IF NOT EXISTS idx_sc_clipboard_created_at ON superclipboard.clipboard_entries(created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_sc_clipboard_archived_at ON superclipboard.clipboard_entries(archived_at);
+    CREATE INDEX IF NOT EXISTS idx_sc_clipboard_category ON superclipboard_v4.clipboard_entries(category);
+    CREATE INDEX IF NOT EXISTS idx_sc_clipboard_created_at ON superclipboard_v4.clipboard_entries(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sc_clipboard_archived_at ON superclipboard_v4.clipboard_entries(archived_at);
     CREATE INDEX IF NOT EXISTS idx_sc_clipboard_active_order
-        ON superclipboard.clipboard_entries(pinned DESC, created_at DESC)
+        ON superclipboard_v4.clipboard_entries(pinned DESC, created_at DESC)
         WHERE archived_at IS NULL AND deleted_at IS NULL;
-    ALTER TABLE superclipboard.clipboard_entries
+    ALTER TABLE superclipboard_v4.clipboard_entries
         ADD COLUMN IF NOT EXISTS category_tags TEXT NOT NULL DEFAULT '[]';
-    ALTER TABLE superclipboard.clipboard_entries
+    ALTER TABLE superclipboard_v4.clipboard_entries
         ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT '';
-    ALTER TABLE superclipboard.clipboard_entries
+    ALTER TABLE superclipboard_v4.clipboard_entries
         ADD COLUMN IF NOT EXISTS content_hash TEXT NOT NULL DEFAULT '';
     CREATE INDEX IF NOT EXISTS idx_sc_clipboard_content_hash
-        ON superclipboard.clipboard_entries(content_hash);
+        ON superclipboard_v4.clipboard_entries(content_hash);
 
-    CREATE TABLE IF NOT EXISTS superclipboard.memos (
+    CREATE TABLE IF NOT EXISTS superclipboard_v4.memos (
         id BIGSERIAL PRIMARY KEY,
         uuid TEXT NOT NULL UNIQUE,
         title TEXT NOT NULL DEFAULT '',
@@ -104,22 +106,23 @@ pub fn apply(
         version BIGINT NOT NULL DEFAULT 1
     );
 
-    CREATE INDEX IF NOT EXISTS idx_sc_memos_sort_order ON superclipboard.memos(sort_order DESC);
-    CREATE INDEX IF NOT EXISTS idx_sc_memos_updated_at ON superclipboard.memos(updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_sc_memos_archived_at ON superclipboard.memos(archived_at);
+    CREATE INDEX IF NOT EXISTS idx_sc_memos_sort_order ON superclipboard_v4.memos(sort_order DESC);
+    CREATE INDEX IF NOT EXISTS idx_sc_memos_updated_at ON superclipboard_v4.memos(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sc_memos_created_at ON superclipboard_v4.memos(created_at);
+    CREATE INDEX IF NOT EXISTS idx_sc_memos_archived_at ON superclipboard_v4.memos(archived_at);
     CREATE INDEX IF NOT EXISTS idx_sc_memos_active_order
-        ON superclipboard.memos(pinned DESC, sort_order DESC)
+        ON superclipboard_v4.memos(pinned DESC, sort_order DESC)
         WHERE archived_at IS NULL AND deleted_at IS NULL;
-    ALTER TABLE superclipboard.memos
+    ALTER TABLE superclipboard_v4.memos
         ADD COLUMN IF NOT EXISTS auto_tags TEXT NOT NULL DEFAULT '[]';
-    ALTER TABLE superclipboard.memos
+    ALTER TABLE superclipboard_v4.memos
         ADD COLUMN IF NOT EXISTS search_text TEXT NOT NULL DEFAULT '';
-    ALTER TABLE superclipboard.memos
+    ALTER TABLE superclipboard_v4.memos
         ADD COLUMN IF NOT EXISTS content_version BIGINT NOT NULL DEFAULT 1;
-    ALTER TABLE superclipboard.memos
+    ALTER TABLE superclipboard_v4.memos
         ADD COLUMN IF NOT EXISTS sort_version BIGINT NOT NULL DEFAULT 1;
 
-    CREATE OR REPLACE FUNCTION superclipboard.notify_change() RETURNS trigger AS $$
+    CREATE OR REPLACE FUNCTION superclipboard_v4.notify_change() RETURNS trigger AS $$
     DECLARE
         payload text;
         row_id bigint;
@@ -138,38 +141,38 @@ pub fn apply(
             'entityId', row_id,
             'operation', operation
         )::text;
-        PERFORM pg_notify('superclipboard_changes', payload);
+        PERFORM pg_notify('superclipboard_v4_changes', payload);
         RETURN COALESCE(NEW, OLD);
     END;
     $$ LANGUAGE plpgsql;
 
-    DROP TRIGGER IF EXISTS sc_clipboard_notify ON superclipboard.clipboard_entries;
+    DROP TRIGGER IF EXISTS sc_clipboard_notify ON superclipboard_v4.clipboard_entries;
     CREATE TRIGGER sc_clipboard_notify
-    AFTER INSERT OR UPDATE OR DELETE ON superclipboard.clipboard_entries
-    FOR EACH ROW EXECUTE FUNCTION superclipboard.notify_change('clipboard');
+    AFTER INSERT OR UPDATE OR DELETE ON superclipboard_v4.clipboard_entries
+    FOR EACH ROW EXECUTE FUNCTION superclipboard_v4.notify_change('clipboard');
 
-    DROP TRIGGER IF EXISTS sc_memo_notify ON superclipboard.memos;
+    DROP TRIGGER IF EXISTS sc_memo_notify ON superclipboard_v4.memos;
     CREATE TRIGGER sc_memo_notify
-    AFTER INSERT OR UPDATE OR DELETE ON superclipboard.memos
-    FOR EACH ROW EXECUTE FUNCTION superclipboard.notify_change('memo');
+    AFTER INSERT OR UPDATE OR DELETE ON superclipboard_v4.memos
+    FOR EACH ROW EXECUTE FUNCTION superclipboard_v4.notify_change('memo');
     ",
     )?;
 
     if applied_version < 1 {
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[&1_i64, &"initial clipboard and memo schema"],
         )?;
     }
     if applied_version < 2 {
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[&2_i64, &"notifications and optimistic record versions"],
         )?;
     }
     if applied_version < 3 {
         let rows = transaction.query(
-            "SELECT id, title, body FROM superclipboard.memos WHERE auto_tags = '[]' OR auto_tags = ''",
+            "SELECT id, title, body FROM superclipboard_v4.memos WHERE auto_tags = '[]' OR auto_tags = ''",
             &[],
         )?;
         for row in rows {
@@ -179,12 +182,12 @@ pub fn apply(
             let auto_tags = serde_json::to_string(&memo_tags::infer(&title, &body))
                 .unwrap_or_else(|_| "[]".to_string());
             transaction.execute(
-                "UPDATE superclipboard.memos SET auto_tags = $1 WHERE id = $2",
+                "UPDATE superclipboard_v4.memos SET auto_tags = $1 WHERE id = $2",
                 &[&auto_tags, &id],
             )?;
         }
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[&3_i64, &"persisted memo auto tags"],
         )?;
     }
@@ -192,13 +195,13 @@ pub fn apply(
         transaction.batch_execute(SEARCH_BACKFILL_SQL)?;
 
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[&4_i64, &"search text excludes embedded image data"],
         )?;
     }
     if applied_version < 5 {
         let rows = transaction.query(
-            "SELECT id, title, body, tags, auto_tags FROM superclipboard.memos",
+            "SELECT id, title, body, tags, auto_tags FROM superclipboard_v4.memos",
             &[],
         )?;
         for row in rows {
@@ -211,12 +214,12 @@ pub fn apply(
                     .unwrap_or_default();
             let search_text = memo_search_text(&title, &body, &tags, &auto_tags);
             transaction.execute(
-                "UPDATE superclipboard.memos SET tags = $1, search_text = $2 WHERE id = $3",
+                "UPDATE superclipboard_v4.memos SET tags = $1, search_text = $2 WHERE id = $3",
                 &[&tags, &search_text, &id],
             )?;
         }
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[
                 &5_i64,
                 &"separate manual memo tags from localized auto tags",
@@ -225,7 +228,7 @@ pub fn apply(
     }
     if applied_version < 6 {
         let rows = transaction.query(
-            "SELECT id, content FROM superclipboard.clipboard_entries",
+            "SELECT id, content FROM superclipboard_v4.clipboard_entries",
             &[],
         )?;
         for row in rows {
@@ -233,12 +236,12 @@ pub fn apply(
             let content: String = row.get("content");
             let content_hash = Storage::hash_content(&content);
             transaction.execute(
-                "UPDATE superclipboard.clipboard_entries SET content_hash = $1 WHERE id = $2",
+                "UPDATE superclipboard_v4.clipboard_entries SET content_hash = $1 WHERE id = $2",
                 &[&content_hash, &id],
             )?;
         }
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[
                 &6_i64,
                 &"current clipboard content hashes for deduplication",
@@ -247,18 +250,18 @@ pub fn apply(
     }
     if applied_version < 7 {
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[&7_i64, &"manual clipboard reclassification support"],
         )?;
     }
     if applied_version < 8 {
         transaction.batch_execute(
-            "DELETE FROM superclipboard.clipboard_entries WHERE deleted_at IS NOT NULL;
-             DELETE FROM superclipboard.memos WHERE deleted_at IS NOT NULL;
-             DROP TABLE IF EXISTS superclipboard.sync_events;",
+            "DELETE FROM superclipboard_v4.clipboard_entries WHERE deleted_at IS NOT NULL;
+             DELETE FROM superclipboard_v4.memos WHERE deleted_at IS NOT NULL;
+             DROP TABLE IF EXISTS superclipboard_v4.sync_events;",
         )?;
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[
                 &8_i64,
                 &"physical deletes and notification-only synchronization",
@@ -267,17 +270,17 @@ pub fn apply(
     }
     if applied_version < 9 {
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[&9_i64, &"classification rules metadata"],
         )?;
     }
     if applied_version < 10 {
         transaction.batch_execute(
-            "UPDATE superclipboard.memos
+            "UPDATE superclipboard_v4.memos
              SET content_version = version, sort_version = version;",
         )?;
         transaction.execute(
-            "INSERT INTO superclipboard.schema_migrations (version, description) VALUES ($1, $2)",
+            "INSERT INTO superclipboard_v4.schema_migrations (version, description) VALUES ($1, $2)",
             &[
                 &10_i64,
                 &"separate memo content and sort versions for optimistic updates",

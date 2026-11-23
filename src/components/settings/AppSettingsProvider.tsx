@@ -43,12 +43,16 @@ export default function AppSettingsProvider({ children }: { children: React.Reac
     const previousValue = settingsRef.current[name];
     const revision = (settingRevisionRef.current[name] ?? 0) + 1;
     settingRevisionRef.current[name] = revision;
-    replaceSettings({ ...settingsRef.current, [name]: value });
+    const optimistic = name !== 'workspaceModeBeta';
+    if (optimistic) replaceSettings({ ...settingsRef.current, [name]: value });
     const serialized = serializeAppSetting(name, value);
     const write = writeQueueRef.current.then(() => setSetting(serialized.key, serialized.value));
     writeQueueRef.current = write.catch(() => undefined);
     try {
       await write;
+      if (!optimistic && settingRevisionRef.current[name] === revision) {
+        replaceSettings({ ...settingsRef.current, [name]: value });
+      }
     } catch (error) {
       if (settingRevisionRef.current[name] === revision) {
         replaceSettings({ ...settingsRef.current, [name]: previousValue });

@@ -5,6 +5,7 @@ import { useI18n } from '../i18n';
 import { useAppSettings } from '../hooks/useAppSettings';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { ToggleSettingRow } from './settings/SettingRow';
+import { useWorkspaceMode } from '../hooks/useWorkspaceMode';
 import FloatingMenuPanel from './FloatingMenuPanel';
 import { getClassificationStatus, type ClassificationStatus } from '../api/clipboard';
 
@@ -18,6 +19,7 @@ export default function ExperimentalFeaturesButton({
   onReclassifyHistory,
 }: Props) {
   const { t } = useI18n();
+  const workspaceMode = useWorkspaceMode();
   const { settings, setAppSetting } = useAppSettings();
   const {
     clipboardMultiTagEnabled,
@@ -92,6 +94,9 @@ export default function ExperimentalFeaturesButton({
             <span>{t.appearanceSettings}</span>
             <span style={styles.sectionLine} />
           </div>
+          <ToggleSettingRow label={t.workspaceModeBeta} title={t.workspaceModeBetaDesc} checked={workspaceMode.enabled}
+            disabled={workspaceMode.busy} onChange={workspaceMode.toggle} />
+          {workspaceMode.error && <div role="alert" style={styles.classificationStatus}>{workspaceMode.error}</div>}
           <ToggleSettingRow label={t.modernUi} title={t.modernUiDesc} checked={modernUiEnabled} onChange={handleModernUiToggle} />
           <ToggleSettingRow label={t.hideEntryColorStrip} title={t.hideEntryColorStripDesc} checked={hideEntryColorStripEnabled} onChange={handleHideEntryColorStripToggle} />
           <ToggleSettingRow label={t.categoryTabSelectedColors} title={t.categoryTabSelectedColorsDesc} checked={categoryTabSelectedColorsEnabled} onChange={handleCategoryTabSelectedColorsToggle} />
@@ -170,7 +175,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '8px',
     color: 'var(--text-muted)',
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 600,
     lineHeight: '16px',
     letterSpacing: '0',
@@ -190,7 +195,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: '6px',
     padding: '0 2px',
     color: 'var(--text-muted)',
-    fontSize: '10px',
+    fontSize: '12px',
     lineHeight: '15px',
   },
 };

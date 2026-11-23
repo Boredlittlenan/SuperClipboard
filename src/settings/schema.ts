@@ -14,7 +14,7 @@ const parseThemeAccent = (value: string | undefined): 'default' | 'sakura' =>
 export const APP_SETTING_SCHEMA = {
   memoEnabled: {
     key: 'memo_enabled',
-    parse: parseBoolean(false),
+    parse: parseBoolean(true),
     serialize: serializeBoolean,
   },
   memoColor: {
@@ -29,7 +29,7 @@ export const APP_SETTING_SCHEMA = {
   },
   archiveEnabled: {
     key: 'archive_enabled',
-    parse: parseBoolean(false),
+    parse: parseBoolean(true),
     serialize: serializeBoolean,
   },
   experimentalFeaturesEnabled: {
@@ -60,6 +60,16 @@ export const APP_SETTING_SCHEMA = {
   categoryTabSortingEnabled: {
     key: 'category_tab_sorting_enabled',
     parse: parseBoolean(true),
+    serialize: serializeBoolean,
+  },
+  capturePaused: {
+    key: 'capture_paused',
+    parse: parseBoolean(false),
+    serialize: serializeBoolean,
+  },
+  workspaceModeBeta: {
+    key: 'workspace_mode_beta',
+    parse: parseBoolean(false),
     serialize: serializeBoolean,
   },
   modernUiEnabled: {

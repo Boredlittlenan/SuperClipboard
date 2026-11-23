@@ -4,7 +4,7 @@ use crate::search_index::{clipboard_search_text, memo_search_text};
 use crate::storage::Storage;
 use rusqlite::{params, Connection, Result as SqlResult};
 
-pub(crate) const SCHEMA_VERSION: &str = "9";
+pub(crate) const SCHEMA_VERSION: &str = "10";
 type MemoMigrationRow = (i64, String, String, String, String);
 
 pub fn run(conn: &Connection) -> SqlResult<()> {
@@ -34,6 +34,8 @@ pub fn run(conn: &Connection) -> SqlResult<()> {
             value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS workspace_imports (key TEXT PRIMARY KEY);
+
         CREATE TABLE IF NOT EXISTS memos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL DEFAULT '',
@@ -46,6 +48,7 @@ pub fn run(conn: &Connection) -> SqlResult<()> {
             updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         );
         CREATE INDEX IF NOT EXISTS idx_memos_updated_at ON memos(updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_memos_created_at ON memos(created_at);
         ",
     )?;
 
@@ -54,6 +57,20 @@ pub fn run(conn: &Connection) -> SqlResult<()> {
         [],
         |row| row.get::<_, i64>(0),
     )?;
+    if applied_version > 10 {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    if applied_version < 10 {
+        // Older workspace snapshots can already contain these columns.
+        let _ = conn.execute_batch(
+            "ALTER TABLE clipboard_entries ADD COLUMN content_version INTEGER NOT NULL DEFAULT 1",
+        );
+        let _ = conn.execute_batch(
+            "ALTER TABLE memos ADD COLUMN content_version INTEGER NOT NULL DEFAULT 1",
+        );
+        conn.prepare("SELECT content_version FROM clipboard_entries LIMIT 0")?;
+        conn.prepare("SELECT content_version FROM memos LIMIT 0")?;
+    }
 
     // These ALTER statements also cover databases created before explicit versioning.
     let _ = conn.execute_batch("ALTER TABLE clipboard_entries ADD COLUMN original_content TEXT");
