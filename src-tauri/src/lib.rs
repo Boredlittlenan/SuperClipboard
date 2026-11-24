@@ -3,6 +3,8 @@ mod backup;
 mod classifier;
 mod clipboard;
 mod commands;
+mod memo_reminder_windows;
+mod memo_reminders;
 mod memo_tags;
 mod remote_migrations;
 mod remote_storage;
@@ -79,6 +81,11 @@ fn restart_remote_listener(app: &tauri::AppHandle, state: &AppState) {
                     storage.as_ref(),
                     worker_stop.as_ref(),
                     |payload| {
+                        if serde_json::from_str::<serde_json::Value>(payload)
+                            .is_ok_and(|event| event["entityType"] == "memo")
+                        {
+                            memo_reminders::notify_scheduler();
+                        }
                         if let Err(error) = app.emit("remote-storage-changed", payload.to_string())
                         {
                             warn!("Failed to emit remote storage change: {error}");
@@ -579,6 +586,7 @@ fn set_setting(
     }
     if setting_affects_remote_listener(&key) {
         restart_remote_listener(&app, &state);
+        memo_reminders::changed(&app);
     }
     Ok(())
 }
@@ -606,6 +614,7 @@ fn set_settings(
         .any(|key| setting_affects_remote_listener(key))
     {
         restart_remote_listener(&app, &state);
+        memo_reminders::changed(&app);
     }
     Ok(())
 }
@@ -755,6 +764,7 @@ fn restore_backup(
         .storage
         .restore_backup_data(&data)
         .map_err(|e| e.to_string())?;
+    memo_reminders::changed(&app);
 
     let restored_setting = |key: &str| {
         data.settings
@@ -918,13 +928,15 @@ pub fn run() {
     env_logger::init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            memo_reminders::activate_from_args(app, args.into_iter());
             if let Some(window) = app.get_webview_window("main") {
                 show_window(app, &window, "single-instance", false);
             }
         }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(memo_reminders::ReminderActivation::default())
         .setup(|app| {
             // Initialize storage in app data directory
             let app_dir = app
@@ -987,6 +999,12 @@ pub fn run() {
 
             let state = app.state::<AppState>();
             restart_remote_listener(app.handle(), &state);
+            memo_reminders::activate_from_args(
+                app.handle(),
+                std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()),
+            );
+            memo_reminder_windows::watch_resume(app.handle());
+            memo_reminders::start(app.handle().clone(), state.storage.clone());
 
             // Register global shortcut to show/hide window
             let shortcut_recording = app.state::<AppState>().shortcut_recording.clone();
@@ -1072,6 +1090,11 @@ pub fn run() {
             get_shortcut,
             set_shortcut,
             set_shortcut_recording,
+            memo_reminders::take_memo_reminder_activation,
+            memo_reminders::list_memo_reminders,
+            memo_reminders::schedule_memo_reminder,
+            memo_reminders::change_memo_reminder,
+            memo_reminders::open_memo_reminder,
             memo_tags::infer_memo_tag_types,
             commands::memos::get_memos,
             commands::memos::create_memo,

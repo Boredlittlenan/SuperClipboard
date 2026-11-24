@@ -63,7 +63,16 @@ pub struct BackupData {
     pub created_at: DateTime<Utc>,
     pub clipboard_entries: Vec<ClipboardEntry>,
     pub memos: Vec<Memo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memo_reminders: Vec<BackupMemoReminder>,
     pub settings: Vec<SettingEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupMemoReminder {
+    memo_id: i64,
+    due_at: i64,
+    triggered_at: Option<i64>,
 }
 
 /// Aggregate values used by the footer and category tabs. Keeping these in one
@@ -336,7 +345,7 @@ fn append_token_search(
 }
 
 pub struct Storage {
-    conn: Mutex<Connection>,
+    pub(crate) conn: Mutex<Connection>,
 }
 
 impl Storage {
@@ -708,6 +717,19 @@ impl Storage {
             })?
             .collect::<SqlResult<Vec<_>>>()?;
 
+        let mut reminders_stmt = conn.prepare(
+            "SELECT memo_id, due_at, triggered_at FROM memo_reminders WHERE source = 'local'",
+        )?;
+        let memo_reminders = reminders_stmt
+            .query_map([], |row| {
+                Ok(BackupMemoReminder {
+                    memo_id: row.get(0)?,
+                    due_at: row.get(1)?,
+                    triggered_at: row.get(2)?,
+                })
+            })?
+            .collect::<SqlResult<Vec<_>>>()?;
+
         Ok(BackupData {
             app: "SuperClipboard".to_string(),
             backup_version: 1,
@@ -715,6 +737,7 @@ impl Storage {
             created_at: Utc::now(),
             clipboard_entries,
             memos,
+            memo_reminders,
             settings,
         })
     }
@@ -787,6 +810,17 @@ impl Storage {
                     memo.updated_at,
                     memo.archived_at,
                 ],
+            )?;
+        }
+
+        for reminder in &backup.memo_reminders {
+            if !(1..=crate::memo_reminders::MAX_DUE_AT).contains(&reminder.due_at) {
+                continue;
+            }
+            tx.execute(
+                "INSERT OR IGNORE INTO memo_reminders (source, memo_id, memo_key, token, due_at, triggered_at)
+                 SELECT 'local', id, created_at, ?1, ?2, ?3 FROM memos WHERE id = ?4 AND archived_at IS NULL",
+                params![uuid::Uuid::new_v4().to_string(), reminder.due_at, reminder.triggered_at, reminder.memo_id],
             )?;
         }
 
@@ -1166,6 +1200,16 @@ impl Storage {
             .collect::<SqlResult<Vec<_>>>()?;
 
         Ok(memos)
+    }
+
+    pub fn get_active_memo(&self, id: i64) -> Result<Option<Memo>, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row(
+            "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at
+             FROM memos WHERE id = ?1 AND archived_at IS NULL",
+            params![id],
+            map_row_to_memo,
+        ).optional()?)
     }
 
     /// Create a new memo, returns the created memo

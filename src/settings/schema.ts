@@ -17,6 +17,11 @@ export const APP_SETTING_SCHEMA = {
     parse: parseBoolean(false),
     serialize: serializeBoolean,
   },
+  memoReminderShowTitle: {
+    key: 'memo_reminder_show_title',
+    parse: parseBoolean(false),
+    serialize: serializeBoolean,
+  },
   memoColor: {
     key: 'memo_color',
     parse: (value: string | undefined): string | null => value || null,

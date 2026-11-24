@@ -1,7 +1,7 @@
 use crate::memo_tags;
 use crate::search_index::memo_search_text;
 use crate::storage::Storage;
-use postgres::Transaction;
+use postgres::{Client, Transaction};
 
 pub const VERSION: i64 = 10;
 
@@ -286,4 +286,30 @@ pub fn apply(
     }
 
     Ok(())
+}
+
+// Install the optional reminder lifecycle separately so older clients can still
+// connect to shared databases and their archive operations also invalidate reminders.
+pub fn ensure_memo_archive_generation(client: &mut Client) -> Result<(), postgres::Error> {
+    let mut tx = client.transaction()?;
+    tx.batch_execute("SELECT pg_advisory_xact_lock(78242351)")?;
+    if tx.query_opt(
+        "SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'superclipboard' AND table_name = 'memos' AND column_name = 'archive_generation'",
+        &[],
+    )?.is_none() {
+        tx.batch_execute(
+            "ALTER TABLE superclipboard.memos ADD COLUMN archive_generation BIGINT NOT NULL DEFAULT 0;
+             CREATE OR REPLACE FUNCTION superclipboard.track_memo_archive() RETURNS trigger AS $$
+             BEGIN
+                 NEW.archive_generation := OLD.archive_generation + 1;
+                 RETURN NEW;
+             END;
+             $$ LANGUAGE plpgsql;
+             CREATE TRIGGER sc_memo_archive_generation BEFORE UPDATE OF archived_at ON superclipboard.memos
+             FOR EACH ROW WHEN (OLD.archived_at IS NULL AND NEW.archived_at IS NOT NULL)
+             EXECUTE FUNCTION superclipboard.track_memo_archive();",
+        )?;
+    }
+    tx.commit()
 }

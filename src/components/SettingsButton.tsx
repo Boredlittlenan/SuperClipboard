@@ -84,6 +84,7 @@ export default function SettingsButton({
   const { settings, setAppSetting } = useAppSettings();
   const {
     memoEnabled,
+    memoReminderShowTitle,
     memoColor,
     alwaysOnTop,
     rawPreview,
@@ -492,6 +493,15 @@ export default function SettingsButton({
 
           {/* Memo */}
           <ToggleSettingRow label={t.memoSetting} title={t.memoSettingDesc} checked={memoEnabled} onChange={handleMemoToggle} />
+
+          {memoEnabled && (
+            <ToggleSettingRow
+              label={t.memoReminderShowTitle}
+              title={t.memoReminderShowTitleDesc}
+              checked={memoReminderShowTitle}
+              onChange={() => { void setAppSetting('memoReminderShowTitle', !memoReminderShowTitle); }}
+            />
+          )}
 
           {/* Memo color picker (only when memo is enabled) */}
           {memoEnabled && (

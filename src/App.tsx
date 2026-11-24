@@ -19,6 +19,7 @@ import {
   reclassifyClipboardEntries,
 } from './api/clipboard';
 import { getShortcut, checkUpdate, openUrl, pasteToActiveWindow } from './api/settings';
+import { takeMemoReminderActivation } from './api/memoReminders';
 import { unarchiveMemo, permanentDeleteMemo, purgeOldMemoArchives, emptyMemoArchive } from './api/memos';
 import { formatShortcutLabel, getTabLabel } from './utils';
 import { I18nProvider, useI18n } from './i18n';
@@ -744,6 +745,36 @@ function AppContent() {
 
   // Debounced search
   const [searchInput, setSearchInput] = useState('');
+  const [reminderActivation, setReminderActivation] = useState<string | null>(null);
+  const handleReminderActivation = useCallback(() => setReminderActivation(null), []);
+
+  useEffect(() => {
+    let live = true;
+    let unlisten: (() => void) | undefined;
+    const activate = async () => {
+      if (!live) return;
+      const target = await takeMemoReminderActivation();
+      if (!live || !target) return;
+      setSelectionMode(false);
+      setSelectedEntryIds([]);
+      setSearchInput('');
+      setSearchQuery('');
+      setActiveTab('memo');
+      setReminderActivation(target);
+    };
+    listen('memo-reminder-activated', () => { void activate().catch(console.error); }).then((dispose) => {
+      if (!live) {
+        dispose();
+        return;
+      }
+      unlisten = dispose;
+      return activate();
+    }).catch(console.error);
+    return () => {
+      live = false;
+      unlisten?.();
+    };
+  }, []);
 
   const resetSelection = useCallback(() => {
     setSelectionMode(false);
@@ -1007,6 +1038,8 @@ function AppContent() {
         <Suspense fallback={<div className="view-loading">{t.loading}</div>}>
           <MemoList
             searchQuery={searchQuery}
+            reminderActivation={reminderActivation}
+            onReminderActivationHandled={handleReminderActivation}
             archiveEnabled={archiveEnabled}
             refreshKey={storageRevision}
             onCountChange={handleMemoCountChange}

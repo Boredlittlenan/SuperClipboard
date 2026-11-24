@@ -169,6 +169,7 @@ mod tests {
             created_at: Utc::now(),
             clipboard_entries: Vec::new(),
             memos: Vec::new(),
+            memo_reminders: Vec::new(),
             settings: vec![SettingEntry {
                 key: "language".to_string(),
                 value: "zh-CN".to_string(),

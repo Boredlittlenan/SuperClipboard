@@ -443,10 +443,18 @@ fn with_pooled_connection<T>(
 
 fn with_client<T>(
     storage: &Storage,
-    mut action: impl FnMut(&mut Client) -> RemoteResult<T>,
+    action: impl FnMut(&mut Client) -> RemoteResult<T>,
 ) -> RemoteResult<T> {
     let config = remote_config(storage)?;
-    let snapshot = cached_pool(&config)?;
+    with_client_config(storage, &config, action)
+}
+
+fn with_client_config<T>(
+    storage: &Storage,
+    config: &RemoteDbConfig,
+    mut action: impl FnMut(&mut Client) -> RemoteResult<T>,
+) -> RemoteResult<T> {
+    let snapshot = cached_pool(config)?;
     match with_pooled_connection(&snapshot.pool, &mut action) {
         Ok(value) => Ok(value),
         Err(PooledActionError::Operation(error)) => Err(error),
@@ -1170,6 +1178,95 @@ pub fn empty_clipboard_archive(storage: &Storage) -> RemoteResult<u64> {
             "DELETE FROM superclipboard.clipboard_entries WHERE archived_at IS NOT NULL",
             &[],
         )?)
+    })
+}
+
+// Server identity is independent of credentials and TLS.
+fn reminder_source(config: &RemoteDbConfig) -> RemoteResult<String> {
+    let parsed = config.url.parse::<postgres::Config>()?;
+    let hosts = parsed.get_hosts();
+    let ports = parsed.get_ports();
+    let servers: Vec<_> = hosts
+        .iter()
+        .enumerate()
+        .map(|(index, host)| {
+            (
+                host,
+                ports
+                    .get(index)
+                    .or_else(|| ports.first())
+                    .copied()
+                    .unwrap_or(5432),
+            )
+        })
+        .collect();
+    let db = parsed
+        .get_dbname()
+        .or_else(|| parsed.get_user())
+        .unwrap_or_default();
+    Ok(format!(
+        "postgres:{}",
+        Storage::hash_content(&format!("{servers:?}/{db}"))
+    ))
+}
+
+pub fn memo_reminder_source(storage: &Storage) -> RemoteResult<String> {
+    reminder_source(&remote_config(storage)?)
+}
+
+fn with_reminder_source<T>(
+    storage: &Storage,
+    source: &str,
+    mut action: impl FnMut(&mut Client) -> RemoteResult<T>,
+) -> RemoteResult<T> {
+    let config = remote_config(storage)?;
+    if !is_remote_mode(storage) || reminder_source(&config)? != source {
+        return Err(RemoteStorageError::NotConfigured);
+    }
+    with_client_config(storage, &config, |client| match action(client) {
+        Err(RemoteStorageError::Database(error))
+            if error.code() == Some(&postgres::error::SqlState::UNDEFINED_COLUMN) =>
+        {
+            remote_migrations::ensure_memo_archive_generation(client)?;
+            action(client)
+        }
+        result => result,
+    })
+}
+
+pub fn memo_reminder_targets(
+    storage: &Storage,
+    source: &str,
+    ids: &[i64],
+) -> RemoteResult<Vec<(i64, String, String, String)>> {
+    with_reminder_source(storage, source, |client| {
+        Ok(client
+            .query(
+                "SELECT id, uuid || ':' || archive_generation::text AS memo_key, title, created_at
+             FROM superclipboard.memos
+             WHERE id = ANY($1) AND archived_at IS NULL AND deleted_at IS NULL",
+                &[&ids],
+            )?
+            .into_iter()
+            .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+            .collect())
+    })
+}
+
+pub fn reminder_memo(
+    storage: &Storage,
+    source: &str,
+    id: i64,
+    memo_key: &str,
+) -> RemoteResult<Option<Memo>> {
+    with_reminder_source(storage, source, |client| {
+        Ok(client.query_opt(
+            "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at,
+                    archived_at, content_version AS version
+             FROM superclipboard.memos WHERE id = $1 AND archived_at IS NULL AND deleted_at IS NULL
+             AND uuid || ':' || archive_generation::text = $2",
+            &[&id, &memo_key],
+        )?.as_ref().map(row_to_memo))
     })
 }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type React from 'react';
-import { Archive, GripVertical, NotebookText, Pencil, Pin, Plus, Trash2 } from 'lucide-react';
+import { Archive, Bell, GripVertical, NotebookText, Pencil, Pin, Plus, Trash2 } from 'lucide-react';
 import type { Memo } from '../types';
 import {
   createMemo,
@@ -25,6 +25,11 @@ import {
 import { orderMemosForDisplay } from '../memoListOrdering';
 import { formatRelativeTime, getCategoryColor } from '../utils';
 import MemoRichEditor from './MemoRichEditor';
+import { changeMemoReminder, openMemoReminder, scheduleMemoReminder } from '../api/memoReminders';
+import type { MemoReminder } from '../api/memoReminders';
+import { useMemoReminders } from '../hooks/useMemoReminders';
+import { formatReminderTime } from '../memoReminderTime';
+import { MemoReminderDetail, MemoReminderEditor, MemoReminderOverview } from './MemoReminderDialog';
 import {
   hasMemoImage,
   isImageOnlyMemo,
@@ -77,7 +82,14 @@ function getMemoEditorHeight(body: string): number {
   return 120;
 }
 
+type ReminderView =
+  | { kind: 'overview'; missing?: boolean }
+  | { kind: 'editor'; memo: Pick<Memo, 'id' | 'created_at' | 'title'>; token?: string; dueAt?: number; saveFailed?: boolean }
+  | { kind: 'detail'; token: string; memo: Memo | null; failed?: boolean };
+
 interface Props {
+  reminderActivation?: string | null;
+  onReminderActivationHandled?: () => void;
   searchQuery: string;
   archiveEnabled?: boolean;
   refreshKey?: number;
@@ -86,8 +98,11 @@ interface Props {
   onArchiveCountChange?: (count: number) => void;
 }
 
-export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, onCountChange, onTotalCountChange, onArchiveCountChange }: Props) {
-  const { t } = useI18n();
+export default function MemoList({
+  searchQuery, archiveEnabled, refreshKey = 0, onCountChange, onTotalCountChange, onArchiveCountChange,
+  reminderActivation, onReminderActivationHandled,
+}: Props) {
+  const { t, locale } = useI18n();
   const { memos, setMemos, hasMore, loadingMore, refresh: fetchMemos, loadMore } = usePaginatedMemos(searchQuery, refreshKey);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<{ title: string; body: string; tags: string } | null>(null);
@@ -96,6 +111,61 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   const [editConflict, setEditConflict] = useState<MemoEditConflict | null>(null);
   const [newMemoId, setNewMemoId] = useState<number | null>(null);
   const [editingVersion, setEditingVersion] = useState(1);
+
+  const { data: reminders, failed: remindersFailed, reload: reloadReminders } = useMemoReminders(refreshKey);
+  const [reminderView, setReminderView] = useState<ReminderView | null>(null);
+  const [draftReminder, setDraftReminder] = useState<number>();
+  const [draftReminderError, setDraftReminderError] = useState(false);
+  const reminderRequest = useRef(0);
+  const reminderItems = reminders?.items;
+  const remindersByMemo = new Map(reminderItems?.map((reminder) => [reminder.memoId, reminder]));
+  const dueCount = reminderItems?.filter((reminder) => reminder.triggeredAt !== null).length ?? 0;
+
+  const closeReminder = () => {
+    reminderRequest.current += 1;
+    setReminderView(null);
+  };
+
+  const openReminder = useCallback(async (token: string) => {
+    const request = ++reminderRequest.current;
+    if (token === 'list') {
+      setReminderView({ kind: 'overview' });
+      return;
+    }
+    setReminderView({ kind: 'detail', token, memo: null });
+    try {
+      const memo = await openMemoReminder(token);
+      if (request === reminderRequest.current) {
+        setReminderView(memo ? { kind: 'detail', token, memo } : { kind: 'overview', missing: true });
+      }
+    } catch (error) {
+      console.error('Failed to open memo reminder:', error);
+      if (request === reminderRequest.current) {
+        setReminderView({ kind: 'detail', token, memo: null, failed: true });
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!reminderActivation) return;
+    let live = true;
+    queueMicrotask(() => {
+      if (!live) return;
+      void openReminder(reminderActivation);
+      onReminderActivationHandled?.();
+    });
+    return () => { live = false; };
+  }, [reminderActivation, onReminderActivationHandled, openReminder]);
+
+  const editReminder = (memo: Pick<Memo, 'id' | 'created_at' | 'title'>, reminder?: MemoReminder) => {
+    const isDraft = memo.id === NEW_MEMO_DRAFT_ID;
+    setReminderView({ kind: 'editor', memo, token: reminder?.token, dueAt: isDraft ? draftReminder : reminder?.dueAt });
+  };
+
+  const updateReminder = async (token: string, snooze?: boolean) => {
+    await changeMemoReminder(token, snooze);
+    await reloadReminders();
+  };
 
   const editingItemRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -135,6 +205,8 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
 
   const stopEditing = useCallback(() => {
     setEditingVersion(1);
+    setDraftReminder(undefined);
+    setDraftReminderError(false);
     setNewMemoId(null);
     setEditingId(null);
     setEditDraft(null);
@@ -159,9 +231,23 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
           stopEditing();
           return;
         }
+        if (draftReminder !== undefined && (draftReminder <= Date.now() || !reminders?.source)) {
+          setDraftReminderError(true);
+          setSavingMemo(false);
+          return;
+        }
         const created = await createMemo(editDraft.title, editDraft.body, finalTags);
         setMemos(prev => [created, ...prev]);
         void refreshTotalCount();
+        if (draftReminder !== undefined && reminders) {
+          try {
+            await scheduleMemoReminder(reminders.source, created, draftReminder);
+            void reloadReminders();
+          } catch (error) {
+            console.error('Memo saved, but its reminder could not be created:', error);
+            setReminderView({ kind: 'editor', memo: created, dueAt: draftReminder, saveFailed: true });
+          }
+        }
       } else {
         const autoTagTypes = await inferMemoTagTypes(editDraft.title, editDraft.body);
         const result = await updateMemo(
@@ -201,7 +287,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
       console.error('Failed to save memo:', err);
       setSavingMemo(false);
     }
-  }, [editDraft, editingId, editingVersion, fetchMemos, newMemoId, refreshTotalCount, savingMemo, setMemos, stopEditing]);
+  }, [draftReminder, editDraft, editingId, editingVersion, fetchMemos, newMemoId, refreshTotalCount, reloadReminders, reminders, savingMemo, setMemos, stopEditing]);
 
   const handleCancelEditing = useCallback(async () => {
     stopEditing();
@@ -322,6 +408,7 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   const displayedMemos = orderMemosForDisplay(memos, newMemoId);
 
   const renderMemoItem = (memo: Memo, draggable: boolean) => {
+    const reminder = remindersByMemo.get(memo.id);
     const isEditing = editingId === memo.id;
     const isDragging = draggedId === memo.id;
     const isDragOver = dragOverId === memo.id;
@@ -386,6 +473,15 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                 )}
                 <div style={styles.hoverActions}>
                   <button
+                    className="reminder-icon-button"
+                    type="button"
+                    aria-label={t.memoReminderSet}
+                    title={t.memoReminderSet}
+                    onClick={(e) => { e.stopPropagation(); editReminder(memo, reminder); }}
+                  >
+                    <Bell size={14} />
+                  </button>
+                  <button
                     style={styles.actionBtn}
                     onClick={(e) => { e.stopPropagation(); startEditing(memo); }}
                     title={t.edit}
@@ -413,6 +509,22 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
               </div>
             )}
           </div>
+
+          {!isEditing && reminder && (
+              <button
+                type="button"
+                className="reminder-chip"
+                data-due={reminder.triggeredAt !== null}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (reminder.triggeredAt === null) editReminder(memo, reminder);
+                  else void openReminder(reminder.token);
+                }}
+              >
+                <Bell size={13} />
+                {reminder.triggeredAt === null ? formatReminderTime(reminder.dueAt, locale, true) : t.memoReminderDue}
+              </button>
+          )}
 
           {/* Content area */}
           {isEditing && editDraft ? (
@@ -465,6 +577,17 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
                     </pre>
                   )}
                 </div>
+              )}
+              {memo.id === NEW_MEMO_DRAFT_ID && (
+                <>
+                  <button type="button" className="reminder-chip" onClick={() => editReminder(memo)} disabled={savingMemo}>
+                    <Bell size={14} />
+                    {draftReminder === undefined ? t.memoReminderSet : formatReminderTime(draftReminder, locale, true)}
+                  </button>
+                  {draftReminderError && <span className="reminder-error" role="alert">
+                    {reminders?.source ? t.memoReminderFutureTime : t.memoReminderLoadError}
+                  </span>}
+                </>
               )}
               <div style={styles.editActions}>
                 <span style={styles.editHint}>Ctrl+Enter {t.save} / Esc {t.cancel}</span>
@@ -594,9 +717,14 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
   // ─── Main render ──────────────────────────────────────────
   return (
     <div style={styles.container}>
-        <div style={{ padding: '8px 12px', flexShrink: 0 }}>
-          <button className="memo-new-button" style={styles.newBtn} onClick={handleCreate}><Plus size={14} strokeWidth={2.25} /> {t.memoNew}</button>
-        </div>
+      <div className="memo-toolbar">
+        <button className="memo-new-button" style={styles.newBtn} onClick={handleCreate}><Plus size={14} strokeWidth={2.25} /> {t.memoNew}</button>
+        <button type="button" className="reminder-toolbar-button" onClick={() => { void openReminder('list'); }}>
+          <Bell size={15} />
+          {t.memoReminderList}
+          {dueCount > 0 && <span className="reminder-count">{dueCount}</span>}
+        </button>
+      </div>
       <div ref={listRef} className="entry-list" style={styles.list}>
         {newMemoId === NEW_MEMO_DRAFT_ID && editDraft && renderMemoItem({
           id: NEW_MEMO_DRAFT_ID,
@@ -619,6 +747,52 @@ export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, 
           {loadingMore && <div style={styles.loadMoreSpinner} />}
         </div>
       </div>
+      {reminderView?.kind === 'overview' && (
+        <MemoReminderOverview
+          items={reminderItems ?? []}
+          loading={!reminders && !remindersFailed}
+          failed={remindersFailed}
+          missing={reminderView.missing}
+          onClose={closeReminder}
+          onOpen={(token) => { void openReminder(token); }}
+          onChange={updateReminder}
+        />
+      )}
+      {reminderView?.kind === 'detail' && (
+        <MemoReminderDetail
+          key={reminderView.token}
+          memo={reminderView.memo}
+          reminder={reminderItems?.find((item) => item.token === reminderView.token)}
+          failed={Boolean(reminderView.failed)}
+          onClose={closeReminder}
+          onEdit={editReminder}
+          onChange={updateReminder}
+        />
+      )}
+      {reminderView?.kind === 'editor' && (
+        <MemoReminderEditor
+          key={reminderView.memo.id}
+          initialDueAt={reminderView.dueAt}
+          memoTitle={reminderView.memo.title}
+          saveFailed={reminderView.saveFailed}
+          onClose={closeReminder}
+          onSave={async (dueAt) => {
+            if (reminderView.memo.id === NEW_MEMO_DRAFT_ID) {
+              setDraftReminder(dueAt);
+              setDraftReminderError(false);
+            } else {
+              if (!reminders || remindersFailed) throw new Error('The memo storage is unavailable.');
+              await scheduleMemoReminder(reminders.source, reminderView.memo, dueAt);
+              void reloadReminders();
+            }
+          }}
+          onRemove={reminderView.token ? () => updateReminder(reminderView.token!) : (
+            reminderView.memo.id === NEW_MEMO_DRAFT_ID && draftReminder !== undefined
+              ? () => { setDraftReminder(undefined); setDraftReminderError(false); }
+              : undefined
+          )}
+        />
+      )}
       {/* Floating ghost clone that follows cursor during drag */}
       {dragGhostPos && draggedId !== null && (
         <div className="memo-drag-ghost" style={{

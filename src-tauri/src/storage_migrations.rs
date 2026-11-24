@@ -4,7 +4,7 @@ use crate::search_index::{clipboard_search_text, memo_search_text};
 use crate::storage::Storage;
 use rusqlite::{params, Connection, Result as SqlResult};
 
-pub(crate) const SCHEMA_VERSION: &str = "9";
+pub(crate) const SCHEMA_VERSION: &str = "10";
 type MemoMigrationRow = (i64, String, String, String, String);
 
 pub fn run(conn: &Connection) -> SqlResult<()> {
@@ -91,7 +91,28 @@ pub fn run(conn: &Connection) -> SqlResult<()> {
             WHERE archived_at IS NULL;
          CREATE INDEX IF NOT EXISTS idx_memos_archive_order
             ON memos(archived_at DESC)
-            WHERE archived_at IS NOT NULL;",
+            WHERE archived_at IS NOT NULL;
+         CREATE TABLE IF NOT EXISTS memo_reminders (
+            source TEXT NOT NULL,
+            memo_id INTEGER NOT NULL,
+            memo_key TEXT NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            due_at INTEGER NOT NULL,
+            triggered_at INTEGER,
+            PRIMARY KEY (source, memo_id)
+         );
+         CREATE INDEX IF NOT EXISTS idx_memo_reminders_due
+            ON memo_reminders(source, due_at) WHERE triggered_at IS NULL;
+         CREATE TRIGGER IF NOT EXISTS cancel_archived_local_memo_reminder
+            AFTER UPDATE OF archived_at ON memos WHEN NEW.archived_at IS NOT NULL
+            BEGIN
+                DELETE FROM memo_reminders WHERE source = 'local' AND memo_id = NEW.id;
+            END;
+         CREATE TRIGGER IF NOT EXISTS cancel_deleted_local_memo_reminder
+            AFTER DELETE ON memos
+            BEGIN
+                DELETE FROM memo_reminders WHERE source = 'local' AND memo_id = OLD.id;
+            END;",
     )?;
 
     if applied_version < 4 {

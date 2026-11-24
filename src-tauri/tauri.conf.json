@@ -1,6 +1,6 @@
 {
   "productName": "SuperClipboard",
-  "version": "3.6.0",
+  "version": "3.7.0",
   "identifier": "com.superclipboard.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -31,6 +31,13 @@
     },
     "security": {
       "csp": null
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["superclipboard-reminder"]
+      }
     }
   },
   "bundle": {

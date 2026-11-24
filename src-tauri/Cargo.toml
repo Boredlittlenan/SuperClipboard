@@ -1,6 +1,6 @@
 [package]
 name = "superclipboard"
-version = "3.6.0"
+version = "3.7.0"
 description = "A lightweight clipboard manager with smart categorization"
 authors = [""]
 edition = "2021"
@@ -48,7 +48,7 @@ urlencoding = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
-windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Globalization"] }
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Globalization", "Data_Xml_Dom", "UI_Notifications", "Win32_UI_Shell"] }
 enigo = "0.2"
 
 # Optimize for small binary size in release

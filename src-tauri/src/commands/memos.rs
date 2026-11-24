@@ -1,5 +1,5 @@
 use crate::storage::{Memo, MemoFilter, UpdateResult};
-use crate::{memo_tags, run_storage, storage_backend, AppState};
+use crate::{memo_reminders, memo_tags, run_storage, storage_backend, AppState};
 use serde::Deserialize;
 
 #[tauri::command]
@@ -54,15 +54,20 @@ pub async fn update_memo(
 
 #[tauri::command]
 pub async fn delete_memo(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: i64,
     archive: Option<bool>,
 ) -> Result<bool, String> {
     let archive = archive.unwrap_or(false);
-    run_storage(state.storage.clone(), move |storage| {
+    let deleted = run_storage(state.storage.clone(), move |storage| {
         storage_backend::delete_memo(storage, id, archive)
     })
-    .await
+    .await?;
+    if deleted {
+        memo_reminders::changed(&app);
+    }
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -100,11 +105,19 @@ pub async fn reorder_memos(
 }
 
 #[tauri::command]
-pub async fn archive_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, String> {
-    run_storage(state.storage.clone(), move |storage| {
+pub async fn archive_memo(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: i64,
+) -> Result<bool, String> {
+    let archived = run_storage(state.storage.clone(), move |storage| {
         storage_backend::archive_memo(storage, id)
     })
-    .await
+    .await?;
+    if archived {
+        memo_reminders::changed(&app);
+    }
+    Ok(archived)
 }
 
 #[tauri::command]

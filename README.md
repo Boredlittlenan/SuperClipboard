@@ -23,6 +23,7 @@ Download the latest Windows installer from [GitHub Releases](https://github.com/
 - Edited clipboard content participates in deduplication, so copying a modified entry does not create a duplicate
 - Pin, edit, copy, delete, restore, preview, and export clipboard entries; images can open in an in-app preview or save as PNG
 - Optional memo module with title, rich body, pasted image preview, tags, pinning, search, and drag sorting
+- One-time memo reminders with Windows notifications, snoozing, and recovery of missed reminders after restart
 - Optional recycle bin with separate Clipboard and Memos views, 30-day cleanup, and confirmed per-view emptying
 - Global shortcut, tray controls, single-instance launch, and auto-start support
 - Theme mode switcher with System / Light / Dark and independent accent colors
@@ -39,7 +40,7 @@ Windows x64 is supported now, with NSIS setup and MSI packages.
 
 ## Default Behavior
 
-- Version: `3.6.0` (in development)
+- Version: `3.7.0`
 - Default shortcut: `Alt+X`
 - Startup: positions the main window before showing it and keeps the tray icon available
 - UI style: classic UI by default, with Modern UI available in Experimental Features

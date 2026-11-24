@@ -107,6 +107,28 @@ export interface Translations {
   // Memos
   memoTab: string;
   memoSearchPlaceholder: string;
+  memoReminderList: string;
+  memoReminderSet: string;
+  memoReminderDue: string;
+  memoReminderUpcoming: string;
+  memoReminderIn10: string;
+  memoReminderInHour: string;
+  memoReminderTomorrow: string;
+  memoReminderDate: string;
+  memoReminderDevice: string;
+  memoReminderSnooze: string;
+  memoReminderDone: string;
+  memoReminderRemove: string;
+  memoReminderClose: string;
+  memoReminderNoneDue: string;
+  memoReminderNoneScheduled: string;
+  memoReminderFutureTime: string;
+  memoReminderLoadError: string;
+  memoReminderSaveError: string;
+  memoReminderPartiallySaved: string;
+  memoReminderUnavailable: string;
+  memoReminderShowTitle: string;
+  memoReminderShowTitleDesc: string;
   memoNew: string;
   memoUntitled: string;
   memoTitlePlaceholder: string;
@@ -367,6 +389,28 @@ export const zhCN: Translations = {
 
   memoTab: '备忘录',
   memoSearchPlaceholder: '搜索备忘录...',
+  memoReminderList: '提醒',
+  memoReminderSet: '设置提醒',
+  memoReminderDue: '待处理',
+  memoReminderUpcoming: '即将到期',
+  memoReminderIn10: '10 分钟后',
+  memoReminderInHour: '1 小时后',
+  memoReminderTomorrow: '明天 09:00',
+  memoReminderDate: '日期和时间',
+  memoReminderDevice: '仅在本设备提醒。退出后将在下次启动时补提醒。',
+  memoReminderSnooze: '稍后 10 分钟',
+  memoReminderDone: '完成',
+  memoReminderRemove: '取消提醒',
+  memoReminderClose: '关闭',
+  memoReminderNoneDue: '没有待处理的提醒',
+  memoReminderNoneScheduled: '没有已设置的提醒',
+  memoReminderFutureTime: '请选择有效的未来时间。',
+  memoReminderLoadError: '暂时无法读取提醒，请稍后再试。',
+  memoReminderSaveError: '提醒未更新，请重试。',
+  memoReminderPartiallySaved: '备忘录已保存，请重试设置提醒。',
+  memoReminderUnavailable: '这条提醒已取消、完成，或属于其他数据源。',
+  memoReminderShowTitle: '提醒通知显示标题',
+  memoReminderShowTitleDesc: '在 Windows 通知中显示备忘录标题',
   memoNew: '新建备忘录',
   memoUntitled: '无标题',
   memoTitlePlaceholder: '标题',
@@ -625,6 +669,28 @@ export const en: Translations = {
 
   memoTab: 'Memos',
   memoSearchPlaceholder: 'Search memos...',
+  memoReminderList: 'Reminders',
+  memoReminderSet: 'Set reminder',
+  memoReminderDue: 'To review',
+  memoReminderUpcoming: 'Upcoming',
+  memoReminderIn10: 'In 10 minutes',
+  memoReminderInHour: 'In 1 hour',
+  memoReminderTomorrow: 'Tomorrow at 09:00',
+  memoReminderDate: 'Date and time',
+  memoReminderDevice: 'Reminds you on this device. Missed reminders appear when the app restarts.',
+  memoReminderSnooze: 'Snooze 10 min',
+  memoReminderDone: 'Done',
+  memoReminderRemove: 'Cancel reminder',
+  memoReminderClose: 'Close',
+  memoReminderNoneDue: 'No reminders to review',
+  memoReminderNoneScheduled: 'No scheduled reminders',
+  memoReminderFutureTime: 'Choose a valid time in the future.',
+  memoReminderLoadError: 'Reminders could not be loaded. Try again shortly.',
+  memoReminderSaveError: 'The reminder was not updated. Please try again.',
+  memoReminderPartiallySaved: 'The memo was saved. Try setting the reminder again.',
+  memoReminderUnavailable: 'This reminder was canceled, completed, or belongs to another data source.',
+  memoReminderShowTitle: 'Show memo titles in notifications',
+  memoReminderShowTitleDesc: 'Show memo titles in Windows notifications',
   memoNew: 'New Memo',
   memoUntitled: 'Untitled',
   memoTitlePlaceholder: 'Title',

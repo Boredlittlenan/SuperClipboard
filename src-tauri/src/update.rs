@@ -206,13 +206,15 @@ mod tests {
 
     #[test]
     fn parses_latest_release_redirect_without_api_metadata() {
-        let url = reqwest::Url::parse(
-            "https://github.com/Boredlittlenan/SuperClipboard/releases/tag/v3.6.1",
-        )
+        let mut next = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        next.patch += 1;
+        let url = reqwest::Url::parse(&format!(
+            "https://github.com/Boredlittlenan/SuperClipboard/releases/tag/v{next}"
+        ))
         .unwrap();
         let info = update_info_from_release_url(&url).unwrap();
 
-        assert_eq!(info.latest_version, "3.6.1");
+        assert_eq!(info.latest_version, next.to_string());
         assert_eq!(info.download_url, url.as_str());
         assert!(info.has_update);
         assert!(info.release_notes.is_empty());
