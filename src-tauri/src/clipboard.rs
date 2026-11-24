@@ -5,7 +5,6 @@ use arboard::Clipboard;
 use base64::Engine;
 use chrono::Utc;
 use log::{debug, error, info, warn};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
@@ -25,12 +24,7 @@ impl ClipboardMonitor {
     }
 
     /// Start the clipboard monitoring loop in a background thread
-    pub fn start(
-        &mut self,
-        app_handle: tauri::AppHandle,
-        storage: Arc<Storage>,
-        paused: Arc<AtomicBool>,
-    ) {
+    pub fn start(&mut self, app_handle: tauri::AppHandle, storage: Arc<Storage>) {
         let running = self.running.clone();
         *running.lock().unwrap() = true;
 
@@ -52,32 +46,10 @@ impl ClipboardMonitor {
                 let mut last_storage_error_hash = String::new();
 
                 // Poll interval: 300ms — responsive enough for UX, low CPU usage
-                let poll_interval = Duration::from_millis(250);
-                #[cfg(windows)]
-                let mut sequence = clipboard_sequence();
-                let mut retry_at = std::time::Instant::now();
+                let poll_interval = Duration::from_millis(300);
 
                 while *running.lock().unwrap() {
                     std::thread::sleep(poll_interval);
-                    #[cfg(windows)]
-                    let current_sequence = clipboard_sequence();
-                    if paused.load(Ordering::Relaxed) {
-                        #[cfg(windows)]
-                        {
-                            sequence = current_sequence;
-                        }
-                        continue;
-                    }
-                    if std::time::Instant::now() < retry_at {
-                        continue;
-                    }
-                    #[cfg(windows)]
-                    if current_sequence != 0 && current_sequence == sequence {
-                        continue;
-                    }
-                    let Ok(_workspace) = storage.workspace.read() else {
-                        break;
-                    };
 
                     // Try to read image first
                     if let Ok(img) = clipboard.get_image() {
@@ -94,11 +66,7 @@ impl ClipboardMonitor {
                                         storage_backend::insert_entry(&storage, &entry);
                                     match insert_result {
                                         Ok(result) => {
-                                            #[cfg(windows)]
-                                            {
-                                                sequence = current_sequence;
-                                            }
-                                            last_clipboard_hash = image_hash.clone();
+                                            last_clipboard_hash = image_hash;
                                             last_storage_error_hash.clear();
                                             if result.refreshes_list() {
                                                 debug!(
@@ -114,10 +82,8 @@ impl ClipboardMonitor {
                                             }
                                         }
                                         Err(e) => {
-                                            retry_at =
-                                                std::time::Instant::now() + Duration::from_secs(2);
                                             if last_storage_error_hash != image_hash {
-                                                last_storage_error_hash = image_hash.clone();
+                                                last_storage_error_hash = image_hash;
                                                 warn!("Failed to store image: {}", e);
                                                 let _ =
                                                     app_handle.emit("clipboard-storage-error", ());
@@ -125,31 +91,19 @@ impl ClipboardMonitor {
                                         }
                                     }
                                 }
+                                continue;
                             }
-                            #[cfg(windows)]
-                            if image_hash == last_clipboard_hash {
-                                sequence = current_sequence;
-                            }
-                            continue;
                         }
                     }
 
                     // Try to read text
                     if let Ok(text) = clipboard.get_text() {
                         if text.is_empty() {
-                            #[cfg(windows)]
-                            {
-                                sequence = current_sequence;
-                            }
                             continue;
                         }
 
                         let hash = Storage::hash_content(&text);
                         if hash == last_clipboard_hash {
-                            #[cfg(windows)]
-                            {
-                                sequence = current_sequence;
-                            }
                             continue;
                         }
 
@@ -158,14 +112,10 @@ impl ClipboardMonitor {
                         let insert_result = storage_backend::insert_entry(&storage, &entry);
                         match insert_result {
                             Ok(result) => {
-                                #[cfg(windows)]
-                                {
-                                    sequence = current_sequence;
-                                }
                                 last_clipboard_hash = hash;
                                 last_storage_error_hash.clear();
                                 if result.refreshes_list() {
-                                    debug!("Captured clipboard type {category}");
+                                    debug!("Captured {}: {:?}", category, entry.preview);
                                     let _ = app_handle.emit("clipboard-changed", &entry);
                                 }
                                 if let Some(id) = result.archived_duplicate_id() {
@@ -173,7 +123,6 @@ impl ClipboardMonitor {
                                 }
                             }
                             Err(e) => {
-                                retry_at = std::time::Instant::now() + Duration::from_secs(2);
                                 if last_storage_error_hash != hash {
                                     last_storage_error_hash = hash;
                                     warn!("Failed to store entry: {}", e);
@@ -198,12 +147,6 @@ impl ClipboardMonitor {
             let _ = handle.join();
         }
     }
-}
-
-#[cfg(windows)]
-fn clipboard_sequence() -> u32 {
-    // This call only reads the sequence number of the current Windows session.
-    unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() }
 }
 
 /// Build a normalized text entry so manual imports and polling share category logic.

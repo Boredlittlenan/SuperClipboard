@@ -151,10 +151,6 @@ export interface Translations {
   themeSystem: string;
   themeLight: string;
   themeDark: string;
-  memoReminder: string;
-  captureClipboard: string;
-  workspaceModeBeta: string;
-  workspaceModeBetaDesc: string;
   modernUi: string;
   modernUiDesc: string;
   autostart: string;
@@ -299,7 +295,7 @@ export const zhCN: Translations = {
   permanentDelete: '彻底删除',
   permanentDeleteConfirm: '确定要彻底删除此条目吗？此操作不可恢复。',
   archiveEmpty: '回收站为空',
-  archiveEmptyHint: '删除的条目会保留在回收站，可手动恢复或清除',
+  archiveEmptyHint: '删除的条目会暂存在回收站，30天后自动清除',
   daysRemaining: (n) => `${n} 天后清除`,
   archiveSubTab: '剪贴板',
   memoSubTab: '备忘录',
@@ -386,7 +382,7 @@ export const zhCN: Translations = {
   memoColorDesc: '自定义备忘录模块配色，不受主题影响',
   memoColorReset: '重置',
   archiveSetting: '回收站',
-  archiveSettingDesc: '删除条目时移入回收站，可手动恢复',
+  archiveSettingDesc: '删除条目时暂存回收站，30天内可恢复',
   savePosition: '保存位置',
   savePositionDesc: '记录上次窗口位置，下次启动时恢复',
 
@@ -413,10 +409,6 @@ export const zhCN: Translations = {
   themeSystem: '跟随系统',
   themeLight: '浅色',
   themeDark: '深色',
-  memoReminder: '备忘录提醒',
-  captureClipboard: '记录剪贴板',
-  workspaceModeBeta: '工作台模式(beta)',
-  workspaceModeBetaDesc: '切换到宽屏工作台。关闭开关即可返回经典界面。',
   modernUi: '新版界面',
   modernUiDesc: '切换新版视觉样式，关闭后恢复旧版简洁界面',
   autostart: '开机自启',
@@ -561,7 +553,7 @@ export const en: Translations = {
   permanentDelete: 'Delete Forever',
   permanentDeleteConfirm: 'Permanently delete this item? This cannot be undone.',
   archiveEmpty: 'Recycle bin is empty',
-  archiveEmptyHint: 'Deleted items stay in the recycle bin until restored or cleared',
+  archiveEmptyHint: 'Deleted items stay in recycle bin, auto-cleared after 30 days',
   daysRemaining: (n) => `${n} day${n !== 1 ? 's' : ''} until cleared`,
   archiveSubTab: 'Clipboard',
   memoSubTab: 'Memos',
@@ -648,7 +640,7 @@ export const en: Translations = {
   memoColorDesc: 'Customize memo module color, independent of theme',
   memoColorReset: 'Reset',
   archiveSetting: 'Recycle Bin',
-  archiveSettingDesc: 'Keep deleted items in the recycle bin so they can be restored',
+  archiveSettingDesc: 'Keep deleted items in recycle bin, recoverable within 30 days',
   savePosition: 'Save Position',
   savePositionDesc: 'Remember last window position across restarts',
 
@@ -675,10 +667,6 @@ export const en: Translations = {
   themeSystem: 'System',
   themeLight: 'Light',
   themeDark: 'Dark',
-  memoReminder: 'Memo reminder',
-  captureClipboard: 'Capture clipboard',
-  workspaceModeBeta: 'Workspace mode (beta)',
-  workspaceModeBetaDesc: 'Switch to the wide workspace. Turn this off to return to the classic layout.',
   modernUi: 'Modern UI',
   modernUiDesc: 'Use the refreshed visual style, or turn off for the classic compact UI',
   autostart: 'Auto-start',

@@ -1,7 +1,6 @@
 use crate::storage::{Memo, MemoFilter, UpdateResult};
-use crate::{memo_tags, reminders, run_storage, storage_backend, workspace_config, AppState};
+use crate::{memo_tags, run_storage, storage_backend, AppState};
 use serde::Deserialize;
-use tauri::Emitter;
 
 #[tauri::command]
 pub async fn get_memos(
@@ -11,14 +10,6 @@ pub async fn get_memos(
     let filter = filter.unwrap_or_default();
     run_storage(state.storage.clone(), move |storage| {
         storage_backend::get_memos(storage, &filter)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn get_memo(state: tauri::State<'_, AppState>, id: i64) -> Result<Option<Memo>, String> {
-    run_storage(state.storage.clone(), move |storage| {
-        storage_backend::get_memo(storage, id)
     })
     .await
 }
@@ -39,7 +30,6 @@ pub async fn create_memo(
 
 #[tauri::command]
 pub async fn update_memo(
-    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: i64,
     title: String,
@@ -48,9 +38,8 @@ pub async fn update_memo(
     expected_version: Option<i64>,
 ) -> Result<UpdateResult, String> {
     let auto_tags = memo_tags::infer(&title, &body);
-    let path = state.reminder_path.clone();
-    let result = run_storage(state.storage.clone(), move |storage| {
-        let result = storage_backend::update_memo(
+    run_storage(state.storage.clone(), move |storage| {
+        storage_backend::update_memo(
             storage,
             id,
             &title,
@@ -58,40 +47,22 @@ pub async fn update_memo(
             &tags,
             &auto_tags,
             expected_version,
-        )?;
-        if result.updated {
-            reminders::refresh_title(&path, &workspace_config::id(storage)?, id, &title)?;
-        }
-        Ok(result)
+        )
     })
-    .await?;
-    if result.updated {
-        let _ = app.emit("reminders-changed", ());
-    }
-    Ok(result)
+    .await
 }
 
 #[tauri::command]
 pub async fn delete_memo(
-    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     id: i64,
     archive: Option<bool>,
 ) -> Result<bool, String> {
     let archive = archive.unwrap_or(false);
-    let path = state.reminder_path.clone();
-    let deleted = run_storage(state.storage.clone(), move |storage| {
-        let deleted = storage_backend::delete_memo(storage, id, archive)?;
-        if deleted {
-            reminders::finish(&path, &workspace_config::id(storage)?, id, "cancelled")?;
-        }
-        Ok(deleted)
+    run_storage(state.storage.clone(), move |storage| {
+        storage_backend::delete_memo(storage, id, archive)
     })
-    .await?;
-    if deleted {
-        let _ = app.emit("reminders-changed", ());
-    }
-    Ok(deleted)
+    .await
 }
 
 #[tauri::command]

@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type React from 'react';
-import { Archive, Bell, GripVertical, NotebookText, Pencil, Pin, Plus, Trash2 } from 'lucide-react';
+import { Archive, GripVertical, NotebookText, Pencil, Pin, Plus, Trash2 } from 'lucide-react';
 import type { Memo } from '../types';
 import {
   createMemo,
   updateMemo,
   deleteMemo,
   toggleMemoPin,
+  archiveMemo,
   memoCount,
   memoArchiveCount,
   inferMemoTagTypes,
@@ -30,8 +31,6 @@ import {
   parseMemoBody,
   renderMemoBody,
 } from './MemoBody';
-
-const ClassicMemoReminder = lazy(() => import('./ClassicMemoReminder'));
 
 const MEMO_COLLAPSE_TEXT_LIMIT = 300;
 const MEMO_COLLAPSE_LINE_LIMIT = 5;
@@ -81,19 +80,17 @@ function getMemoEditorHeight(body: string): number {
 interface Props {
   searchQuery: string;
   archiveEnabled?: boolean;
-  theme: 'light' | 'dark';
   refreshKey?: number;
   onCountChange?: (count: number) => void;
   onTotalCountChange?: (count: number) => void;
   onArchiveCountChange?: (count: number) => void;
 }
 
-export default function MemoList({ searchQuery, archiveEnabled, theme, refreshKey = 0, onCountChange, onTotalCountChange, onArchiveCountChange }: Props) {
+export default function MemoList({ searchQuery, archiveEnabled, refreshKey = 0, onCountChange, onTotalCountChange, onArchiveCountChange }: Props) {
   const { t } = useI18n();
   const { memos, setMemos, hasMore, loadingMore, refresh: fetchMemos, loadMore } = usePaginatedMemos(searchQuery, refreshKey);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<{ title: string; body: string; tags: string } | null>(null);
-  const [reminderMemoId, setReminderMemoId] = useState<number | null>(null);
   const [savingMemo, setSavingMemo] = useState(false);
   const [expandedMemoIds, setExpandedMemoIds] = useState<Set<number>>(() => new Set());
   const [editConflict, setEditConflict] = useState<MemoEditConflict | null>(null);
@@ -282,7 +279,7 @@ export default function MemoList({ searchQuery, archiveEnabled, theme, refreshKe
   const handleDelete = async (id: number) => {
     try {
       if (archiveEnabled) {
-        await deleteMemo(id, true);
+        await archiveMemo(id);
         // Refresh archive count
         const count = await memoArchiveCount();
         onArchiveCountChange?.(count);
@@ -388,14 +385,6 @@ export default function MemoList({ searchQuery, archiveEnabled, theme, refreshKe
                   </span>
                 )}
                 <div style={styles.hoverActions}>
-                  <button type="button" style={styles.actionBtn}
-                    aria-label={t.memoReminder} aria-expanded={reminderMemoId === memo.id} title={t.memoReminder}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setReminderMemoId((current) => current === memo.id ? null : memo.id);
-                    }}>
-                    <Bell size={13} />
-                  </button>
                   <button
                     style={styles.actionBtn}
                     onClick={(e) => { e.stopPropagation(); startEditing(memo); }}
@@ -534,9 +523,6 @@ export default function MemoList({ searchQuery, archiveEnabled, theme, refreshKe
                   {renderMemoBody(memo.body, isExpanded ? 10000 : MEMO_COLLAPSE_TEXT_LIMIT, isExpanded ? 220 : 72)}
                 </div>
               )}
-              {reminderMemoId === memo.id && <Suspense fallback={null}>
-                <ClassicMemoReminder memoId={memo.id} revision={refreshKey} theme={theme}/>
-              </Suspense>}
               {/* Timestamps */}
               <div style={styles.timestampRow}>
                 <div style={styles.timestampLeft}>
@@ -689,7 +675,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   conflictMessage: {
     color: 'var(--danger)',
-    fontSize: '12px',
+    fontSize: '11px',
     lineHeight: 1.4,
   },
   conflictActions: {
@@ -699,7 +685,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
   },
   conflictBtn: {
-    fontSize: '12px',
+    fontSize: '11px',
     padding: '4px 8px',
     borderRadius: '4px',
     border: '1px solid var(--border)',
@@ -708,7 +694,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   conflictPrimaryBtn: {
-    fontSize: '12px',
+    fontSize: '11px',
     padding: '4px 8px',
     borderRadius: '4px',
     border: 'none',
@@ -726,7 +712,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'auto',
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
-    fontSize: '12px',
+    fontSize: '11px',
     lineHeight: 1.45,
     color: 'var(--text-secondary)',
   },
@@ -769,7 +755,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
   },
   emptyHint: {
-    fontSize: '12px',
+    fontSize: '11px',
     color: 'var(--text-muted)',
   },
 
@@ -914,7 +900,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent',
     color: 'var(--text-muted)',
     padding: 0,
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: 500,
     cursor: 'pointer',
     lineHeight: 1,
@@ -935,7 +921,7 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: '18px',
     padding: '0 6px',
     borderRadius: '10px',
-    fontSize: '12px',
+    fontSize: '10px',
     fontWeight: 600,
     textTransform: 'uppercase' as const,
     letterSpacing: '0.5px',
@@ -976,7 +962,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap',
   },
   timestamp: {
-    fontSize: '12px',
+    fontSize: '11px',
     color: 'var(--text-muted)',
     lineHeight: '18px',
   },
@@ -985,7 +971,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: '18px',
-    fontSize: '12px',
+    fontSize: '10px',
     color: 'var(--memo-contrast)',
     background: 'var(--memo-contrast-bg, rgba(236,95,158,0.08))',
     padding: '0 6px',
@@ -1020,7 +1006,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     outline: 'none',
     background: 'transparent',
-    fontSize: '12px',
+    fontSize: '11px',
     color: 'var(--memo-contrast)',
     padding: '4px 0',
   },
@@ -1031,7 +1017,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '8px',
   },
   editHint: {
-    fontSize: '12px',
+    fontSize: '10px',
     color: 'var(--text-muted)',
     marginRight: 'auto',
   },

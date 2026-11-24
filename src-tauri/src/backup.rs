@@ -6,11 +6,20 @@ use std::io::{Read, Write};
 use std::path::Path;
 use zip::write::FileOptions;
 
+pub const BACKUP_EXTENSION: &str = "scbackup";
+
 const PACKAGE_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "manifest.json";
 const DATA_FILE: &str = "data.json";
 const CHECKSUMS_FILE: &str = "checksums.json";
 const ASSETS_DIR: &str = "assets/";
+
+#[derive(Debug, Clone)]
+pub struct BackupMetadata {
+    pub created_at: String,
+    pub app_version: String,
+    pub backup_version: u32,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,8 +39,31 @@ struct BackupChecksums {
     data_sha256: String,
 }
 
+pub fn is_supported_backup_path(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some(BACKUP_EXTENSION)
+}
+
+pub fn read_backup_metadata(path: &Path) -> Result<BackupMetadata, String> {
+    ensure_backup_extension(path)?;
+    let manifest = read_package_manifest(path)?;
+    Ok(BackupMetadata {
+        created_at: manifest.created_at,
+        app_version: manifest.app_version,
+        backup_version: manifest.backup_version,
+    })
+}
+
 pub fn read_backup_data(path: &Path) -> Result<BackupData, String> {
+    ensure_backup_extension(path)?;
     read_package_backup(path)
+}
+
+fn ensure_backup_extension(path: &Path) -> Result<(), String> {
+    if is_supported_backup_path(path) {
+        Ok(())
+    } else {
+        Err("Backup file must be a .scbackup file".to_string())
+    }
 }
 
 pub fn write_backup_data(path: &Path, data: &BackupData) -> Result<(), String> {
@@ -89,14 +121,6 @@ fn read_package_manifest(path: &Path) -> Result<BackupManifest, String> {
 }
 
 fn read_package_backup(path: &Path) -> Result<BackupData, String> {
-    let manifest = read_package_manifest(path)?;
-    if manifest.app != "SuperClipboard"
-        || manifest.package_version != PACKAGE_VERSION
-        || manifest.data_file != DATA_FILE
-        || manifest.backup_version != 1
-    {
-        return Err("Unsupported SuperClipboard backup manifest".into());
-    }
     let data_json = read_zip_file(path, DATA_FILE)?;
     let checksums: BackupChecksums = read_zip_json(path, CHECKSUMS_FILE)?;
     let actual_hash = sha256_hex(&data_json);
@@ -116,25 +140,13 @@ fn read_zip_file(path: &Path, name: &str) -> Result<Vec<u8>, String> {
     let file = File::open(path).map_err(|e| format!("Failed to read backup: {}", e))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("Invalid backup package: {}", e))?;
-    let entry = archive
+    let mut entry = archive
         .by_name(name)
         .map_err(|e| format!("Backup package is missing {}: {}", name, e))?;
-    let limit = if name == DATA_FILE {
-        512 * 1024 * 1024
-    } else {
-        64 * 1024
-    };
-    if entry.size() > limit {
-        return Err(format!("Backup member {name} exceeds the size limit"));
-    }
     let mut bytes = Vec::new();
     entry
-        .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| format!("Failed to read {}: {}", name, e))?;
-    if bytes.len() as u64 > limit {
-        return Err(format!("Backup member {name} exceeds the size limit"));
-    }
     Ok(bytes)
 }
 
@@ -165,7 +177,11 @@ mod tests {
     }
 
     fn temp_path() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("superclipboard-test-{}.scbackup", Uuid::new_v4()))
+        std::env::temp_dir().join(format!(
+            "superclipboard-test-{}.{}",
+            Uuid::new_v4(),
+            BACKUP_EXTENSION
+        ))
     }
 
     #[test]
@@ -175,10 +191,13 @@ mod tests {
 
         write_backup_data(&path, &data).unwrap();
         let restored = read_backup_data(&path).unwrap();
+        let metadata = read_backup_metadata(&path).unwrap();
 
         assert_eq!(restored.app, "SuperClipboard");
         assert_eq!(restored.app_version, "2.3.2");
         assert_eq!(restored.settings.len(), 1);
+        assert_eq!(metadata.app_version, "2.3.2");
+        assert_eq!(metadata.backup_version, 1);
 
         let file = File::open(&path).unwrap();
         let mut archive = zip::ZipArchive::new(file).unwrap();

@@ -540,44 +540,39 @@ pub async fn copy_to_clipboard(
     .await?;
 
     if let Some(entry) = entry {
-        write_to_system(&entry, use_original.unwrap_or(false))?;
+        let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
+        match entry.category {
+            classifier::Category::Image => {
+                use base64::Engine;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&entry.content)
+                    .map_err(|error| error.to_string())?;
+                let image = image::load_from_memory(&bytes).map_err(|error| error.to_string())?;
+                let rgba = image.to_rgba8();
+                let (width, height) = rgba.dimensions();
+                clipboard
+                    .set_image(arboard::ImageData {
+                        width: width as usize,
+                        height: height as usize,
+                        bytes: rgba.into_raw().into(),
+                    })
+                    .map_err(|error| error.to_string())?;
+            }
+            _ => {
+                let text = if use_original.unwrap_or(false) {
+                    entry.original_content.as_deref().unwrap_or(&entry.content)
+                } else {
+                    &entry.content
+                };
+                clipboard
+                    .set_text(text)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
         Ok(true)
     } else {
         Ok(false)
     }
-}
-
-pub(crate) fn write_to_system(entry: &ClipboardEntry, use_original: bool) -> Result<(), String> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
-    match entry.category {
-        classifier::Category::Image => {
-            use base64::Engine;
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(&entry.content)
-                .map_err(|error| error.to_string())?;
-            let image = image::load_from_memory(&bytes).map_err(|error| error.to_string())?;
-            let rgba = image.to_rgba8();
-            let (width, height) = rgba.dimensions();
-            clipboard
-                .set_image(arboard::ImageData {
-                    width: width as usize,
-                    height: height as usize,
-                    bytes: rgba.into_raw().into(),
-                })
-                .map_err(|error| error.to_string())?;
-        }
-        _ => {
-            let text = if use_original {
-                entry.original_content.as_deref().unwrap_or(&entry.content)
-            } else {
-                &entry.content
-            };
-            clipboard
-                .set_text(text)
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

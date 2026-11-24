@@ -1,8 +1,3 @@
-mod memo_repository;
-pub use memo_repository::*;
-mod clipboard_repository;
-pub use clipboard_repository::*;
-mod transfer;
 use crate::classifier::{classify_text_tags, Category, CLASSIFICATION_RULES_VERSION};
 use crate::memo_tags;
 use crate::remote_migrations;
@@ -24,7 +19,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
-pub(crate) use transfer::{merge_workspace, workspace_snapshot};
 use uuid::Uuid;
 
 const DEFAULT_PORT: &str = "5432";
@@ -246,43 +240,17 @@ fn remote_config(storage: &Storage) -> RemoteResult<RemoteDbConfig> {
         return Ok(RemoteDbConfig { url, ssl_mode });
     }
 
-    let mut url = if let Some(protected) = setting(storage, "remote_db_url_protected") {
-        crate::workspace_config::credentials::decode(&protected)
-            .map_err(RemoteStorageError::InvalidOperation)?
-    } else {
-        setting(storage, "remote_db_url").ok_or(RemoteStorageError::NotConfigured)?
-    };
+    let mut url = setting(storage, "remote_db_url").ok_or(RemoteStorageError::NotConfigured)?;
     if !url.starts_with("postgres://") && !url.starts_with("postgresql://") {
         return Err(RemoteStorageError::InvalidUrl(
             "URL must start with postgres:// or postgresql://".to_string(),
         ));
     }
-    let mut parsed = url::Url::parse(&url)
-        .map_err(|_| RemoteStorageError::InvalidUrl("Malformed PostgreSQL URI".into()))?;
-    let mut query: Vec<(String, String)> = parsed.query_pairs().into_owned().collect();
-    let ssl_mode = query
-        .iter()
-        .rev()
-        .find(|(key, _)| key == "sslmode")
-        .map(|(_, value)| value.clone())
-        .unwrap_or(ssl_mode);
-    // The native TLS connector validates certificates and hostnames when TLS is required.
-    let driver_mode = match ssl_mode.as_str() {
-        "verify-full" => "require",
-        "disable" | "prefer" | "require" => &ssl_mode,
-        _ => {
-            return Err(RemoteStorageError::InvalidUrl(
-                "Unsupported PostgreSQL TLS mode".into(),
-            ))
-        }
-    };
-    query.retain(|(key, _)| key != "sslmode");
-    parsed
-        .query_pairs_mut()
-        .clear()
-        .extend_pairs(query)
-        .append_pair("sslmode", driver_mode);
-    url = parsed.to_string();
+    if !url.contains("sslmode=") {
+        let separator = if url.contains('?') { '&' } else { '?' };
+        url.push(separator);
+        url.push_str(&format!("sslmode={}", ssl_mode));
+    }
     if !url.contains("connect_timeout=") {
         let separator = if url.contains('?') { '&' } else { '?' };
         url.push(separator);
@@ -360,7 +328,7 @@ pub fn listen_for_changes(
 ) -> RemoteResult<()> {
     let config = remote_config(storage)?;
     let mut client = connect_direct(&config)?;
-    client.batch_execute("LISTEN superclipboard_v4_changes")?;
+    client.batch_execute("LISTEN superclipboard_changes")?;
     while !stop.load(Ordering::Relaxed) {
         let notification = {
             let mut notifications = client.notifications();
@@ -434,6 +402,14 @@ fn invalidate_pool_snapshot(snapshot: &PoolSnapshot) {
     }
 }
 
+pub fn invalidate_pool() {
+    if let Some(cache) = POOL_CACHE.get() {
+        if let Ok(mut guard) = cache.lock() {
+            *guard = None;
+        }
+    }
+}
+
 enum PooledActionError {
     Checkout(r2d2::Error),
     Operation(RemoteStorageError),
@@ -504,38 +480,14 @@ pub fn test_connection(storage: &Storage) -> RemoteResult<String> {
     })
 }
 
-pub fn workspace_id(storage: &Storage) -> RemoteResult<String> {
-    with_client(storage, |client| {
-        client.execute(
-            "INSERT INTO superclipboard_v4.metadata (key, value) VALUES ('workspace_id', $1)
-             ON CONFLICT (key) DO NOTHING",
-            &[&Uuid::new_v4().to_string()],
-        )?;
-        Ok(client
-            .query_one(
-                "SELECT value FROM superclipboard_v4.metadata WHERE key = 'workspace_id'",
-                &[],
-            )?
-            .get(0))
-    })
-}
-
-pub(crate) fn schema_marker(storage: &Storage) -> RemoteResult<(String, String)> {
-    let config = remote_config(storage)?;
-    Ok((
-        format!("{REMOTE_SCHEMA_CACHE_PREFIX}{}", config.cache_key()),
-        remote_migrations::VERSION.to_string(),
-    ))
-}
-
 pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
     let result = with_client(storage, |client| {
         let mut transaction = client.transaction()?;
         transaction.batch_execute(
             "
-            SELECT pg_advisory_xact_lock(78242354);
-            CREATE SCHEMA IF NOT EXISTS superclipboard_v4;
-            CREATE TABLE IF NOT EXISTS superclipboard_v4.schema_migrations (
+            SELECT pg_advisory_xact_lock(78242351);
+            CREATE SCHEMA IF NOT EXISTS superclipboard;
+            CREATE TABLE IF NOT EXISTS superclipboard.schema_migrations (
                 version BIGINT PRIMARY KEY,
                 description TEXT NOT NULL,
                 applied_at TEXT NOT NULL DEFAULT now()::text
@@ -544,7 +496,7 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
         )?;
         let applied_version: i64 = transaction
             .query_one(
-                "SELECT COALESCE(MAX(version), 0) FROM superclipboard_v4.schema_migrations",
+                "SELECT COALESCE(MAX(version), 0) FROM superclipboard.schema_migrations",
                 &[],
             )?
             .get(0);
@@ -557,8 +509,9 @@ pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
         Ok(())
     });
     if result.is_ok() {
-        if let Ok((key, version)) = schema_marker(storage) {
-            let _ = storage.set_setting(&key, &version);
+        if let Ok(config) = remote_config(storage) {
+            let key = format!("{REMOTE_SCHEMA_CACHE_PREFIX}{}", config.cache_key());
+            let _ = storage.set_setting(&key, &remote_migrations::VERSION.to_string());
         }
     }
     result
@@ -571,7 +524,7 @@ pub fn reclassify_clipboard_entries(storage: &Storage) -> RemoteResult<u64> {
         let mut transaction = client.transaction()?;
         let rows = transaction.query(
             "SELECT id, content_type, content, preview
-             FROM superclipboard_v4.clipboard_entries
+             FROM superclipboard.clipboard_entries
              WHERE deleted_at IS NULL AND content_type NOT LIKE 'image/%'",
             &[],
         )?;
@@ -602,7 +555,7 @@ pub fn reclassify_clipboard_entries(storage: &Storage) -> RemoteResult<u64> {
             0
         } else {
             transaction.execute(
-                "UPDATE superclipboard_v4.clipboard_entries AS target
+                "UPDATE superclipboard.clipboard_entries AS target
              SET category = changes.category,
                  category_tags = changes.category_tags,
                  search_text = changes.search_text
@@ -616,7 +569,7 @@ pub fn reclassify_clipboard_entries(storage: &Storage) -> RemoteResult<u64> {
             )?
         };
         transaction.execute(
-            "INSERT INTO superclipboard_v4.metadata (key, value, updated_at)
+            "INSERT INTO superclipboard.metadata (key, value, updated_at)
              VALUES ('classification_rules_applied_version', $1, now()::text)
              ON CONFLICT (key) DO UPDATE
              SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
@@ -630,7 +583,7 @@ pub fn reclassify_clipboard_entries(storage: &Storage) -> RemoteResult<u64> {
 pub fn classification_rules_applied_version(storage: &Storage) -> RemoteResult<Option<i64>> {
     with_client(storage, |client| {
         let value = client.query_opt(
-            "SELECT value FROM superclipboard_v4.metadata
+            "SELECT value FROM superclipboard.metadata
              WHERE key = 'classification_rules_applied_version'",
             &[],
         )?;
@@ -696,9 +649,990 @@ fn row_to_memo(row: &Row) -> Memo {
     }
 }
 
+pub fn insert_clipboard(
+    storage: &Storage,
+    entry: &ClipboardEntry,
+) -> RemoteResult<ClipboardInsertResult> {
+    with_client(storage, |client| {
+        let mut transaction = client.transaction()?;
+        let outcome = insert_clipboard_in_transaction(&mut transaction, entry)?;
+        transaction.commit()?;
+        Ok(outcome)
+    })
+}
+
+fn insert_clipboard_in_transaction(
+    transaction: &mut Transaction<'_>,
+    entry: &ClipboardEntry,
+) -> RemoteResult<ClipboardInsertResult> {
+    let uuid = Uuid::new_v4().to_string();
+    let category_tags = normalize_category_tags(entry.category_tags.clone());
+    let category = category_tags.first().cloned().unwrap_or(Category::Text);
+    let search_text = clipboard_search_text(
+        &entry.content_type,
+        &entry.content,
+        &entry.preview,
+        &category_tags,
+    );
+    let category_tags = category_tags_json(&category_tags);
+    let content_hash = Storage::hash_content(&entry.content);
+    let inserted = transaction.execute(
+        "INSERT INTO superclipboard.clipboard_entries
+         (uuid, category, category_tags, content_type, content, preview, search_text, hash, content_hash, pinned, created_at)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+         WHERE NOT EXISTS (
+            SELECT 1 FROM superclipboard.clipboard_entries
+            WHERE hash = $8 OR content_hash = $9
+         )
+         ON CONFLICT(hash) DO NOTHING",
+        &[
+            &uuid,
+            &category.to_string(),
+            &category_tags,
+            &entry.content_type,
+            &entry.content,
+            &entry.preview,
+            &search_text,
+            &entry.hash,
+            &content_hash,
+            &entry.pinned,
+            &entry.created_at.to_rfc3339(),
+        ],
+    )?;
+    if inserted > 0 {
+        return Ok(ClipboardInsertResult::Inserted);
+    }
+
+    let promoted = transaction.execute(
+        "UPDATE superclipboard.clipboard_entries
+         SET created_at = $1
+         WHERE id = (
+            SELECT id FROM superclipboard.clipboard_entries
+            WHERE archived_at IS NULL AND deleted_at IS NULL
+              AND (hash = $2 OR content_hash = $3)
+            ORDER BY created_at DESC
+            LIMIT 1
+         )",
+        &[&entry.created_at.to_rfc3339(), &entry.hash, &content_hash],
+    )?;
+    if promoted > 0 {
+        return Ok(ClipboardInsertResult::Promoted);
+    }
+
+    let archived_duplicate_id = transaction
+        .query_opt(
+            "SELECT id FROM superclipboard.clipboard_entries
+             WHERE archived_at IS NOT NULL AND deleted_at IS NULL
+               AND (hash = $1 OR content_hash = $2)
+             ORDER BY archived_at DESC
+             LIMIT 1",
+            &[&entry.hash, &content_hash],
+        )?
+        .map(|row| row.get(0));
+    Ok(archived_duplicate_id
+        .map(ClipboardInsertResult::ArchivedDuplicate)
+        .unwrap_or(ClipboardInsertResult::Ignored))
+}
+
+fn delete_active_clipboards_in_transaction(
+    transaction: &mut Transaction<'_>,
+    ids: &[i64],
+    archive: bool,
+) -> RemoteResult<u64> {
+    let affected = if archive {
+        transaction.execute(
+            "UPDATE superclipboard.clipboard_entries
+             SET archived_at = now()::text, version = version + 1
+             WHERE id = ANY($1) AND archived_at IS NULL AND deleted_at IS NULL",
+            &[&ids],
+        )?
+    } else {
+        transaction.execute(
+            "DELETE FROM superclipboard.clipboard_entries
+             WHERE id = ANY($1) AND archived_at IS NULL AND deleted_at IS NULL",
+            &[&ids],
+        )?
+    };
+    if affected != ids.len() as u64 {
+        return Err(RemoteStorageError::InvalidOperation(
+            "Some selected clipboard entries are no longer available.".to_string(),
+        ));
+    }
+    Ok(affected)
+}
+
+/// Atomically store a merged text entry and optionally remove its source entries.
+pub fn merge_clipboard_entry(
+    storage: &Storage,
+    entry: &ClipboardEntry,
+    source_ids: &[i64],
+    delete_sources: bool,
+    archive_sources: bool,
+) -> RemoteResult<(ClipboardInsertResult, u64)> {
+    with_client(storage, |client| {
+        let mut transaction = client.transaction()?;
+        let outcome = insert_clipboard_in_transaction(&mut transaction, entry)?;
+        let deleted = if delete_sources {
+            delete_active_clipboards_in_transaction(&mut transaction, source_ids, archive_sources)?
+        } else {
+            0
+        };
+        transaction.commit()?;
+        Ok((outcome, deleted))
+    })
+}
+
+/// Atomically create a merged image memo and optionally remove its source entries.
+pub fn merge_memo_entry(storage: &Storage, request: MergeMemoRequest<'_>) -> RemoteResult<u64> {
+    let title = request.title.to_string();
+    let body = request.body.to_string();
+    let tags = memo_tags::manual_only(request.tags);
+    let auto_tags = request.auto_tags.to_vec();
+    let source_ids = request.source_ids.to_vec();
+    let delete_sources = request.delete_sources;
+    let archive_sources = request.archive_sources;
+    let search_text = memo_search_text(&title, &body, &tags, &auto_tags);
+    let auto_tags = serde_json::to_string(&auto_tags).unwrap_or_else(|_| "[]".to_string());
+    let now = Utc::now().to_rfc3339();
+    let uuid = Uuid::new_v4().to_string();
+    with_client(storage, |client| {
+        let mut transaction = client.transaction()?;
+        transaction.execute(
+            "INSERT INTO superclipboard.memos
+             (uuid, title, body, tags, auto_tags, search_text, sort_order, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6,
+                (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM superclipboard.memos), $7, $7)",
+            &[&uuid, &title, &body, &tags, &auto_tags, &search_text, &now],
+        )?;
+        let deleted = if delete_sources {
+            delete_active_clipboards_in_transaction(&mut transaction, &source_ids, archive_sources)?
+        } else {
+            0
+        };
+        transaction.commit()?;
+        Ok(deleted)
+    })
+}
+
+pub fn query_clipboard(
+    storage: &Storage,
+    filter: &QueryFilter,
+) -> RemoteResult<Vec<ClipboardEntry>> {
+    let mut sql = String::from(
+        "SELECT id, category, category_tags, content_type,
+                CASE WHEN category = 'image' THEN '' ELSE content END AS content,
+                preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
+         FROM superclipboard.clipboard_entries WHERE archived_at IS NULL AND deleted_at IS NULL",
+    );
+    let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+
+    if let Some(category) = &filter.category {
+        append_category_filter(
+            &mut sql,
+            &mut values,
+            category,
+            filter.include_auxiliary_tags,
+        );
+    }
+    if let Some(search) = &filter.search {
+        append_token_search(&mut sql, &mut values, search, &["search_text"]);
+    }
+
+    sql.push_str(" ORDER BY pinned DESC, created_at DESC");
+    let limit = filter.limit.unwrap_or(50).clamp(1, 500);
+    values.push(Box::new(limit));
+    sql.push_str(&format!(" LIMIT ${}", values.len()));
+    let offset = filter.offset.unwrap_or(0).max(0);
+    if offset > 0 {
+        values.push(Box::new(offset));
+        sql.push_str(&format!(" OFFSET ${}", values.len()));
+    }
+    let params: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
+    with_client(storage, |client| {
+        Ok(client
+            .query(&sql, &params)?
+            .iter()
+            .map(row_to_entry)
+            .collect())
+    })
+}
+
+pub fn get_clipboard_by_id(storage: &Storage, id: i64) -> RemoteResult<Option<ClipboardEntry>> {
+    with_client(storage, |client| {
+        let row = client.query_opt(
+            "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
+             FROM superclipboard.clipboard_entries WHERE id = $1 AND deleted_at IS NULL",
+            &[&id],
+        )?;
+        Ok(row.as_ref().map(row_to_entry))
+    })
+}
+
+pub fn get_clipboard_by_ids(
+    storage: &Storage,
+    requested_ids: &[i64],
+) -> RemoteResult<Vec<ClipboardEntry>> {
+    let ids = requested_ids.to_vec();
+    with_client(storage, |client| {
+        let rows = client.query(
+            "SELECT id, category, category_tags, content_type, content, preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
+             FROM superclipboard.clipboard_entries
+             WHERE id = ANY($1) AND deleted_at IS NULL",
+            &[&ids],
+        )?;
+        let entries = rows.iter().map(row_to_entry).collect::<Vec<_>>();
+        Ok(ids
+            .iter()
+            .filter_map(|id| entries.iter().find(|entry| entry.id == *id).cloned())
+            .collect())
+    })
+}
+
+pub fn delete_clipboard(storage: &Storage, id: i64, archive: bool) -> RemoteResult<bool> {
+    with_client(storage, |client| {
+        let rows = if archive {
+            client.execute(
+                "UPDATE superclipboard.clipboard_entries SET archived_at = now()::text, version = version + 1 WHERE id = $1 AND archived_at IS NULL",
+                &[&id],
+            )?
+        } else {
+            client.execute(
+                "DELETE FROM superclipboard.clipboard_entries WHERE id = $1",
+                &[&id],
+            )?
+        };
+        Ok(rows > 0)
+    })
+}
+
+pub fn delete_clipboards(storage: &Storage, ids: &[i64], archive: bool) -> RemoteResult<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let ids = ids.to_vec();
+    with_client(storage, |client| {
+        if archive {
+            Ok(client.execute(
+                "UPDATE superclipboard.clipboard_entries
+                 SET archived_at = now()::text, version = version + 1
+                 WHERE id = ANY($1) AND archived_at IS NULL AND deleted_at IS NULL",
+                &[&ids],
+            )?)
+        } else {
+            Ok(client.execute(
+                "DELETE FROM superclipboard.clipboard_entries WHERE id = ANY($1)",
+                &[&ids],
+            )?)
+        }
+    })
+}
+
+pub fn toggle_clipboard_pin(storage: &Storage, id: i64) -> RemoteResult<bool> {
+    with_client(storage, |client| {
+        Ok(client
+            .query_one(
+                "UPDATE superclipboard.clipboard_entries SET pinned = NOT pinned, version = version + 1 WHERE id = $1 RETURNING pinned",
+                &[&id],
+            )?
+            .get("pinned"))
+    })
+}
+
+pub fn update_clipboard(
+    storage: &Storage,
+    id: i64,
+    content: &str,
+    expected_version: Option<i64>,
+) -> RemoteResult<UpdateResult> {
+    with_client(storage, |client| {
+        let current = client.query_opt(
+            "SELECT content, original_content FROM superclipboard.clipboard_entries WHERE id = $1",
+            &[&id],
+        )?;
+        let Some(row) = current else {
+            return Ok(UpdateResult::updated(false));
+        };
+        let current_content: String = row.get("content");
+        let original_content: Option<String> = row.get("original_content");
+        if current_content == content {
+            return Ok(UpdateResult::updated(true));
+        }
+        let reverts_to_original = original_content.as_deref() == Some(content);
+        let original = if reverts_to_original {
+            None
+        } else {
+            Some(original_content.unwrap_or(current_content))
+        };
+        let preview = if content.chars().count() > 200 {
+            content.chars().take(200).collect::<String>()
+        } else {
+            content.to_string()
+        };
+        let now = (!reverts_to_original).then(|| Utc::now().to_rfc3339());
+        let categories = classify_text_tags(content);
+        let category = categories.first().cloned().unwrap_or(Category::Text);
+        let search_text = clipboard_search_text("text/plain", content, &preview, &categories);
+        let category_tags = category_tags_json(&categories);
+        let content_hash = Storage::hash_content(content);
+        let rows = if let Some(expected_version) = expected_version {
+            client.execute(
+                "UPDATE superclipboard.clipboard_entries
+                 SET category = $1, category_tags = $2, content = $3, preview = $4, search_text = $5, content_hash = $6, original_content = $7, updated_at = $8, version = version + 1
+                 WHERE id = $9 AND version = $10",
+                &[&category.to_string(), &category_tags, &content, &preview, &search_text, &content_hash, &original, &now, &id, &expected_version],
+            )?
+        } else {
+            client.execute(
+                "UPDATE superclipboard.clipboard_entries
+                 SET category = $1, category_tags = $2, content = $3, preview = $4, search_text = $5, content_hash = $6, original_content = $7, updated_at = $8, version = version + 1
+                 WHERE id = $9",
+                &[&category.to_string(), &category_tags, &content, &preview, &search_text, &content_hash, &original, &now, &id],
+            )?
+        };
+        if rows > 0 {
+            return Ok(UpdateResult::updated(true));
+        }
+        let exists = client
+            .query_opt(
+                "SELECT 1 FROM superclipboard.clipboard_entries WHERE id = $1",
+                &[&id],
+            )?
+            .is_some();
+        Ok(if exists {
+            UpdateResult::conflict()
+        } else {
+            UpdateResult::updated(false)
+        })
+    })
+}
+
+pub fn stats(storage: &Storage, include_auxiliary_tags: bool) -> RemoteResult<RemoteStats> {
+    with_client(storage, |client| {
+        let row = client.query_one(
+            "
+        SELECT
+            COUNT(*) FILTER (WHERE ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS total,
+            COUNT(*) FILTER (WHERE (ce.category = 'text' OR ($1 AND ce.category_tags LIKE '%\"text\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS text,
+            COUNT(*) FILTER (WHERE (ce.category = 'link' OR ($1 AND ce.category_tags LIKE '%\"link\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS link,
+            COUNT(*) FILTER (WHERE (ce.category = 'image' OR ($1 AND ce.category_tags LIKE '%\"image\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS image,
+            COUNT(*) FILTER (WHERE (ce.category = 'code' OR ($1 AND ce.category_tags LIKE '%\"code\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS code,
+            COUNT(*) FILTER (WHERE (ce.category = 'email' OR ($1 AND ce.category_tags LIKE '%\"email\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS email,
+            COUNT(*) FILTER (WHERE (ce.category = 'file_path' OR ($1 AND ce.category_tags LIKE '%\"file_path\"%')) AND ce.archived_at IS NULL AND ce.deleted_at IS NULL)::bigint AS file_path,
+            COUNT(*) FILTER (WHERE ce.archived_at IS NOT NULL AND ce.deleted_at IS NULL)::bigint AS archive,
+            COALESCE(SUM(LENGTH(ce.content) + LENGTH(ce.preview) + LENGTH(COALESCE(ce.original_content, '')))
+                FILTER (WHERE ce.archived_at IS NULL AND ce.deleted_at IS NULL), 0)::bigint AS clipboard_size,
+            (SELECT COUNT(*) FROM superclipboard.memos WHERE archived_at IS NULL AND deleted_at IS NULL)::bigint AS memo_count,
+            (SELECT COUNT(*) FROM superclipboard.memos WHERE archived_at IS NOT NULL AND deleted_at IS NULL)::bigint AS memo_archive,
+            (SELECT COALESCE(SUM(LENGTH(title) + LENGTH(body) + LENGTH(tags)), 0)::bigint
+             FROM superclipboard.memos WHERE archived_at IS NULL AND deleted_at IS NULL) AS memo_size
+        FROM superclipboard.clipboard_entries ce
+        ",
+            &[&include_auxiliary_tags],
+        )?;
+        Ok(RemoteStats {
+            total: row.get("total"),
+            text: row.get("text"),
+            link: row.get("link"),
+            image: row.get("image"),
+            code: row.get("code"),
+            email: row.get("email"),
+            file_path: row.get("file_path"),
+            archive: row.get("archive"),
+            memo_count: row.get("memo_count"),
+            memo_archive: row.get("memo_archive"),
+            clipboard_size: row.get("clipboard_size"),
+            memo_size: row.get("memo_size"),
+        })
+    })
+}
+
+pub fn clear_clipboard_unpinned(
+    storage: &Storage,
+    archive: bool,
+    category: Option<&str>,
+    include_auxiliary_tags: bool,
+) -> RemoteResult<u64> {
+    with_client(storage, |client| {
+        if let Some(category) = category {
+            let tag_pattern = category_tag_pattern(category);
+            return if archive {
+                Ok(client.execute(
+                    "UPDATE superclipboard.clipboard_entries
+                     SET archived_at = now()::text, version = version + 1
+                     WHERE pinned = false AND archived_at IS NULL AND deleted_at IS NULL
+                       AND (category = $1 OR ($2 AND category_tags LIKE $3))",
+                    &[&category, &include_auxiliary_tags, &tag_pattern],
+                )?)
+            } else {
+                Ok(client.execute(
+                    "DELETE FROM superclipboard.clipboard_entries
+                     WHERE pinned = false AND archived_at IS NULL AND deleted_at IS NULL
+                       AND (category = $1 OR ($2 AND category_tags LIKE $3))",
+                    &[&category, &include_auxiliary_tags, &tag_pattern],
+                )?)
+            };
+        }
+
+        if archive {
+            Ok(client.execute(
+                "UPDATE superclipboard.clipboard_entries SET archived_at = now()::text, version = version + 1
+                 WHERE pinned = false AND archived_at IS NULL AND deleted_at IS NULL",
+                &[],
+            )?)
+        } else {
+            Ok(client.execute(
+                "DELETE FROM superclipboard.clipboard_entries
+                 WHERE pinned = false AND archived_at IS NULL AND deleted_at IS NULL",
+                &[],
+            )?)
+        }
+    })
+}
+
+pub fn query_archived_clipboard(
+    storage: &Storage,
+    filter: &QueryFilter,
+) -> RemoteResult<Vec<ClipboardEntry>> {
+    let mut sql = String::from(
+        "SELECT id, category, category_tags, content_type,
+                CASE WHEN category = 'image' THEN '' ELSE content END AS content,
+                preview, hash, pinned, created_at, original_content, updated_at, archived_at, version
+         FROM superclipboard.clipboard_entries WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
+    );
+    let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+    if let Some(category) = &filter.category {
+        append_category_filter(
+            &mut sql,
+            &mut values,
+            category,
+            filter.include_auxiliary_tags,
+        );
+    }
+    if let Some(search) = &filter.search {
+        append_token_search(&mut sql, &mut values, search, &["search_text"]);
+    }
+    sql.push_str(" ORDER BY archived_at DESC");
+    let limit = filter.limit.unwrap_or(50).clamp(1, 500);
+    values.push(Box::new(limit));
+    sql.push_str(&format!(" LIMIT ${}", values.len()));
+    let offset = filter.offset.unwrap_or(0).max(0);
+    if offset > 0 {
+        values.push(Box::new(offset));
+        sql.push_str(&format!(" OFFSET ${}", values.len()));
+    }
+    let params: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
+    with_client(storage, |client| {
+        Ok(client
+            .query(&sql, &params)?
+            .iter()
+            .map(row_to_entry)
+            .collect())
+    })
+}
+
+pub fn clipboard_archive_count(storage: &Storage) -> RemoteResult<i64> {
+    with_client(storage, |client| {
+        Ok(client
+            .query_one(
+                "SELECT COUNT(*) FROM superclipboard.clipboard_entries WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
+                &[],
+            )?
+            .get(0))
+    })
+}
+
+pub fn unarchive_clipboard(storage: &Storage, id: i64) -> RemoteResult<bool> {
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "UPDATE superclipboard.clipboard_entries SET archived_at = NULL, version = version + 1 WHERE id = $1",
+            &[&id],
+        )? > 0)
+    })
+}
+
+pub fn permanent_delete_clipboard(storage: &Storage, id: i64) -> RemoteResult<bool> {
+    delete_clipboard(storage, id, false)
+}
+
+pub fn purge_old_clipboard_archives(storage: &Storage, days: i64) -> RemoteResult<u64> {
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "DELETE FROM superclipboard.clipboard_entries
+             WHERE archived_at IS NOT NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
+            &[&days],
+        )?)
+    })
+}
+
+pub fn empty_clipboard_archive(storage: &Storage) -> RemoteResult<u64> {
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "DELETE FROM superclipboard.clipboard_entries WHERE archived_at IS NOT NULL",
+            &[],
+        )?)
+    })
+}
+
+pub fn query_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
+    let mut sql = String::from(
+        "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, content_version AS version
+         FROM superclipboard.memos WHERE archived_at IS NULL AND deleted_at IS NULL",
+    );
+    let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+    if let Some(search) = &filter.search {
+        append_token_search(&mut sql, &mut values, search, &["search_text"]);
+    }
+    sql.push_str(" ORDER BY pinned DESC, sort_order DESC");
+    let limit = filter.limit.unwrap_or(100).clamp(1, 500);
+    values.push(Box::new(limit));
+    sql.push_str(&format!(" LIMIT ${}", values.len()));
+    let offset = filter.offset.unwrap_or(0).max(0);
+    if offset > 0 {
+        values.push(Box::new(offset));
+        sql.push_str(&format!(" OFFSET ${}", values.len()));
+    }
+    let params: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
+    with_client(storage, |client| {
+        Ok(client
+            .query(&sql, &params)?
+            .iter()
+            .map(row_to_memo)
+            .collect())
+    })
+}
+
+pub fn create_memo(
+    storage: &Storage,
+    title: &str,
+    body: &str,
+    tags: &str,
+    auto_tags: &[String],
+) -> RemoteResult<Memo> {
+    let uuid = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    let tags = memo_tags::manual_only(tags);
+    let search_text = memo_search_text(title, body, &tags, auto_tags);
+    let auto_tags = serde_json::to_string(auto_tags).unwrap_or_else(|_| "[]".to_string());
+    with_client(storage, |client| {
+        let row = client.query_one(
+            "INSERT INTO superclipboard.memos (uuid, title, body, tags, auto_tags, search_text, sort_order, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM superclipboard.memos), $7, $7)
+             RETURNING id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, content_version AS version",
+            &[&uuid, &title, &body, &tags, &auto_tags, &search_text, &now],
+        )?;
+        Ok(row_to_memo(&row))
+    })
+}
+
+pub fn update_memo(
+    storage: &Storage,
+    id: i64,
+    title: &str,
+    body: &str,
+    tags: &str,
+    auto_tags: &[String],
+    expected_version: Option<i64>,
+) -> RemoteResult<UpdateResult> {
+    let now = Utc::now().to_rfc3339();
+    let tags = memo_tags::manual_only(tags);
+    let search_text = memo_search_text(title, body, &tags, auto_tags);
+    let auto_tags = serde_json::to_string(auto_tags).unwrap_or_else(|_| "[]".to_string());
+    with_client(storage, |client| {
+        let rows = if let Some(expected_version) = expected_version {
+            client.execute(
+                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, auto_tags = $4, search_text = $5, updated_at = $6, version = version + 1, content_version = content_version + 1 WHERE id = $7 AND content_version = $8 AND archived_at IS NULL AND deleted_at IS NULL",
+                &[&title, &body, &tags, &auto_tags, &search_text, &now, &id, &expected_version],
+            )?
+        } else {
+            client.execute(
+                "UPDATE superclipboard.memos SET title = $1, body = $2, tags = $3, auto_tags = $4, search_text = $5, updated_at = $6, version = version + 1, content_version = content_version + 1 WHERE id = $7 AND archived_at IS NULL AND deleted_at IS NULL",
+                &[&title, &body, &tags, &auto_tags, &search_text, &now, &id],
+            )?
+        };
+        if rows > 0 {
+            return Ok(UpdateResult::updated(true));
+        }
+        let exists = client
+            .query_opt("SELECT 1 FROM superclipboard.memos WHERE id = $1", &[&id])?
+            .is_some();
+        Ok(if exists {
+            UpdateResult::conflict()
+        } else {
+            UpdateResult::updated(false)
+        })
+    })
+}
+
+pub fn delete_memo(storage: &Storage, id: i64, archive: bool) -> RemoteResult<bool> {
+    with_client(storage, |client| {
+        let rows = if archive {
+            client.execute(
+                "UPDATE superclipboard.memos SET archived_at = now()::text, version = version + 1 WHERE id = $1 AND archived_at IS NULL",
+                &[&id],
+            )?
+        } else {
+            client.execute("DELETE FROM superclipboard.memos WHERE id = $1", &[&id])?
+        };
+        Ok(rows > 0)
+    })
+}
+
+pub fn toggle_memo_pin(storage: &Storage, id: i64) -> RemoteResult<bool> {
+    with_client(storage, |client| {
+        Ok(client.query_one(
+            "UPDATE superclipboard.memos SET pinned = NOT pinned, version = version + 1 WHERE id = $1 RETURNING pinned",
+            &[&id],
+        )?
+        .get("pinned"))
+    })
+}
+
+pub fn memo_count(storage: &Storage) -> RemoteResult<i64> {
+    with_client(storage, |client| {
+        Ok(client
+            .query_one(
+                "SELECT COUNT(*) FROM superclipboard.memos WHERE archived_at IS NULL AND deleted_at IS NULL",
+                &[],
+            )?
+            .get(0))
+    })
+}
+
+pub fn reorder_memos(storage: &Storage, orders: &[(i64, i64)]) -> RemoteResult<()> {
+    with_client(storage, |client| {
+        let mut tx = client.transaction()?;
+        for (id, sort_order) in orders {
+            tx.execute(
+                "UPDATE superclipboard.memos
+                 SET sort_order = $1, sort_version = sort_version + 1, version = version + 1
+                 WHERE id = $2 AND pinned = false AND archived_at IS NULL AND deleted_at IS NULL
+                   AND sort_order IS DISTINCT FROM $1",
+                &[sort_order, id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    })
+}
+
+pub fn query_archived_memos(storage: &Storage, filter: &MemoFilter) -> RemoteResult<Vec<Memo>> {
+    let mut sql = String::from(
+        "SELECT id, title, body, tags, auto_tags, pinned, sort_order, created_at, updated_at, archived_at, content_version AS version
+         FROM superclipboard.memos WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
+    );
+    let mut values: Vec<Box<dyn ToSql + Sync>> = Vec::new();
+    if let Some(search) = &filter.search {
+        append_token_search(&mut sql, &mut values, search, &["search_text"]);
+    }
+    sql.push_str(" ORDER BY archived_at DESC");
+    let limit = filter.limit.unwrap_or(100).clamp(1, 500);
+    values.push(Box::new(limit));
+    sql.push_str(&format!(" LIMIT ${}", values.len()));
+    let offset = filter.offset.unwrap_or(0).max(0);
+    if offset > 0 {
+        values.push(Box::new(offset));
+        sql.push_str(&format!(" OFFSET ${}", values.len()));
+    }
+    let params: Vec<&(dyn ToSql + Sync)> = values.iter().map(|value| value.as_ref()).collect();
+    with_client(storage, |client| {
+        Ok(client
+            .query(&sql, &params)?
+            .iter()
+            .map(row_to_memo)
+            .collect())
+    })
+}
+
+pub fn memo_archive_count(storage: &Storage) -> RemoteResult<i64> {
+    with_client(storage, |client| {
+        Ok(client
+            .query_one(
+                "SELECT COUNT(*) FROM superclipboard.memos WHERE archived_at IS NOT NULL AND deleted_at IS NULL",
+                &[],
+            )?
+            .get(0))
+    })
+}
+
+pub fn unarchive_memo(storage: &Storage, id: i64) -> RemoteResult<bool> {
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "UPDATE superclipboard.memos SET archived_at = NULL, version = version + 1 WHERE id = $1",
+            &[&id],
+        )? > 0)
+    })
+}
+
+pub fn permanent_delete_memo(storage: &Storage, id: i64) -> RemoteResult<bool> {
+    delete_memo(storage, id, false)
+}
+
+pub fn purge_old_memo_archives(storage: &Storage, days: i64) -> RemoteResult<u64> {
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "DELETE FROM superclipboard.memos
+             WHERE archived_at IS NOT NULL AND archived_at::timestamptz < now() - ($1::int * interval '1 day')",
+            &[&days],
+        )?)
+    })
+}
+
+pub fn empty_memo_archive(storage: &Storage) -> RemoteResult<u64> {
+    with_client(storage, |client| {
+        Ok(client.execute(
+            "DELETE FROM superclipboard.memos WHERE archived_at IS NOT NULL",
+            &[],
+        )?)
+    })
+}
+
+pub fn archive_memo(storage: &Storage, id: i64) -> RemoteResult<bool> {
+    delete_memo(storage, id, true)
+}
+
 pub fn archive_clipboard(storage: &Storage, id: i64) -> RemoteResult<bool> {
     delete_clipboard(storage, id, true)
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::storage::Storage;
+
+    #[test]
+    fn cache_key_is_stable_without_exposing_credentials() {
+        let config = RemoteDbConfig {
+            url: "postgresql://user:secret@example.test/database".to_string(),
+            ssl_mode: "require".to_string(),
+        };
+        let key = config.cache_key();
+        assert_eq!(key, config.cache_key());
+        assert!(!key.contains("secret"));
+        assert_ne!(
+            key,
+            RemoteDbConfig {
+                url: "postgresql://user:other@example.test/database".to_string(),
+                ssl_mode: "require".to_string(),
+            }
+            .cache_key()
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn remote_schema_smoke_from_env() {
+        let url = std::env::var("SUPERCLIPBOARD_REMOTE_TEST_URL")
+            .expect("SUPERCLIPBOARD_REMOTE_TEST_URL is required");
+        let db_path =
+            std::env::temp_dir().join(format!("superclipboard-remote-smoke-{}.db", Uuid::new_v4()));
+        let storage = Storage::new(&db_path).expect("create temp storage");
+        storage.set_setting("storage_mode", "remote").unwrap();
+        storage
+            .set_setting("remote_db_connection_mode", "url")
+            .unwrap();
+        storage.set_setting("remote_db_url", &url).unwrap();
+        storage.set_setting("remote_db_ssl_mode", "prefer").unwrap();
+
+        ensure_schema(&storage).expect("ensure remote schema");
+        assert!(is_schema_current(&storage));
+        reclassify_clipboard_entries(&storage).expect("record active classification rules");
+        assert_eq!(
+            classification_rules_applied_version(&storage).expect("read classification rules"),
+            Some(CLASSIFICATION_RULES_VERSION)
+        );
+        with_client(&storage, |client| {
+            let event_table: Option<String> = client
+                .query_one(
+                    "SELECT to_regclass('superclipboard.sync_events')::text",
+                    &[],
+                )?
+                .get(0);
+            assert!(event_table.is_none());
+            let mut transaction = client.transaction()?;
+            transaction.batch_execute(remote_migrations::SEARCH_BACKFILL_SQL)?;
+            transaction.rollback()?;
+            Ok(())
+        })
+        .expect("validate remote search backfill");
+        let version = test_connection(&storage).expect("test remote connection");
+        assert!(version.contains("PostgreSQL"));
+
+        let memo_token = format!("RemoteMemo{}", Uuid::new_v4().simple());
+        let memo_payload = format!("iVBORw0KGgo{}", Uuid::new_v4().simple());
+        let memo = create_memo(
+            &storage,
+            &memo_token,
+            &format!("remote mode test body\n![image](data:image/png;base64,{memo_payload})"),
+            "smoke,EMAIL,邮箱",
+            &["image".to_string()],
+        )
+        .expect("create remote memo");
+        assert!(memo.id > 0);
+        assert_eq!(memo.tags, "smoke");
+
+        let memos = query_memos(
+            &storage,
+            &MemoFilter {
+                search: Some(memo_token.clone()),
+                ..Default::default()
+            },
+        )
+        .expect("search remote memos");
+        assert!(memos.iter().any(|item| item.id == memo.id));
+        let payload_matches = query_memos(
+            &storage,
+            &MemoFilter {
+                search: Some(memo_payload),
+                ..Default::default()
+            },
+        )
+        .expect("exclude remote memo image payload");
+        assert!(payload_matches.iter().all(|item| item.id != memo.id));
+
+        reorder_memos(&storage, &[(memo.id, memo.sort_order + 1)]).expect("reorder remote memo");
+        let reordered = query_memos(
+            &storage,
+            &MemoFilter {
+                search: Some(memo_token.clone()),
+                ..Default::default()
+            },
+        )
+        .expect("query reordered remote memo");
+        let reordered_memo = reordered
+            .iter()
+            .find(|item| item.id == memo.id)
+            .expect("find reordered remote memo");
+        assert_eq!(reordered_memo.version, memo.version);
+
+        let conflict = update_memo(
+            &storage,
+            memo.id,
+            &memo_token,
+            "stale update",
+            "smoke",
+            &[],
+            Some(memo.version + 1),
+        )
+        .expect("detect remote memo conflict");
+        assert!(conflict.conflict);
+
+        let updated = update_memo(
+            &storage,
+            memo.id,
+            &memo_token,
+            "updated remote mode test body",
+            "smoke",
+            &[],
+            Some(reordered_memo.version),
+        )
+        .expect("update remote memo");
+        assert!(updated.updated);
+
+        assert!(delete_memo(&storage, memo.id, false).expect("delete remote memo"));
+        with_client(&storage, |client| {
+            let count: i64 = client
+                .query_one(
+                    "SELECT COUNT(*) FROM superclipboard.memos WHERE id = $1",
+                    &[&memo.id],
+                )?
+                .get(0);
+            assert_eq!(count, 0);
+            Ok(())
+        })
+        .expect("verify physical memo deletion");
+
+        let text_token = format!("RemoteText{}", Uuid::new_v4().simple());
+        let entry = ClipboardEntry {
+            id: 0,
+            category: Category::Text,
+            category_tags: vec![Category::Text],
+            content_type: "text/plain".to_string(),
+            content: format!("Remote storage smoke {text_token}"),
+            preview: text_token.clone(),
+            hash: Uuid::new_v4().to_string(),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        assert!(insert_clipboard(&storage, &entry)
+            .expect("insert remote clipboard")
+            .inserted());
+
+        let entries = query_clipboard(
+            &storage,
+            &QueryFilter {
+                search: Some(text_token),
+                ..Default::default()
+            },
+        )
+        .expect("query remote clipboard");
+        let inserted = entries
+            .iter()
+            .find(|item| item.hash == entry.hash)
+            .expect("inserted remote clipboard entry");
+        let current_stats = stats(&storage, false).expect("query remote stats");
+        assert!(current_stats.total >= 1);
+        assert!(delete_clipboard(&storage, inserted.id, false).expect("delete remote clipboard"));
+        with_client(&storage, |client| {
+            let count: i64 = client
+                .query_one(
+                    "SELECT COUNT(*) FROM superclipboard.clipboard_entries WHERE id = $1",
+                    &[&inserted.id],
+                )?
+                .get(0);
+            assert_eq!(count, 0);
+            Ok(())
+        })
+        .expect("verify physical clipboard deletion");
+
+        let image_preview_token = format!("RemoteImage{}", Uuid::new_v4().simple());
+        let image_payload = format!("iVBORw0KGgo{}", Uuid::new_v4().simple());
+        let image_entry = ClipboardEntry {
+            id: 0,
+            category: Category::Image,
+            category_tags: vec![Category::Image],
+            content_type: "image/png".to_string(),
+            content: image_payload.clone(),
+            preview: format!("[Image {image_preview_token}]"),
+            hash: Uuid::new_v4().to_string(),
+            pinned: false,
+            created_at: Utc::now(),
+            original_content: None,
+            updated_at: None,
+            archived_at: None,
+            version: 1,
+        };
+        assert!(insert_clipboard(&storage, &image_entry)
+            .expect("insert remote image")
+            .inserted());
+        let payload_matches = query_clipboard(
+            &storage,
+            &QueryFilter {
+                search: Some(image_payload),
+                ..Default::default()
+            },
+        )
+        .expect("exclude remote clipboard image payload");
+        assert!(payload_matches
+            .iter()
+            .all(|item| item.hash != image_entry.hash));
+        let image_matches = query_clipboard(
+            &storage,
+            &QueryFilter {
+                search: Some(image_preview_token),
+                ..Default::default()
+            },
+        )
+        .expect("search remote image metadata");
+        let image = image_matches
+            .iter()
+            .find(|item| item.hash == image_entry.hash)
+            .expect("inserted remote image entry");
+        assert!(delete_clipboard(&storage, image.id, false).expect("delete remote image"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+}

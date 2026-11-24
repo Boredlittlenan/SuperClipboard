@@ -62,22 +62,6 @@ describe('AppSettingsProvider', () => {
     expect(setSettingMock).toHaveBeenNthCalledWith(2, 'theme_mode', 'dark');
   });
 
-  it('defaults to classic and keeps it mounted until the beta preference is saved', async () => {
-    let complete!: () => void;
-    setSettingMock.mockImplementationOnce(() => new Promise<void>((resolve) => { complete = resolve; }));
-    const { result } = renderHook(useAppSettings, { wrapper });
-    await waitFor(() => expect(result.current.ready).toBe(true));
-    expect(result.current.settings.workspaceModeBeta).toBe(false);
-
-    let update!: Promise<void>;
-    act(() => { update = result.current.setAppSetting('workspaceModeBeta', true); });
-    await waitFor(() => expect(setSettingMock).toHaveBeenCalledWith('workspace_mode_beta', 'true'));
-    expect(result.current.settings.workspaceModeBeta).toBe(false);
-    complete();
-    await act(async () => update);
-    expect(result.current.settings.workspaceModeBeta).toBe(true);
-  });
-
   it('rolls back only the setting whose latest write failed', async () => {
     setSettingMock.mockRejectedValueOnce(new Error('write failed'));
     const { result } = renderHook(useAppSettings, { wrapper });

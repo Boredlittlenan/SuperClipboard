@@ -1,36 +1,62 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
 import { Database, Network, Trash2 } from 'lucide-react';
-import { getStorageStatus, type StorageStatusInfo } from '../api/settings';
+import {
+  createBackup,
+  getSettings,
+  getStorageStatus,
+  initializeRemoteStorage,
+  listBackups,
+  openBackupFolder,
+  restoreBackup,
+  setSettings,
+  testRemoteStorage,
+} from '../api/settings';
+import type { BackupFileInfo, StorageStatusInfo } from '../api/settings';
 import { useI18n } from '../i18n';
 import { useClickOutside } from '../hooks/useClickOutside';
 import {
-  formatProfileTime, parseProfiles, payloadFromProfile, profileFromPayload, upsertProfile,
-  REMOTE_SETTING_KEYS as SETTING_KEYS, type ConnectionMode, type RemoteDbProfile,
+  formatProfileTime,
+  parseProfiles,
+  payloadFromProfile,
+  profileFromPayload,
+  profileIdForPayload,
+  profileLabel,
+  REMOTE_SETTING_KEYS as SETTING_KEYS,
+  upsertProfile,
+  type ConnectionMode,
+  type RemoteDbProfile,
   type StoredSettingsPayload,
 } from '../storage/remoteProfiles';
-import { getClassicRemoteSettings, replaceClassicRemoteProfiles, switchWorkspace } from '../workspace/bridge';
-import { StorageView } from '../workspace/settings/StorageView';
 import ConfirmDialog, { type ConfirmDialogState } from './ConfirmDialog';
 import FloatingMenuPanel from './FloatingMenuPanel';
-import '../workspace/workspace.css';
 
 type StorageMode = 'local' | 'remote';
+type BackupAction = 'idle' | 'creating' | 'restoring';
 
-function connectionUrl(profile: RemoteDbProfile) {
-  const enc = encodeURIComponent;
-  if (profile.connectionMode === 'manual') {
-    const host = profile.host.includes(':') && !profile.host.startsWith('[') ? `[${profile.host}]` : profile.host;
-    const authority = `${enc(profile.username)}:${enc(profile.password)}@${host}:${profile.port}`;
-    return new URL(`postgresql://${authority}/${enc(profile.database)}?sslmode=${enc(profile.sslMode)}`).toString();
-  }
-  const url = new URL(profile.url);
-  if (!url.searchParams.has('sslmode')) url.searchParams.set('sslmode', profile.sslMode);
-  return url.toString();
+function formatBackupSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function RemoteStorageButton({ onStorageModeChange, theme }: {
-  onStorageModeChange: () => void; theme: 'light' | 'dark';
-}) {
+function formatBackupTime(value: string): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${month}/${day} ${hours}:${minutes}`;
+}
+
+
+interface RemoteStorageButtonProps {
+  onStorageModeChange?: (mode: StorageMode) => void;
+}
+
+export default function RemoteStorageButton({ onStorageModeChange }: RemoteStorageButtonProps) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [activeStorageMode, setActiveStorageMode] = useState<StorageMode>('local');
@@ -45,15 +71,74 @@ export default function RemoteStorageButton({ onStorageModeChange, theme }: {
   const [sslMode, setSslMode] = useState('prefer');
   const [storageStatus, setStorageStatus] = useState<StorageStatusInfo | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [testState, setTestState] = useState<'idle' | 'testing' | 'ready' | 'failed'>('idle');
   const [testMessage, setTestMessage] = useState('');
-  const [transferMessage, setTransferMessage] = useState<{ text: string; error: boolean }>();
-  const [workspace, setWorkspace] = useState(0);
+  const [backups, setBackups] = useState<BackupFileInfo[]>([]);
+  const [selectedBackup, setSelectedBackup] = useState('');
+  const [appVersion, setAppVersion] = useState('');
+  const [backupAction, setBackupAction] = useState<BackupAction>('idle');
+  const [backupStatus, setBackupStatus] = useState<'idle' | 'success' | 'failed'>('idle');
+  const [backupMessage, setBackupMessage] = useState('');
+  const [restoreConfirming, setRestoreConfirming] = useState(false);
   const [profiles, setProfiles] = useState<RemoteDbProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [deleteProfileTarget, setDeleteProfileTarget] = useState<RemoteDbProfile | null>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const switching = saveState === 'saving';
+  const persistedSettingsRef = useRef<StoredSettingsPayload | null>(null);
+  const storageActionRef = useRef(false);
+
+  const writeSettings = useCallback(async (payload: StoredSettingsPayload) => {
+    await setSettings(payload);
+  }, []);
+
+  const refreshBackups = useCallback(async () => {
+    const items = await listBackups();
+    setBackups(items);
+    setSelectedBackup((current) => (
+      current && items.some((item) => item.fileName === current)
+        ? current
+        : items[0]?.fileName ?? ''
+    ));
+    return items;
+  }, []);
+
+  const selectedBackupInfo = backups.find((backup) => backup.fileName === selectedBackup);
+
+  const refreshStorageStatus = useCallback(async () => {
+    const status = await getStorageStatus();
+    setStorageStatus(status);
+    return status;
+  }, []);
+
+  const persistProfiles = useCallback(async (items: RemoteDbProfile[]) => {
+    await setSettings({ [SETTING_KEYS.profiles]: JSON.stringify(items) });
+    setProfiles(items);
+  }, []);
+
+  const readProfiles = useCallback(async () => {
+    const values = await getSettings([SETTING_KEYS.profiles]);
+    return parseProfiles(values[SETTING_KEYS.profiles]);
+  }, []);
+
+  const buildSettingsPayload = useCallback((ready: boolean): StoredSettingsPayload => ({
+    [SETTING_KEYS.storageMode]: storageMode,
+    [SETTING_KEYS.connectionMode]: connectionMode,
+    [SETTING_KEYS.url]: url.trim(),
+    [SETTING_KEYS.host]: host.trim(),
+    [SETTING_KEYS.port]: port.trim() || '5432',
+    [SETTING_KEYS.database]: database.trim(),
+    [SETTING_KEYS.username]: username.trim(),
+    [SETTING_KEYS.password]: password,
+    [SETTING_KEYS.sslMode]: sslMode,
+    [SETTING_KEYS.ready]: ready ? 'true' : 'false',
+  }), [connectionMode, database, host, password, port, sslMode, storageMode, url, username]);
+
+  const getPayloadActiveMode = useCallback((payload: StoredSettingsPayload | null): StorageMode => {
+    return payload?.[SETTING_KEYS.storageMode] === 'remote' && payload?.[SETTING_KEYS.ready] === 'true'
+      ? 'remote'
+      : 'local';
+  }, []);
 
   const applyPayloadToForm = useCallback((payload: StoredSettingsPayload) => {
     setStorageMode(payload[SETTING_KEYS.storageMode] === 'remote' ? 'remote' : 'local');
@@ -68,98 +153,275 @@ export default function RemoteStorageButton({ onStorageModeChange, theme }: {
   }, []);
 
   const loadSettings = useCallback(async () => {
-    const saved = await getClassicRemoteSettings();
-    const loaded = parseProfiles(saved.profiles);
-    setProfiles(loaded);
-    const mode = saved.isRemote ? 'remote' : 'local';
-    const activeProfile = loaded.find((profile) => profile.id === saved.activeProfile);
-    applyPayloadToForm({
-      ...(activeProfile ? payloadFromProfile(activeProfile, true) : { [SETTING_KEYS.url]: saved.url }),
-      [SETTING_KEYS.storageMode]: mode,
-    });
-    setActiveStorageMode(mode);
-    setSelectedProfileId(activeProfile?.id ?? '');
+    const values = await getSettings(Object.values(SETTING_KEYS));
+    const mode = values[SETTING_KEYS.storageMode];
+    const connMode = values[SETTING_KEYS.connectionMode];
+    const savedUrl = values[SETTING_KEYS.url];
+    const savedHost = values[SETTING_KEYS.host];
+    const savedPort = values[SETTING_KEYS.port];
+    const savedDatabase = values[SETTING_KEYS.database];
+    const savedUsername = values[SETTING_KEYS.username];
+    const savedPassword = values[SETTING_KEYS.password];
+    const savedSslMode = values[SETTING_KEYS.sslMode];
+    const ready = values[SETTING_KEYS.ready];
+    const loadedStorageMode = mode === 'remote' ? 'remote' : 'local';
+    const loadedRemoteActive = loadedStorageMode === 'remote' && ready === 'true';
+    const persistedPayload: StoredSettingsPayload = {
+      [SETTING_KEYS.storageMode]: loadedStorageMode,
+      [SETTING_KEYS.connectionMode]: connMode === 'manual' ? 'manual' : 'url',
+      [SETTING_KEYS.url]: savedUrl ?? '',
+      [SETTING_KEYS.host]: savedHost ?? '',
+      [SETTING_KEYS.port]: savedPort || '5432',
+      [SETTING_KEYS.database]: savedDatabase ?? '',
+      [SETTING_KEYS.username]: savedUsername ?? '',
+      [SETTING_KEYS.password]: savedPassword ?? '',
+      [SETTING_KEYS.sslMode]: savedSslMode || 'prefer',
+      [SETTING_KEYS.ready]: loadedRemoteActive ? 'true' : 'false',
+    };
+
+    persistedSettingsRef.current = persistedPayload;
+    setActiveStorageMode(loadedRemoteActive ? 'remote' : 'local');
+    applyPayloadToForm(persistedPayload);
+    const loadedProfiles = parseProfiles(values[SETTING_KEYS.profiles]);
+    setProfiles(loadedProfiles);
+    setSelectedProfileId(loadedRemoteActive ? profileIdForPayload(loadedProfiles, persistedPayload) : '');
+    setSaveState('idle');
+    setTestState('idle');
+    setTestMessage('');
   }, [applyPayloadToForm]);
 
   useEffect(() => {
-    void loadSettings().catch((error) => { setSaveState('failed'); setTestMessage(String(error)); });
+    loadSettings().catch((err) => {
+      console.error('Failed to load remote storage settings:', err);
+      setSaveState('failed');
+    });
   }, [loadSettings]);
 
-  const refreshStorageStatus = () => {
-    void getStorageStatus().then(setStorageStatus, (error) => {
+  useEffect(() => {
+    if (!open) return;
+    loadSettings().catch((err) => {
+      console.error('Failed to load remote storage settings:', err);
       setSaveState('failed');
-      setTestMessage(String(error));
     });
-  };
+    refreshBackups().catch((err) => {
+      console.error('Failed to load backups:', err);
+      setBackupStatus('failed');
+      setBackupMessage(t.backupFailed);
+    });
+    getVersion().then(setAppVersion).catch(console.error);
+    refreshStorageStatus().catch(console.error);
+    setBackupAction('idle');
+    setBackupStatus('idle');
+    setBackupMessage('');
+    setRestoreConfirming(false);
+  }, [open, loadSettings, refreshBackups, refreshStorageStatus, t.backupFailed]);
 
-  useClickOutside(anchorRef, open && !switching, () => setOpen(false), false, panelRef);
+  useClickOutside(anchorRef, open, () => setOpen(false), false, panelRef);
 
-  const activate = async (profile?: RemoteDbProfile) => {
-    if (switching) return;
+  const handleSave = useCallback(async () => {
+    if (storageActionRef.current || !persistedSettingsRef.current) return;
+    storageActionRef.current = true;
+    const previousPayload = persistedSettingsRef.current;
     setSaveState('saving');
     setTestMessage('');
-    setTransferMessage(undefined);
     try {
-      if (profile) {
-        const activated = { ...profile, lastUsedAt: new Date().toISOString() };
-        const next = upsertProfile(profiles, activated);
-        await switchWorkspace({ mode: 'remote', url: connectionUrl(activated) }, {
-          profiles: JSON.stringify(next), activeId: activated.id,
-        });
-      } else {
-        await switchWorkspace({ mode: 'local' });
+      if (storageMode === 'local') {
+        const localPayload = buildSettingsPayload(false);
+        await writeSettings(localPayload);
+        persistedSettingsRef.current = localPayload;
+        setActiveStorageMode('local');
+        setSaveState('saved');
+        await refreshStorageStatus();
+        setOpen(false);
+        onStorageModeChange?.('local');
+        return;
       }
-      await loadSettings();
-      setWorkspace((value) => value + 1);
-      refreshStorageStatus();
+
+      setTestState('testing');
+      const pendingPayload = buildSettingsPayload(false);
+      await writeSettings(pendingPayload);
+      const message = await testRemoteStorage();
+      await initializeRemoteStorage();
+      const readyPayload = { ...pendingPayload, [SETTING_KEYS.ready]: 'true' };
+      await writeSettings(readyPayload);
+      const savedProfile = profileFromPayload(readyPayload);
+      const currentProfiles = await readProfiles();
+      const nextProfiles = upsertProfile(currentProfiles, savedProfile);
+      await persistProfiles(nextProfiles);
+      persistedSettingsRef.current = readyPayload;
+      setActiveStorageMode('remote');
+      setSelectedProfileId(savedProfile.id);
+      setTestState('ready');
+      setTestMessage(message);
       setSaveState('saved');
-      onStorageModeChange();
-    } catch (error) {
+      await refreshStorageStatus();
+      setOpen(false);
+      onStorageModeChange?.('remote');
+    } catch (err) {
+      console.error('Failed to save remote storage settings:', err);
+      if (previousPayload) {
+        await writeSettings(previousPayload).catch((restoreErr) => {
+          console.error('Failed to restore previous remote storage settings:', restoreErr);
+        });
+        applyPayloadToForm(previousPayload);
+        setActiveStorageMode(getPayloadActiveMode(previousPayload));
+        setSelectedProfileId(getPayloadActiveMode(previousPayload) === 'remote'
+          ? profileIdForPayload(profiles, previousPayload)
+          : '');
+        await refreshStorageStatus().catch(console.error);
+      }
       setSaveState('failed');
-      setTestMessage(String(error));
+      setTestState(storageMode === 'remote' ? 'failed' : 'idle');
+      setTestMessage(String(err));
+    } finally {
+      storageActionRef.current = false;
     }
-  };
+  }, [applyPayloadToForm, buildSettingsPayload, getPayloadActiveMode, onStorageModeChange, persistProfiles, profiles, readProfiles, refreshStorageStatus, storageMode, writeSettings]);
 
-  const handleSave = () => {
-    if (storageMode === 'local') return void activate();
-    const profile = profileFromPayload({
-      [SETTING_KEYS.storageMode]: 'remote',
-      [SETTING_KEYS.connectionMode]: connectionMode,
-      [SETTING_KEYS.url]: url.trim(), [SETTING_KEYS.host]: host.trim(), [SETTING_KEYS.port]: port.trim() || '5432',
-      [SETTING_KEYS.database]: database.trim(), [SETTING_KEYS.username]: username.trim(),
-      [SETTING_KEYS.password]: password, [SETTING_KEYS.sslMode]: sslMode,
-    });
-    void activate(profile);
-  };
-
-  const handleSelectProfile = (profile: RemoteDbProfile) => {
+  const handleSelectProfile = useCallback((profile: RemoteDbProfile) => {
     setSelectedProfileId(profile.id);
     applyPayloadToForm(payloadFromProfile(profile, false));
     setSaveState('idle');
+    setTestState('idle');
     setTestMessage('');
-  };
+  }, [applyPayloadToForm]);
 
-  const deleteProfile = async (id: string) => {
-    const next = profiles.filter((profile) => profile.id !== id);
+  const handleUseProfile = useCallback(async (profile: RemoteDbProfile) => {
+    if (storageActionRef.current || !persistedSettingsRef.current) return;
+    storageActionRef.current = true;
+    const previousPayload = persistedSettingsRef.current;
+    setSelectedProfileId(profile.id);
+    setSaveState('saving');
+    setTestState('testing');
+    setTestMessage('');
+    applyPayloadToForm(payloadFromProfile(profile, false));
     try {
-      await replaceClassicRemoteProfiles(JSON.stringify(next));
-      setProfiles(next);
-      if (selectedProfileId === id) setSelectedProfileId('');
-    } catch (error) {
+      const pendingPayload = payloadFromProfile(profile, false);
+      await writeSettings(pendingPayload);
+      const message = await testRemoteStorage();
+      await initializeRemoteStorage();
+      const readyPayload = payloadFromProfile(profile, true);
+      await writeSettings(readyPayload);
+      const activatedProfile = {
+        ...profile,
+        name: profile.name || profileLabel(readyPayload),
+        lastUsedAt: new Date().toISOString(),
+      };
+      const currentProfiles = await readProfiles();
+      const nextProfiles = upsertProfile(currentProfiles, activatedProfile);
+      await persistProfiles(nextProfiles);
+      persistedSettingsRef.current = readyPayload;
+      setActiveStorageMode('remote');
+      setSaveState('saved');
+      setTestState('ready');
+      setTestMessage(message);
+      await refreshStorageStatus();
+      setOpen(false);
+      onStorageModeChange?.('remote');
+    } catch (err) {
+      console.error('Failed to switch remote storage profile:', err);
+      if (previousPayload) {
+        await writeSettings(previousPayload).catch((restoreErr) => {
+          console.error('Failed to restore previous remote storage settings:', restoreErr);
+        });
+        applyPayloadToForm(previousPayload);
+        setActiveStorageMode(getPayloadActiveMode(previousPayload));
+        setSelectedProfileId(getPayloadActiveMode(previousPayload) === 'remote' ? profileIdForPayload(profiles, previousPayload) : '');
+        await refreshStorageStatus().catch(console.error);
+      }
       setSaveState('failed');
-      setTestMessage(String(error));
+      setTestState('failed');
+      setTestMessage(String(err));
+    } finally {
+      storageActionRef.current = false;
     }
-  };
-  const deleteProfileDialog: ConfirmDialogState | null = deleteProfileTarget ? {
-    title: t.deleteRemoteProfile,
-    message: t.deleteRemoteProfileConfirm(deleteProfileTarget.name),
-    confirmLabel: t.delete,
-    tone: 'danger',
-    resolve: (confirmed) => {
-      if (confirmed) void deleteProfile(deleteProfileTarget.id);
-      setDeleteProfileTarget(null);
-    },
-  } : null;
+  }, [applyPayloadToForm, getPayloadActiveMode, onStorageModeChange, persistProfiles, profiles, readProfiles, refreshStorageStatus, writeSettings]);
+
+  const deleteProfile = useCallback(async (profileIdToDelete: string) => {
+    const currentProfiles = await readProfiles();
+    const nextProfiles = currentProfiles.filter((profile) => profile.id !== profileIdToDelete);
+    await persistProfiles(nextProfiles);
+    if (selectedProfileId === profileIdToDelete) {
+      setSelectedProfileId('');
+    }
+  }, [persistProfiles, readProfiles, selectedProfileId]);
+
+  const deleteProfileDialog: ConfirmDialogState | null = deleteProfileTarget
+    ? {
+        title: t.deleteRemoteProfile,
+        message: t.deleteRemoteProfileConfirm(deleteProfileTarget.name),
+        confirmLabel: t.delete,
+        tone: 'danger',
+        resolve: (confirmed) => {
+          const profileId = deleteProfileTarget.id;
+          setDeleteProfileTarget(null);
+          if (confirmed) {
+            deleteProfile(profileId).catch((err) => {
+              console.error('Failed to delete remote storage profile:', err);
+              setSaveState('failed');
+              setTestMessage(String(err));
+            });
+          }
+        },
+      }
+    : null;
+
+  const handleCreateBackup = useCallback(async () => {
+    setBackupAction('creating');
+    setBackupStatus('idle');
+    setBackupMessage('');
+    setRestoreConfirming(false);
+    try {
+      const backup = await createBackup();
+      const items = await refreshBackups();
+      setSelectedBackup(backup.fileName || items[0]?.fileName || '');
+      setBackupStatus('success');
+      setBackupMessage(`${t.backupCreated}: ${backup.fileName}`);
+    } catch (err) {
+      console.error('Failed to create backup:', err);
+      setBackupStatus('failed');
+      setBackupMessage(t.backupFailed);
+    } finally {
+      setBackupAction('idle');
+    }
+  }, [refreshBackups, t.backupCreated, t.backupFailed]);
+
+  const handleRestoreBackup = useCallback(async () => {
+    if (!selectedBackup) return;
+
+    if (!restoreConfirming) {
+      setRestoreConfirming(true);
+      setBackupStatus('idle');
+      setBackupMessage(t.restoreBackupConfirm);
+      return;
+    }
+
+    setBackupAction('restoring');
+    setBackupStatus('idle');
+    setBackupMessage('');
+    try {
+      const summary = await restoreBackup(selectedBackup);
+      setBackupStatus('success');
+      setRestoreConfirming(false);
+      setBackupMessage(t.restoreBackupDone(summary.clipboardEntries, summary.memos, summary.settings));
+      setTimeout(() => window.location.reload(), 900);
+    } catch (err) {
+      console.error('Failed to restore backup:', err);
+      setBackupStatus('failed');
+      setRestoreConfirming(false);
+      setBackupMessage(t.backupFailed);
+    } finally {
+      setBackupAction('idle');
+    }
+  }, [restoreConfirming, selectedBackup, t]);
+
+  const handleOpenBackupFolder = useCallback(() => {
+    openBackupFolder().catch((err) => {
+      console.error('Failed to open backup folder:', err);
+      setBackupStatus('failed');
+      setBackupMessage(t.backupFailed);
+    });
+  }, [t.backupFailed]);
 
   const headerStorageMode: StorageMode = storageStatus?.mode === 'remote' || activeStorageMode === 'remote'
     ? 'remote'
@@ -176,13 +438,9 @@ export default function RemoteStorageButton({ onStorageModeChange, theme }: {
         style={styles.iconBtn}
         onClick={(event) => {
           event.stopPropagation();
-          if (!open) refreshStorageStatus();
-          setOpen(!open);
+          setOpen((value) => !value);
         }}
         title={t.remoteStorage}
-        aria-label={t.remoteStorage}
-        aria-expanded={open}
-        disabled={switching}
       >
         {activeStorageMode === 'remote'
           ? <Network size={16} strokeWidth={2.15} />
@@ -263,8 +521,6 @@ export default function RemoteStorageButton({ onStorageModeChange, theme }: {
                     <span style={styles.label}>{t.databaseUrl}</span>
                     <input
                       style={styles.input}
-                      type="password"
-                      autoComplete="off"
                       value={url}
                       onChange={(event) => setUrl(event.target.value)}
                       placeholder="postgres://user:password@host:5432/db"
@@ -319,11 +575,11 @@ export default function RemoteStorageButton({ onStorageModeChange, theme }: {
           <div style={styles.actions}>
             <button
               style={styles.primaryBtn}
-              disabled={switching}
+              disabled={saveState === 'saving' || testState === 'testing'}
               onClick={handleSave}
               title={storageMode === 'remote' ? t.remoteStoragePending : undefined}
             >
-              {switching
+              {saveState === 'saving' || testState === 'testing'
                 ? t.savingStorageConfig
                 : storageMode === 'remote'
                 ? t.saveAndUseRemote
@@ -354,7 +610,6 @@ export default function RemoteStorageButton({ onStorageModeChange, theme }: {
                           type="button"
                           style={styles.profileMain}
                           onClick={() => handleSelectProfile(profile)}
-                          disabled={switching}
                           title={profile.name}
                         >
                           <span style={styles.profileName}>{profile.name}</span>
@@ -366,8 +621,8 @@ export default function RemoteStorageButton({ onStorageModeChange, theme }: {
                         <button
                           type="button"
                           style={styles.profileUseBtn}
-                          onClick={() => void activate(profile)}
-                          disabled={switching}
+                          onClick={() => handleUseProfile(profile)}
+                          disabled={saveState === 'saving' || testState === 'testing'}
                         >
                           {t.useRemoteProfile}
                         </button>
@@ -375,7 +630,6 @@ export default function RemoteStorageButton({ onStorageModeChange, theme }: {
                           type="button"
                           style={styles.profileDeleteBtn}
                           onClick={() => setDeleteProfileTarget(profile)}
-                          disabled={switching}
                           title={t.deleteRemoteProfile}
                         >
                           <Trash2 size={12} strokeWidth={2.1} />
@@ -388,18 +642,80 @@ export default function RemoteStorageButton({ onStorageModeChange, theme }: {
             </div>
           )}
 
-          {saveState === 'saved' && <div role="status" style={styles.successText}>{t.storageConfigSaved}</div>}
-          {saveState === 'failed' && <div role="alert" style={styles.errorText}>{t.storageConfigFailed} {testMessage}</div>}
+          {saveState === 'saved' && <div style={styles.successText}>{t.storageConfigSaved}</div>}
+          {saveState === 'failed' && <div style={styles.errorText}>{t.storageConfigFailed}</div>}
+          {testState === 'ready' && <div style={styles.successText}>{t.storageConnectionReady}: {testMessage}</div>}
+          {testState === 'failed' && <div style={styles.errorText}>{t.storageConnectionFailed}: {testMessage}</div>}
 
-          <div style={styles.divider}/>
-          <div className="classic-feature" data-theme={theme} inert={switching}>
-            {transferMessage && <p role={transferMessage.error ? 'alert' : 'status'}
-              className={transferMessage.error ? 'inline-error' : 'import-result'}>{transferMessage.text}</p>}
-            <StorageView key={workspace} workspace={workspace} modeOverride={activeStorageMode}
-              onImported={onStorageModeChange} onSwitching={() => {}}
-              onNotice={(text) => setTransferMessage({ text, error: false })}
-              onError={(text) => setTransferMessage({ text, error: true })}/>
-          </div>
+          {storageMode === 'local' && (
+            <>
+              <div style={styles.divider} />
+
+              <div style={styles.backupPanel} title={t.backupRestoreDesc}>
+                <div style={styles.backupHeader}>
+                  <span style={styles.sectionTitle}>{t.backupRestore}</span>
+                  <button style={styles.miniTextBtn} onClick={handleOpenBackupFolder}>
+                    {t.openBackupFolder}
+                  </button>
+                </div>
+                <div style={styles.backupNotice}>{t.backupCompatibilityNotice}</div>
+                <button
+                  style={styles.secondaryActionBtn}
+                  onClick={handleCreateBackup}
+                  disabled={backupAction !== 'idle'}
+                >
+                  {backupAction === 'creating' ? t.creatingBackup : t.createBackup}
+                </button>
+                <div style={styles.backupRestoreRow}>
+                  <select
+                    style={styles.backupSelect}
+                    value={selectedBackup}
+                    onChange={(event) => {
+                      setSelectedBackup(event.target.value);
+                      setRestoreConfirming(false);
+                      setBackupMessage('');
+                      setBackupStatus('idle');
+                    }}
+                    disabled={backups.length === 0 || backupAction !== 'idle'}
+                  >
+                    {backups.length === 0 ? (
+                      <option value="">{t.noBackups}</option>
+                    ) : (
+                      backups.map((backup) => (
+                        <option key={backup.fileName} value={backup.fileName}>
+                          {formatBackupTime(backup.createdAt)} · v{backup.appVersion || t.unknownVersion} · {formatBackupSize(backup.sizeBytes)}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <button
+                    style={{
+                      ...styles.restoreBtn,
+                      ...(restoreConfirming ? styles.restoreBtnConfirm : {}),
+                    }}
+                    onClick={handleRestoreBackup}
+                    disabled={!selectedBackup || backupAction !== 'idle'}
+                  >
+                    {backupAction === 'restoring' ? t.restoringBackup : t.restoreBackup}
+                  </button>
+                </div>
+                {selectedBackupInfo && (
+                  <div style={styles.backupVersionLine}>
+                    {t.backupVersionMeta(selectedBackupInfo.appVersion || t.unknownVersion, appVersion || t.unknownVersion)}
+                  </div>
+                )}
+                {backupMessage && (
+                  <div style={{
+                    ...styles.backupMessage,
+                    ...(backupStatus === 'failed' ? styles.backupMessageError : {}),
+                    ...(backupStatus === 'success' ? styles.backupMessageSuccess : {}),
+                  }}>
+                    {backupMessage}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </FloatingMenuPanel>
       )}
 
@@ -459,7 +775,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     color: 'var(--text-muted)',
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: 600,
   },
   statusDot: {
@@ -492,7 +808,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: '6px',
   },
   label: {
-    fontSize: '12px',
+    fontSize: '11px',
     color: 'var(--text-secondary)',
     fontWeight: 600,
   },
@@ -513,7 +829,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     background: 'transparent',
     color: 'var(--text-secondary)',
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: 600,
     cursor: 'pointer',
   },
@@ -522,7 +838,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#ffffff',
   },
   hint: {
-    fontSize: '12px',
+    fontSize: '10px',
     lineHeight: 1.45,
     color: 'var(--text-muted)',
   },
@@ -571,7 +887,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: 700,
   },
   profileMeta: {
@@ -580,7 +896,7 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
     color: 'var(--text-muted)',
-    fontSize: '12px',
+    fontSize: '9px',
     fontWeight: 600,
   },
   profileUseBtn: {
@@ -588,7 +904,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'var(--accent)',
     color: '#fff',
-    fontSize: '12px',
+    fontSize: '10px',
     fontWeight: 700,
     padding: '4px 6px',
     cursor: 'pointer',
@@ -627,7 +943,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'var(--bg)',
     color: 'var(--text-primary)',
-    fontSize: '12px',
+    fontSize: '11px',
     outline: 'none',
   },
   actions: {
@@ -647,7 +963,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'var(--accent)',
     color: '#ffffff',
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: 700,
     cursor: 'pointer',
   },
@@ -658,19 +974,94 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '6px',
     background: 'transparent',
     color: 'var(--text-primary)',
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: 600,
     cursor: 'pointer',
   },
   successText: {
     marginTop: '8px',
-    fontSize: '12px',
+    fontSize: '10px',
     color: 'var(--success)',
   },
   errorText: {
     marginTop: '8px',
-    fontSize: '12px',
+    fontSize: '10px',
     color: 'var(--danger)',
   },
-
+  backupPanel: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  backupHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+  },
+  backupNotice: {
+    color: 'var(--text-muted)',
+    fontSize: '10px',
+    lineHeight: 1.45,
+  },
+  backupRestoreRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  backupVersionLine: {
+    color: 'var(--text-muted)',
+    fontSize: '10px',
+    lineHeight: 1.4,
+  },
+  backupSelect: {
+    flex: 1,
+    minWidth: 0,
+    padding: '6px 7px',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    background: 'var(--bg)',
+    color: 'var(--text-primary)',
+    fontSize: '10px',
+    outline: 'none',
+  },
+  miniTextBtn: {
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--accent)',
+    fontSize: '10px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    padding: 0,
+    whiteSpace: 'nowrap',
+  },
+  restoreBtn: {
+    padding: '6px 8px',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'var(--text-primary)',
+    fontSize: '10px',
+    fontWeight: 700,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  restoreBtnConfirm: {
+    border: '1px solid #f59e0b',
+    color: '#f59e0b',
+    background: 'rgba(245, 158, 11, 0.08)',
+  },
+  backupMessage: {
+    fontSize: '10px',
+    color: 'var(--text-muted)',
+    lineHeight: 1.4,
+    wordBreak: 'break-word',
+  },
+  backupMessageError: {
+    color: 'var(--danger)',
+  },
+  backupMessageSuccess: {
+    color: 'var(--success)',
+  },
 };

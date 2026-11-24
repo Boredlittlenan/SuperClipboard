@@ -1,6 +1,6 @@
 {
   "productName": "SuperClipboard",
-  "version": "4.0.0",
+  "version": "3.6.0",
   "identifier": "com.superclipboard.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -14,8 +14,6 @@
         "title": "SuperClipboard",
         "width": 420,
         "height": 600,
-        "minWidth": 360,
-        "minHeight": 450,
         "resizable": true,
         "dragDropEnabled": false,
         "fullscreen": false,

@@ -406,7 +406,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '9px',
     background: 'var(--border)',
     color: 'var(--text-secondary)',
-    fontSize: '12px',
+    fontSize: '10px',
     fontWeight: 600,
     lineHeight: 1,
   },

@@ -42,7 +42,7 @@ pub fn enable() -> Result<(), String> {
             .ok_or_else(|| "Failed to convert path to string".to_string())?;
 
         // Wrap path in quotes to handle spaces
-        let value = format!("\"{}\" --background", exe_str);
+        let value = format!("\"{}\"", exe_str);
 
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let (key, _) = hkcu
