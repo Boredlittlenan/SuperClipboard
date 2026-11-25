@@ -127,7 +127,7 @@ where
         operation(storage.as_ref()).map_err(|err| err.to_string())
     });
 
-    let result = tokio::time::timeout(Duration::from_secs(18), task)
+    let result = tokio::time::timeout(Duration::from_secs(40), task)
         .await
         .map_err(|_| "Remote storage operation timed out.".to_string())?
         .map_err(|err| format!("Remote storage task failed: {err}"))?;
@@ -156,7 +156,7 @@ where
             let _permit = permit;
             operation(storage.as_ref())
         });
-        let result = tokio::time::timeout(Duration::from_secs(18), task)
+        let result = tokio::time::timeout(Duration::from_secs(40), task)
             .await
             .map_err(|_| "Remote storage operation timed out.".to_string())?
             .map_err(|err| format!("Storage task failed: {err}"))?;

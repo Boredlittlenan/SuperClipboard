@@ -234,7 +234,7 @@ fn remote_config(storage: &Storage) -> RemoteResult<RemoteDbConfig> {
             database
         );
         url.push_str(&format!(
-            "?sslmode={}&connect_timeout=4&keepalives_idle=15",
+            "?sslmode={}&connect_timeout=10&keepalives_idle=15",
             ssl_mode
         ));
         return Ok(RemoteDbConfig { url, ssl_mode });
@@ -254,7 +254,7 @@ fn remote_config(storage: &Storage) -> RemoteResult<RemoteDbConfig> {
     if !url.contains("connect_timeout=") {
         let separator = if url.contains('?') { '&' } else { '?' };
         url.push(separator);
-        url.push_str("connect_timeout=4");
+        url.push_str("connect_timeout=10");
     }
     if !url.contains("keepalives_idle=") {
         let separator = if url.contains('?') { '&' } else { '?' };
@@ -271,7 +271,7 @@ where
     Pool::builder()
         .max_size(4)
         .min_idle(Some(0))
-        .connection_timeout(Duration::from_secs(3))
+        .connection_timeout(Duration::from_secs(12))
         .idle_timeout(Some(Duration::from_secs(5 * 60)))
         .max_lifetime(Some(Duration::from_secs(15 * 60)))
         .test_on_check_out(true)
@@ -309,10 +309,7 @@ fn connect_direct(config: &RemoteDbConfig) -> RemoteResult<Client> {
         "disable" => Ok(Client::connect(&config.url, NoTls)?),
         "prefer" => {
             let connector = MakeTlsConnector::new(TlsConnector::builder().build()?);
-            match Client::connect(&config.url, connector) {
-                Ok(client) => Ok(client),
-                Err(_) => Ok(Client::connect(&config.url, NoTls)?),
-            }
+            Ok(Client::connect(&config.url, connector)?)
         }
         _ => {
             let connector = MakeTlsConnector::new(TlsConnector::builder().build()?);
@@ -482,10 +479,20 @@ fn with_client_config<T>(
 }
 
 pub fn test_connection(storage: &Storage) -> RemoteResult<String> {
-    with_client(storage, |client| {
-        let version: String = client.query_one("SELECT version()", &[])?.get(0);
-        Ok(version)
-    })
+    let config = remote_config(storage)?;
+    let mut client = connect_direct(&config).map_err(|error| match error {
+        RemoteStorageError::Database(ref db_error) if db_error.as_db_error().is_some() => {
+            let db_error = db_error.as_db_error().unwrap();
+            RemoteStorageError::InvalidOperation(format!(
+                "PostgreSQL {}: {}",
+                db_error.code().code(),
+                db_error.message()
+            ))
+        }
+        other => other,
+    })?;
+    let version: String = client.query_one("SELECT version()", &[])?.get(0);
+    Ok(version)
 }
 
 pub fn ensure_schema(storage: &Storage) -> RemoteResult<()> {
@@ -1495,6 +1502,29 @@ pub fn archive_clipboard(storage: &Storage, id: i64) -> RemoteResult<bool> {
 mod tests {
     use super::*;
     use crate::storage::Storage;
+
+    #[test]
+    #[ignore = "requires a read-only PostgreSQL connection URL"]
+    fn remote_connection_read_only_from_env() {
+        let url = std::env::var("SUPERCLIPBOARD_REMOTE_TEST_URL").expect("test URL is required");
+        let storage = Storage::new(std::path::Path::new(":memory:")).unwrap();
+        storage.set_setting("storage_mode", "remote").unwrap();
+        storage
+            .set_setting("remote_db_connection_mode", "url")
+            .unwrap();
+        storage.set_setting("remote_db_url", &url).unwrap();
+        storage
+            .set_setting("remote_db_ssl_mode", "require")
+            .unwrap();
+        storage.set_setting("remote_db_ready", "true").unwrap();
+        assert!(test_connection(&storage).unwrap().contains("PostgreSQL"));
+        with_client(&storage, |client| {
+            let value: i32 = client.query_one("SELECT 1", &[])?.get(0);
+            assert_eq!(value, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
 
     #[test]
     fn cache_key_is_stable_without_exposing_credentials() {
