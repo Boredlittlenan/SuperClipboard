@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>SuperClipboard · 新版界面视觉预览</title>
+  <style>
+    :root {
+      font: 14px/1.5 "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      --board: #e9ecf6;
+      --board-bg: radial-gradient(ellipse at 14% 16%, #e3e9ff 0%, transparent 55%), radial-gradient(ellipse at 97% 35%, #e6e0f6 0%, transparent 55%), #eef0f6;
+      --shell: radial-gradient(ellipse at 8% 5%, #e4ebff 0%, transparent 56%), radial-gradient(ellipse at 98% 96%, #e8e3fb 0%, transparent 55%), #f4f6fd;
+      --titlebar: #ffffff49;
+      --rail: #ffffff36;
+      --surface: #ffffffbe;
+      --raised: #fff;
+      --field: #f9faff;
+      --hover: #e9edfb;
+      --line: #d9dfed;
+      --outer-line: #ffffff;
+      --ink: #19233b;
+      --muted: #54627c;
+      --accent: #4c42b8;
+      --on-accent: #fff;
+      --selection: #e7e7ff;
+      --selection-line: #c6c7f3;
+      --good: #16754e;
+      --due: #964713;
+      --due-surface: #fff1e4;
+      --radii: 13px;
+      --panel-radii: 17px;
+      --frame-radius: 23px;
+      --frame-shadow: 0 20px 64px #3e48732c, 0 2px 6px #6575a01f;
+      --control-shadow: 0 1px 2px #47517812;
+    }
+    body[data-skin="desk"] {
+      --board: #eeede7;
+      --board-bg: #eeede7;
+      --shell: #fbfaf7;
+      --titlebar: #f7f6f2;
+      --rail: #f0eee8;
+      --surface: #fffefa;
+      --raised: #fffefa;
+      --field: #f4f3ee;
+      --hover: #f0eee8;
+      --line: #dfded4;
+      --outer-line: #d9d7cd;
+      --ink: #212725;
+      --muted: #505b57;
+      --accent: #295949;
+      --selection: #e3ede5;
+      --selection-line: #bfd4c6;
+      --good: #24694e;
+      --due: #8e481a;
+      --due-surface: #fbefdf;
+      --radii: 6px;
+      --panel-radii: 9px;
+      --frame-radius: 12px;
+      --frame-shadow: 0 12px 33px #2b322a17, 0 2px 5px #2b322a0d;
+      --control-shadow: none;
+    }
+    body[data-skin="ink"] {
+      color-scheme: dark;
+      --board: #101720;
+      --board-bg: radial-gradient(ellipse at 50% 0%, #1d2b3a, transparent 65%), #101720;
+      --shell: #141c28;
+      --titlebar: #182332;
+      --rail: #111a26;
+      --surface: #1b2635;
+      --raised: #202d3e;
+      --field: #151f2e;
+      --hover: #253449;
+      --line: #334357;
+      --outer-line: #3a4a60;
+      --ink: #ecf2fb;
+      --muted: #a5b4c9;
+      --accent: #9af3cf;
+      --on-accent: #0a3329;
+      --selection: #203c3a;
+      --selection-line: #397063;
+      --good: #85e5b7;
+      --due: #ffbf87;
+      --due-surface: #382d2c;
+      --radii: 7px;
+      --panel-radii: 10px;
+      --frame-radius: 14px;
+      --frame-shadow: 0 20px 62px #02060e93;
+      --control-shadow: none;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; min-width: 320px; background: var(--board-bg); color: var(--ink); }
+    button, input, textarea, select { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    button:disabled { cursor: default; opacity: .55; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    h1, h2, h3, p { margin: 0; }
+    svg { width: 17px; height: 17px; flex: none; vertical-align: middle; }
+    [data-icon] { display: inline-flex; align-items: center; justify-content: center; }
+    .brand-mark { display: inline-flex; flex: none; }
+    .brand-mark img { display: block; width: 100%; height: 100%; }
+    .showcase { max-width: 1216px; margin: 0 auto; padding: 29px 32px 14px; }
+    .showcase-header { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 20px; }
+    .showcase-brand { display: flex; align-items: center; gap: 11px; }
+    .showcase-brand .brand-mark { width: 46px; height: 46px; }
+    .showcase-brand strong { display: block; font-size: 22px; line-height: 1.25; letter-spacing: -.035em; }
+    .showcase-brand div span { display: block; color: var(--muted); font-size: 13px; }
+    .size-switch { display: flex; gap: 3px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 13px; }
+    .size-switch button { background: transparent; border: 1px solid transparent; padding: 6px 10px; border-radius: 9px; font-weight: 600; font-size: 12px; white-space: nowrap; }
+    .size-switch button[aria-pressed="true"] { background: var(--raised); border-color: var(--line); color: var(--accent); box-shadow: var(--control-shadow); }
+    .size-switch svg { width: 15px; height: 15px; }
+    .style-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .style-picker button { display: flex; align-items: center; gap: 11px; min-width: 0; text-align: left; padding: 9px 12px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); }
+    .style-picker button:hover { background: var(--raised); }
+    .style-picker button[aria-pressed="true"] { border-color: var(--accent); background: var(--raised); box-shadow: var(--control-shadow); }
+    .swatch { position: relative; width: 45px; height: 33px; border-radius: 8px; border: 1px solid #8492b357; flex: none; overflow: hidden; }
+    .swatch::before { content: ""; position: absolute; inset: 5px 5px 5px 15px; border-radius: 4px; }
+    .swatch::after { content: ""; position: absolute; width: 7px; height: 10px; left: 4px; top: 6px; border-radius: 3px; }
+    .swatch-glass { background: linear-gradient(150deg, #b4c5fa, #e0dbff); }
+    .swatch-glass::before { background: #ffffffa8; border: 1px solid #fff; }
+    .swatch-glass::after { background: #7e78cb; }
+    .swatch-desk { background: #e8e4d7; }
+    .swatch-desk::before { background: #fffdf7; border: 1px solid #d3cec1; }
+    .swatch-desk::after { background: #48775e; border-radius: 1px; }
+    .swatch-ink { background: #0d1522; }
+    .swatch-ink::before { background: #263447; border: 1px solid #405068; }
+    .swatch-ink::after { background: #85e5b7; border-radius: 1px; }
+    .style-name { min-width: 0; flex: 1; }
+    .style-name strong, .style-name small { display: block; }
+    .style-name strong { font-size: 14px; font-weight: 700; }
+    .style-name small { font-size: 12px; color: var(--muted); }
+    .style-check { width: 21px; height: 21px; flex: none; border-radius: 50%; background: var(--accent); color: var(--on-accent); visibility: hidden; }
+    [aria-pressed="true"] .style-check { visibility: visible; }
+    .style-check svg { width: 13px; height: 13px; stroke-width: 2.5; }
+    .stage { display: flex; justify-content: center; }
+    .showcase-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+    .showcase-footer svg { width: 14px; height: 14px; margin-right: 2px; }
+
+    .app { position: relative; display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; height: 630px; border: 1px solid var(--outer-line); border-radius: var(--frame-radius); overflow: hidden; background: var(--shell); box-shadow: var(--frame-shadow); }
+    .app-titlebar { min-height: 52px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 0 15px 0 16px; background: var(--titlebar); border-bottom: 1px solid var(--line); gap: 6px; }
+    .app-brand { display: flex; align-items: center; font-size: 15px; gap: 7px; }
+    .app-brand .brand-mark { width: 27px; height: 27px; }
+    .title-actions { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .source { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radii); padding: 5px 9px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .source svg { width: 14px; height: 14px; }
+    .app-body { display: flex; flex: 1; min-height: 0; }
+    .navigation { width: 168px; padding: 18px 10px 12px; flex: none; display: flex; flex-direction: column; gap: 4px; background: var(--rail); border-right: 1px solid var(--line); }
+    [data-skin="glass"] .navigation { border-right-color: transparent; }
+    .nav-button { position: relative; width: 100%; display: flex; align-items: center; gap: 9px; min-height: 38px; border: 1px solid transparent; border-radius: var(--radii); padding: 6px 9px; text-align: left; background: transparent; color: var(--muted); font-weight: 600; font-size: 13px; white-space: nowrap; }
+    .nav-button > span:nth-child(2) { flex: 1; }
+    .nav-button[aria-current="page"] { color: var(--accent); background: var(--selection); border-color: var(--selection-line); }
+    [data-skin="glass"] .nav-button[aria-current="page"] { background: linear-gradient(145deg, var(--raised), var(--selection)); box-shadow: inset 0 1px #fff, var(--control-shadow); }
+    [data-skin="desk"] .nav-button[aria-current="page"]::before { content: ""; position: absolute; left: -11px; top: 8px; bottom: 8px; width: 3px; background: var(--accent); border-radius: 0 3px 3px 0; }
+    [data-skin="ink"] .nav-button[aria-current="page"] { box-shadow: inset 2px 0 var(--accent); }
+    .nav-divider { height: 1px; flex: none; border: 0; background: var(--line); margin: 9px 4px; }
+    .nav-count { display: inline-grid; place-items: center; min-width: 20px; min-height: 20px; border-radius: 20px; background: var(--due-surface); color: var(--due); font-size: 12px; padding: 0 4px; }
+    .page { position: relative; min-width: 0; flex: 1; display: flex; flex-direction: column; padding: 16px 16px 16px 17px; gap: 12px; }
+    .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    h1 { font-size: 23px; letter-spacing: -.025em; line-height: 1.35; }
+    h2 { font-size: 15px; }
+    h3 { font-size: 15px; }
+    .button, .icon-button, .chip { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; background: var(--raised); padding: 5px 10px; border-radius: var(--radii); border: 1px solid var(--line); font-size: 13px; font-weight: 600; white-space: nowrap; box-shadow: var(--control-shadow); }
+    .icon-button { width: 32px; padding: 0; flex: none; }
+    .icon-button svg { width: 16px; height: 16px; }
+    .button:hover, .icon-button:hover, .chip:hover, .nav-button:hover, .source:hover { background: var(--hover); }
+    .button.primary { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+    .button.primary:hover { filter: brightness(1.09); }
+    .button.quiet, .icon-button.quiet { border-color: transparent; background: transparent; box-shadow: none; }
+    .button.quiet:hover, .icon-button.quiet:hover { background: var(--hover); }
+    .icon-button[aria-pressed="true"] { color: var(--accent); border-color: var(--selection-line); background: var(--selection); }
+    .icon-button[aria-pressed="true"] svg { fill: color-mix(in srgb, var(--accent) 30%, transparent); }
+    .toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .search { display: flex; align-items: center; min-height: 37px; gap: 7px; padding: 0 9px; flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: var(--radii); background: var(--field); color: var(--muted); }
+    .search:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .search input { padding: 6px 0; min-width: 10px; flex: 1; border: 0; color: var(--ink); background: transparent; font-size: 14px; }
+    .search input:focus-visible { outline: 0; }
+    .search input::placeholder { color: var(--muted); opacity: 1; }
+    .search kbd { min-width: 47px; }
+    .chips { display: flex; gap: 5px; overflow: auto; scrollbar-width: thin; padding: 2px; margin: -2px; }
+    .chip { min-height: 30px; padding: 3px 9px; color: var(--muted); font-size: 12px; box-shadow: none; }
+    .chip[aria-pressed="true"] { color: var(--accent); background: var(--selection); border-color: var(--selection-line); }
+    [data-skin="glass"] .chip { border-radius: 20px; }
+    [data-skin="desk"] .chip:not([aria-pressed="true"]) { border-color: transparent; background: transparent; }
+    [data-skin="desk"] .chip:hover { background: var(--hover); }
+
+    .browser-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); flex: 1; min-height: 0; gap: 12px; }
+    .record-list, .record-detail, .content-card { min-width: 0; border: 1px solid var(--line); border-radius: var(--panel-radii); background: var(--surface); }
+    [data-skin="glass"] :is(.record-list, .record-detail, .content-card) { box-shadow: inset 0 1px #fff, 0 2px 7px #49578e0b; }
+    .record-list { padding: 7px; overflow: auto; }
+    .group-label { padding: 5px 9px 3px; font-size: 12px; font-weight: 700; color: var(--muted); }
+    .group-label:not(:first-child) { margin-top: 3px; }
+    .record-row { display: flex; align-items: stretch; border: 1px solid transparent; border-radius: var(--radii); min-width: 0; min-height: 54px; }
+    .record-row:hover { background: var(--hover); }
+    .record-row[data-selected="true"] { background: var(--selection); border-color: var(--selection-line); }
+    [data-skin="ink"] .record-row[data-selected="true"] { box-shadow: inset 2px 0 var(--accent); }
+    [data-skin="desk"] .record-row { border-bottom-color: var(--line); border-radius: 0; }
+    [data-skin="desk"] .record-row:last-child { border-bottom-color: transparent; }
+    [data-skin="desk"] .record-row[data-selected="true"] { border-bottom-color: var(--selection-line); border-radius: var(--radii); }
+    .record-button { flex: 1 1 auto; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; border: 0; background: transparent; border-radius: inherit; padding: 5px 8px; min-width: 0; }
+    .record-button:focus-visible { outline-offset: -2px; }
+    .type-icon { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--field); color: var(--type-color, var(--accent)); flex: none; }
+    .type-icon[data-category="text"] { --type-color: #5140ae; background: #eae7fd; }
+    .type-icon[data-category="link"] { --type-color: #23568e; background: #e1effe; }
+    .type-icon[data-category="image"] { --type-color: #844a71; background: #f6e9f3; }
+    .type-icon[data-category="code"] { --type-color: #854e19; background: #fcf0de; }
+    .type-icon[data-category="file"] { --type-color: #266e5b; background: #dcf1eb; }
+    .type-icon[data-category="email"] { --type-color: #704595; background: #f1e7f9; }
+    .type-icon[data-category="memo"] { --type-color: var(--due); background: var(--due-surface); }
+    [data-skin="ink"] .type-icon[data-category] { background: #2b3a51; --type-color: #bfd2f7; }
+    [data-skin="ink"] .type-icon[data-category="code"], [data-skin="ink"] .type-icon[data-category="memo"] { background: #423329; --type-color: #ffc58c; }
+    [data-skin="ink"] .type-icon[data-category="file"] { background: #21433c; --type-color: #9beacf; }
+    .record-title, .record-subtitle { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .record-title { font-size: 14px; font-weight: 650; }
+    .record-subtitle, .record-meta { font-size: 12px; color: var(--muted); }
+    .record-meta { white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+    .record-meta svg { width: 13px; height: 13px; color: var(--accent); }
+    .peek { display: none; align-self: center; margin-right: 3px; }
+    .record-detail { display: flex; flex-direction: column; gap: 13px; padding: 14px; overflow: auto; }
+    .detail-header, .detail-title, .card-header, .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .detail-header { flex-wrap: wrap; }
+    .detail-title { justify-content: flex-start; }
+    .detail-title h2 { overflow-wrap: anywhere; }
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .actions .button svg { width: 15px; height: 15px; }
+    .preview-caption { color: var(--muted); font-size: 12px; font-weight: 600; }
+    .clip-preview { min-height: 118px; padding: 13px 14px; border-radius: var(--radii); background: var(--field); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; font-size: 14px; }
+    .clip-preview.code { font: 13px/1.7 "Cascadia Code", Consolas, monospace; }
+    .clip-preview.image { display: grid; place-items: center; background: var(--selection); }
+    .clip-preview .brand-mark { height: 82px; width: 82px; }
+    .meta-grid { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 5px 12px; margin: 0; font-size: 12px; }
+    .meta-grid dt { color: var(--muted); }
+    .meta-grid dd { margin: 0; overflow-wrap: anywhere; }
+    .tag { display: inline-flex; align-items: center; gap: 5px; border-radius: 20px; padding: 3px 8px; background: var(--selection); color: var(--accent); font-weight: 650; font-size: 12px; white-space: nowrap; width: fit-content; }
+    .tag svg { height: 13px; width: 13px; }
+    .tag.due { color: var(--due); background: var(--due-surface); }
+    .memo-reminder { padding-top: 10px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .empty { display: grid; justify-items: center; align-content: center; min-height: 125px; gap: 5px; text-align: center; color: var(--muted); padding: 14px; }
+    .empty svg { width: 25px; height: 25px; margin-bottom: 3px; }
+
+    .stack { display: grid; align-content: start; gap: 10px; overflow: auto; flex: 1; min-height: 0; }
+    .content-card { padding: 13px; }
+    .content-card .card-header { margin-bottom: 8px; justify-content: flex-start; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .reminder-row { display: flex; align-items: center; gap: 9px; padding: 8px 0; }
+    .reminder-row + .reminder-row, .setting-row + .setting-row { border-top: 1px solid var(--line); }
+    .reminder-row .actions { margin-left: auto; }
+    .reminder-link { text-align: left; min-width: 0; background: transparent; border: 0; border-radius: var(--radii); padding: 2px; }
+    .reminder-link:hover { color: var(--accent); }
+    .reminder-link strong, .reminder-link small, .setting-row strong { display: block; }
+    .reminder-link small { font-size: 12px; color: var(--muted); }
+    .setting-row { padding: 8px 0; min-height: 44px; }
+    .setting-row .source { white-space: normal; }
+    select { border: 1px solid var(--line); border-radius: var(--radii); background: var(--raised); color: var(--ink); min-height: 32px; padding: 4px 7px; font-size: 13px; }
+
+    .app-footer { min-height: 38px; padding: 3px 14px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 12px; background: var(--titlebar); color: var(--muted); font-size: 12px; }
+    .app-footer .shortcut { margin-left: auto; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+    .shortcut > span:first-child { margin-right: 4px; }
+    #capture-status { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; padding: 3px 0; color: var(--muted); white-space: nowrap; }
+    .live-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 13%, transparent); }
+    [data-paused="true"] .live-dot { background: var(--due); box-shadow: 0 0 0 3px color-mix(in srgb, var(--due) 15%, transparent); }
+    kbd { display: inline-flex; min-width: 19px; justify-content: center; padding: 1px 4px; border-radius: 5px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font: 12px/1.25 "Segoe UI", "Microsoft YaHei UI", sans-serif; white-space: nowrap; }
+    .toast { position: absolute; bottom: 47px; right: 12px; max-width: calc(100% - 24px); border: 1px solid var(--line); border-radius: var(--radii); display: flex; gap: 6px; align-items: center; padding: 8px 12px; background: var(--raised); box-shadow: var(--frame-shadow); color: var(--ink); font-size: 13px; z-index: 3; }
+    .toast svg { color: var(--good); }
+    .modal { background: var(--raised); color: var(--ink); padding: 18px; border: 1px solid var(--outer-line); border-radius: var(--panel-radii); width: min(390px, calc(100% - 24px)); box-shadow: var(--frame-shadow); max-height: calc(100% - 30px); }
+    .modal::backdrop { background: #121a3655; }
+    .modal h2 { font-size: 18px; }
+    .modal form { display: grid; gap: 12px; }
+    .modal label { display: grid; gap: 5px; }
+    .modal input, .modal textarea { width: 100%; min-width: 0; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: var(--radii); padding: 7px 9px; }
+    .modal textarea { resize: vertical; min-height: 90px; }
+    .modal-footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+    .modal-footer .remove { margin-right: auto; color: var(--due); }
+    .field-error { color: var(--due); font-size: 13px; }
+
+    .app[data-layout="compact"] { flex: 0 1 420px; height: 600px; }
+    .app[data-layout="compact"] .app-titlebar { min-height: 43px; padding-inline: 10px; }
+    .app[data-layout="compact"] .app-body { flex-direction: column; }
+    .app[data-layout="compact"] .navigation { width: 100%; padding: 7px; flex-direction: row; justify-content: space-between; border-right: 0; border-bottom: 1px solid var(--line); gap: 2px; }
+    .app[data-layout="compact"] .nav-button { width: auto; flex: 1 1 auto; justify-content: center; gap: 4px; padding: 4px 5px; min-height: 34px; font-size: 12px; }
+    .app[data-layout="compact"] .nav-button::before { display: none; }
+    .app[data-layout="compact"] .nav-button > span:nth-child(2) { flex: 0 0 auto; }
+    .app[data-layout="compact"] .nav-button svg { width: 14px; height: 14px; }
+    .app[data-layout="compact"] .nav-divider, .app[data-layout="compact"] .nav-secondary { display: none; }
+    .app[data-layout="compact"] .page { padding: 9px; gap: 9px; min-height: 0; }
+    .app[data-layout="compact"] h1 { font-size: 19px; }
+    .app[data-layout="compact"] .toolbar { flex-wrap: wrap; gap: 6px; }
+    .app[data-layout="compact"] .search { flex-basis: 100%; }
+    .app[data-layout="compact"] .chips { width: 100%; }
+    .app[data-layout="compact"] .chip { padding-inline: 7px; }
+    .app[data-layout="compact"] .browser-grid { display: block; overflow: hidden; }
+    .app[data-layout="compact"] .record-list, .app[data-layout="compact"] .record-detail { height: 100%; }
+    .app[data-layout="compact"] .record-detail, .app[data-layout="compact"] .browser-grid[data-detail="true"] .record-list { display: none; }
+    .app[data-layout="compact"] .browser-grid[data-detail="true"] .record-detail { display: flex; }
+    .app[data-layout="compact"] .record-row { min-height: 46px; }
+    .app[data-layout="compact"] .record-button { padding-block: 3px; }
+    .app[data-layout="compact"] .record-row[data-selected="true"] { background: transparent; border-color: transparent; box-shadow: none; }
+    .app[data-layout="compact"] .record-row:hover { background: var(--hover); }
+    .app[data-layout="compact"] .peek { display: inline-flex; }
+    .app[data-layout="compact"] .reminder-row { flex-wrap: wrap; gap: 5px 8px; }
+    .app[data-layout="compact"] .reminder-row .actions { width: 100%; padding-left: 40px; }
+    .back-button { display: none; }
+    .app[data-layout="compact"] .back-button { display: inline-flex; }
+    .app[data-layout="compact"] .shortcut > span:first-child { display: none; }
+    .app[data-layout="compact"] .page:has(.browser-grid[data-detail="true"]) .toolbar { display: none; }
+    [data-skin="ink"] .app[data-layout="compact"] .nav-button[aria-current="page"] { box-shadow: inset 0 -2px var(--accent); }
+    @media (max-width: 860px) {
+      .showcase { padding-inline: 15px; }
+      .app[data-layout="wide"] .navigation { width: 49px; padding-inline: 5px; }
+      .app[data-layout="wide"] .nav-button { justify-content: center; padding-inline: 3px; }
+      .app[data-layout="wide"] .nav-button::before, .app[data-layout="wide"] .nav-button > span:nth-child(2) { display: none; }
+      .app[data-layout="wide"] .nav-count { position: absolute; min-width: 16px; min-height: 16px; top: 0; right: 0; padding: 0 3px; }
+      .app[data-layout="wide"] .toolbar { flex-wrap: wrap; }
+      .app[data-layout="wide"] .search { flex-basis: 100%; }
+    }
+    @media (max-width: 600px) {
+      .showcase { padding: 12px 8px; }
+      .showcase-header { gap: 7px; margin-bottom: 9px; }
+      .showcase-brand { gap: 5px; }
+      .showcase-brand .brand-mark { width: 31px; height: 31px; }
+      .showcase-brand strong { font-size: 17px; }
+      .showcase-brand div span { font-size: 12px; }
+      .size-switch { display: none; }
+      .style-picker { gap: 5px; margin-bottom: 9px; }
+      .style-picker button { justify-content: center; padding: 4px; min-height: 34px; }
+      .style-name { flex: initial; }
+      .style-name strong { font-size: 12px; white-space: nowrap; }
+      .style-name small, .style-picker .swatch, .style-check { display: none; }
+      .app .app-brand { font-size: 13px; }
+      .app .nav-button svg { display: none; }
+      .app .search kbd { display: none; }
+      .app .toolbar { flex-wrap: wrap; gap: 5px; }
+      .app .search { flex-basis: 100%; }
+      .app .chips { width: 100%; }
+    }
+    @media (max-width: 380px) {
+      .app .app-brand .brand-mark { width: 21px; height: 21px; }
+      .app .nav-button { padding-inline: 3px; }
+      .app .record-meta { font-variant-numeric: tabular-nums; }
+    }
+  </style>
+</head>
+<body data-skin="glass">
+  <main class="showcase">
+    <header class="showcase-header">
+      <div class="showcase-brand">
+        <span class="brand-mark" data-logo></span>
+        <div><strong>SuperClipboard</strong><span>新版界面视觉预览</span></div>
+      </div>
+      <div class="size-switch" role="group" aria-label="预览窗口尺寸">
+        <button type="button" data-size="compact" aria-pressed="false"><span data-icon="panel"></span> 快捷窗口</button>
+        <button type="button" data-size="wide" aria-pressed="true"><span data-icon="columns"></span> 展开工作台</button>
+      </div>
+    </header>
+
+    <div class="style-picker" role="group" aria-label="视觉方向">
+      <button type="button" data-style="glass" aria-pressed="true">
+        <span class="swatch swatch-glass" aria-hidden="true"></span>
+        <span class="style-name"><strong>水滴玻璃</strong><small>柔和透光 · 圆润悬浮</small></span>
+        <span class="style-check" data-icon="check"></span>
+      </button>
+      <button type="button" data-style="desk" aria-pressed="false">
+        <span class="swatch swatch-desk" aria-hidden="true"></span>
+        <span class="style-name"><strong>清晰桌面</strong><small>暖灰底色 · 清楚分栏</small></span>
+        <span class="style-check" data-icon="check"></span>
+      </button>
+      <button type="button" data-style="ink" aria-pressed="false">
+        <span class="swatch swatch-ink" aria-hidden="true"></span>
+        <span class="style-name"><strong>深色墨蓝</strong><small>低亮度界面 · 薄荷高亮</small></span>
+        <span class="style-check" data-icon="check"></span>
+      </button>
+    </div>
+
+    <div class="stage">
+      <section class="app" id="app" data-layout="wide" aria-label="SuperClipboard 可交互原型">
+        <header class="app-titlebar">
+          <div class="app-brand"><span class="brand-mark" data-logo></span><strong>SuperClipboard</strong></div>
+          <div class="title-actions">
+            <button type="button" class="source" data-go="storage" id="source"><span data-icon="drive"></span><span id="source-name">本地工作区</span></button>
+            <button type="button" class="icon-button" data-go="settings" aria-label="打开设置" title="打开设置" data-icon="settings"></button>
+          </div>
+        </header>
+        <div class="app-body">
+          <nav class="navigation" aria-label="应用导航" id="navigation"></nav>
+          <section class="page" id="page" aria-label="当前视图"></section>
+        </div>
+        <footer class="app-footer">
+          <button type="button" id="capture-status" data-action="capture">
+            <span class="live-dot"></span><span>剪贴板监控中</span>
+          </button>
+          <span id="footer-count"></span>
+          <span class="shortcut"><span>全局快捷键</span> <kbd>Alt</kbd><span aria-hidden="true">+</span><kbd>X</kbd></span>
+        </footer>
+        <div class="toast" id="toast" role="status" hidden></div>
+        <dialog class="modal" id="dialog" aria-labelledby="dialog-title"></dialog>
+      </section>
+    </div>
+    <footer class="showcase-footer"><span><span data-icon="info"></span> 内置示例数据</span><span id="dimensions">展开工作台</span></footer>
+  </main>
+  <script>
+    const icons = {
+      panel: "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"></rect><path d=\"M3 9h18\"></path>",
+      columns: "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"></rect><path d=\"M12 3v18\"></path>",
+      check: "<path d=\"M20 6 9 17l-5-5\"></path>",
+      drive: "<path d=\"M10 16h.01\"></path><path d=\"M2.212 11.577a2 2 0 0 0-.212.896V18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.527a2 2 0 0 0-.212-.896L18.55 5.11A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\"></path><path d=\"M21.946 12.013H2.054\"></path><path d=\"M6 16h.01\"></path>",
+      settings: "<path d=\"M14 17H5\"></path><path d=\"M19 7h-9\"></path><circle cx=\"17\" cy=\"17\" r=\"3\"></circle><circle cx=\"7\" cy=\"7\" r=\"3\"></circle>",
+      info: "<circle cx=\"12\" cy=\"12\" r=\"10\"></circle><path d=\"M12 16v-4\"></path><path d=\"M12 8h.01\"></path>",
+      text: "<path d=\"M21 5H3\"></path><path d=\"M15 12H3\"></path><path d=\"M17 19H3\"></path>",
+      link: "<path d=\"M9 17H7A5 5 0 0 1 7 7h2\"></path><path d=\"M15 7h2a5 5 0 1 1 0 10h-2\"></path><line x1=\"8\" x2=\"16\" y1=\"12\" y2=\"12\"></line>",
+      image: "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\"></rect><circle cx=\"9\" cy=\"9\" r=\"2\"></circle><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\"></path>",
+      code: "<path d=\"m18 16 4-4-4-4\"></path><path d=\"m6 8-4 4 4 4\"></path><path d=\"m14.5 4-5 16\"></path>",
+      mail: "<path d=\"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7\"></path><rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\"></rect>",
+      folder: "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\"></path>",
+      note: "<path d=\"M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z\"></path><path d=\"M15 3v5a1 1 0 0 0 1 1h5\"></path>",
+      clipboard: "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\"></rect><path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\"></path><path d=\"M12 11h4\"></path><path d=\"M12 16h4\"></path><path d=\"M8 11h.01\"></path><path d=\"M8 16h.01\"></path>",
+      star: "<path d=\"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z\"></path>",
+      bell: "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\"></path><path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\"></path>",
+      trash: "<path d=\"M10 11v6\"></path><path d=\"M14 11v6\"></path><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\"></path><path d=\"M3 6h18\"></path><path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"></path>",
+      database: "<ellipse cx=\"12\" cy=\"5\" rx=\"9\" ry=\"3\"></ellipse><path d=\"M3 5V19A9 3 0 0 0 21 19V5\"></path><path d=\"M3 12A9 3 0 0 0 21 12\"></path>",
+      pin: "<path d=\"M12 17v5\"></path><path d=\"M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z\"></path>",
+      eye: "<path d=\"M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0\"></path><circle cx=\"12\" cy=\"12\" r=\"3\"></circle>",
+      back: "<path d=\"m12 19-7-7 7-7\"></path><path d=\"M19 12H5\"></path>",
+      restore: "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\"></path><path d=\"M3 3v5h5\"></path>",
+      edit: "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\"></path><path d=\"m15 5 4 4\"></path>",
+      copy: "<rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\"></rect><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"></path>",
+      clock: "<circle cx=\"12\" cy=\"12\" r=\"10\"></circle><path d=\"M12 6v6l4 2\"></path>",
+      search: "<path d=\"m21 21-4.34-4.34\"></path><circle cx=\"11\" cy=\"11\" r=\"8\"></circle>",
+      plus: "<path d=\"M5 12h14\"></path><path d=\"M12 5v14\"></path>",
+      download: "<path d=\"M12 15V3\"></path><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"></path><path d=\"m7 10 5 5 5-5\"></path>",
+      close: "<path d=\"M18 6 6 18\"></path><path d=\"m6 6 12 12\"></path>",
+    };
+    const brandAsset = 'data:image/png;base64,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';
+    const logo = () => `<img alt="" src="${brandAsset}">`;
+    const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] ?? ''}</svg>`;
+    const html = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[char]);
+    const categories = {
+      text: ['文本', 'text'],
+      link: ['链接', 'link'],
+      image: ['图片', 'image'],
+      code: ['代码', 'code'],
+      email: ['邮箱', 'mail'],
+      file: ['路径', 'folder'],
+      memo: ['备忘录', 'note'],
+    };
+    const sections = {
+      history: ['剪贴板历史', '剪贴板', 'clipboard'],
+      memos: ['备忘录', '备忘录', 'note'],
+      favorites: ['收藏', '收藏', 'star'],
+      reminders: ['备忘录提醒', '提醒', 'bell'],
+      trash: ['回收站', '回收站', 'trash'],
+      storage: ['存储与备份', '存储与备份', 'database'],
+      settings: ['设置', '设置', 'settings'],
+    };
+    const records = [
+      { id: 'release', type: 'text', title: '发布前交接', subtitle: '确认变更清单、安装包和发布说明', time: '09:41', starred: true,
+        body: '发布前交接\n\n1. 核对变更清单与版本号。\n2. 确认 Windows 安装包可正常启动。\n3. 更新发布说明，补上备忘录提醒的使用方法。' },
+      { id: 'repo', type: 'link', title: 'SuperClipboard 项目仓库', subtitle: 'github.com/Boredlittlenan/SuperClipboard', time: '09:36', starred: true,
+        body: 'https://github.com/Boredlittlenan/SuperClipboard' },
+      { id: 'build', type: 'code', title: '本地构建命令', subtitle: 'pnpm tauri:build', time: '09:29', body: 'pnpm install\npnpm tauri:build' },
+      { id: 'app-icon', type: 'image', title: '应用图标', subtitle: '64 × 64 · PNG', time: '09:18', body: 'SuperClipboard 应用图标' },
+      { id: 'contact', type: 'email', title: '版本反馈邮箱', subtitle: 'feedback@example.com', time: '09:07', body: 'feedback@example.com' },
+      { id: 'export', type: 'file', title: '本地备份路径', subtitle: 'D:\\Backups\\SuperClipboard', time: '08:52', body: 'D:\\Backups\\SuperClipboard' },
+      { id: 'test', type: 'memo', title: '提醒功能验收', subtitle: '托盘运行、恢复后补提醒与通知跳转', time: '今天', starred: true,
+        body: '验收提醒时，依次检查以下场景：\n\n• 窗口收起到托盘后仍能接收提醒。\n• 重启后处理错过的提醒。\n• 点击通知可以找到对应的备忘录。' },
+      { id: 'backup', type: 'memo', title: '备份本地数据', subtitle: '导出 SQLite 备份并验证恢复', time: '昨天',
+        body: '切换存储前先导出一份 .scbackup。检查备份文件后，在测试环境执行恢复。' },
+      { id: 'ideas', type: 'memo', title: '快捷窗口改良', subtitle: '给预览和复制留出各自的入口', time: '昨天',
+        body: '搜索放在固定位置。保留一键复制，详情用独立的预览按钮打开。' },
+      { id: 'draft', type: 'text', title: '旧版发布说明草稿', subtitle: '已移至剪贴板回收站', time: '昨天', archived: true, body: '旧版发布说明，待整理。' },
+      { id: 'old-memo', type: 'memo', title: '已归档的测试清单', subtitle: '已移至备忘录回收站', time: '昨天', archived: true, body: '旧版安装和卸载测试清单。' },
+    ];
+    const mins = (value) => value * 60_000;
+    const reminders = new Map([
+      ['test', { at: Date.now() - mins(35), due: true }],
+      ['ideas', { at: Date.now() - mins(10), due: true }],
+      ['backup', { at: Date.now() + mins(1080), due: false }],
+    ]);
+    const options = new URLSearchParams(location.search);
+    const state = {
+      style: ['glass', 'desk', 'ink'].includes(options.get('style')) ? options.get('style') : 'glass',
+      layout: options.get('size') === 'compact' ? 'compact' : 'wide',
+      view: Object.hasOwn(sections, options.get('view') ?? '') ? options.get('view') : 'history',
+      query: '', category: '', scope: 'clipboard', selected: 'release', detail: false,
+      paused: false, showTitle: false, storage: 'local',
+    };
+    const narrow = matchMedia('(max-width: 600px)');
+    const app = document.querySelector('#app');
+    const page = document.querySelector('#page');
+    const navigation = document.querySelector('#navigation');
+    const dialog = document.querySelector('#dialog');
+    const toast = document.querySelector('#toast');
+    let toastTimer;
+    let nextMemo = 1;
+
+    function hydrate(root) {
+      root.querySelectorAll('[data-icon]').forEach((node) => { node.innerHTML = icon(node.dataset.icon); });
+      root.querySelectorAll('[data-logo]').forEach((node) => { node.innerHTML = logo(); });
+    }
+    const isCompact = () => narrow.matches || state.layout === 'compact';
+    const button = (label, action, glyph = '', extra = '', tone = '') =>
+      `<button type="button" class="button ${tone}" data-action="${action}" ${extra}>${glyph ? icon(glyph) : ''}${label}</button>`;
+    const iconButton = (label, glyph, action, extra = '', tone = '') =>
+      `<button type="button" class="icon-button ${tone}" data-action="${action}" aria-label="${label}" title="${label}" ${extra}>${icon(glyph)}</button>`;
+    const typeIcon = (type) => `<span class="type-icon" data-category="${type}">${icon(categories[type][1])}</span>`;
+    const tag = (label, glyph = '', due = false) => `<span class="tag${due ? ' due' : ''}">${glyph ? icon(glyph) : ''}${label}</span>`;
+    const empty = (glyph, heading, hint = '') =>
+      `<div class="empty">${icon(glyph)}<h2>${heading}</h2>${hint ? `<p>${hint}</p>` : ''}</div>`;
+    const withId = (id) => `data-id="${html(id)}"`;
+
+    function dateText(at) {
+      const date = new Date(at);
+      const now = new Date();
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const time = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+      if (date.toDateString() === now.toDateString()) return `今天 ${time}`;
+      if (date.toDateString() === tomorrow.toDateString()) return `明天 ${time}`;
+      return `${date.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })} ${time}`;
+    }
+
+    function visibleRecords() {
+      const term = state.query.trim().toLocaleLowerCase();
+      return records.filter((item) => {
+        const isMemo = item.type === 'memo';
+        if (state.view === 'history' && (isMemo || item.archived)) return false;
+        if (state.view === 'memos' && (!isMemo || item.archived)) return false;
+        if (state.view === 'favorites' && (!item.starred || item.archived)) return false;
+        if (state.view === 'trash' && (!item.archived || isMemo !== (state.scope === 'memo'))) return false;
+        if (state.category && item.type !== state.category) return false;
+        return `${item.title} ${item.subtitle} ${item.body}`.toLocaleLowerCase().includes(term);
+      });
+    }
+
+    function renderNavigation() {
+      const count = [...reminders.values()].filter(({ due }) => due).length;
+      const nav = (name) => {
+        const [label, compact, glyph] = sections[name];
+        return `<button type="button" class="nav-button${['storage', 'settings'].includes(name) ? ' nav-secondary' : ''}" data-go="${name}" aria-label="${label}" title="${label}" ${state.view === name ? 'aria-current="page"' : ''}>
+          ${icon(glyph)}<span>${isCompact() ? compact : label}</span>${name === 'reminders' && count ? `<span class="nav-count" aria-label="${count} 条到期提醒">${count}</span>` : ''}
+        </button>`;
+      };
+      navigation.innerHTML = ['history', 'memos', 'favorites', 'reminders', 'trash'].map(nav).join('') +
+        '<hr class="nav-divider">' + ['storage', 'settings'].map(nav).join('');
+    }
+
+    function recordRow(item, selected) {
+      const isMemo = item.type === 'memo';
+      const due = reminders.get(item.id)?.due;
+      const op = isCompact() && !isMemo && !item.archived ? 'copy' : 'open';
+      return `<div class="record-row" data-selected="${!isCompact() && selected === item.id}">
+        <button type="button" class="record-button" data-action="${op}" ${withId(item.id)} ${op === 'open' && !isCompact() ? `aria-pressed="${selected === item.id}"` : ''} ${op === 'copy' ? `title="复制 ${html(item.title)}"` : ''}>
+          ${typeIcon(item.type)}
+          <span><span class="record-title">${html(item.title)}</span><span class="record-subtitle">${html(item.subtitle)}</span></span>
+          <span class="record-meta">${due ? icon('bell') : item.starred ? icon('pin') : ''}${item.time}</span>
+        </button>
+        ${!isMemo && !item.archived ? iconButton(`预览 ${html(item.title)}`, 'eye', 'open', withId(item.id), 'peek quiet') : ''}
+      </div>`;
+    }
+
+    function detail(item) {
+      if (!item) return empty('columns', '未选择条目');
+      const isMemo = item.type === 'memo';
+      const reminder = reminders.get(item.id);
+      const time = reminder ? dateText(reminder.at) : '';
+      const back = iconButton('返回列表', 'back', 'back', '', 'back-button quiet');
+      const favorite = iconButton(item.starred ? '取消收藏' : '收藏', 'star', 'star', `${withId(item.id)} aria-pressed="${Boolean(item.starred)}"`);
+      const actions = item.archived ? button('恢复', 'restore', 'restore', withId(item.id), 'primary')
+        : favorite + (isMemo ? button('编辑', 'edit', 'edit', withId(item.id), 'primary') : button('复制', 'copy', 'copy', withId(item.id), 'primary'));
+      const content = item.type === 'image' ? `<span class="brand-mark">${logo()}</span>` : html(item.body);
+      return `<div class="detail-header"><div class="detail-title">${back}<h2>${html(item.title)}</h2></div><div class="actions">${actions}</div></div>
+        ${tag(categories[item.type][0], categories[item.type][1])}
+        <div><p class="preview-caption">${isMemo ? '备忘录正文' : '内容预览'}</p>
+        <div class="clip-preview ${item.type}">${content}</div></div>
+        ${isMemo && !item.archived ? `<div class="memo-reminder">
+          ${reminder ? tag(reminder.due ? `已到期 · ${time}` : time, 'bell', reminder.due) : tag('未设置提醒', 'bell')}
+          ${button(reminder ? '修改提醒' : '设置提醒', 'schedule', 'clock', withId(item.id))}
+        </div>` : `<dl class="meta-grid"><dt>${item.archived ? '删除时间' : '复制时间'}</dt><dd>${html(item.time)}</dd>
+          <dt>内容类型</dt><dd>${categories[item.type][0]}</dd>
+          ${item.type === 'image' ? '<dt>图像大小</dt><dd>64 × 64 px</dd>' : `<dt>字符数</dt><dd>${[...item.body].length}</dd>`}</dl>`}`;
+    }
+
+    function renderBrowserResults() {
+      const items = visibleRecords();
+      const current = items.find((item) => item.id === state.selected) ?? (isCompact() ? undefined : items[0]);
+      const rows = (group) => group.map((item) => recordRow(item, current?.id)).join('');
+      const pinned = items.filter((item) => item.starred);
+      const regular = items.filter((item) => !item.starred);
+      const grouped = state.view === 'history' && !state.category && !state.query.trim();
+      page.querySelector('.record-list').innerHTML = !items.length
+        ? empty(state.query ? 'search' : sections[state.view][2], state.query ? '没有找到相关条目' : '暂无条目', state.query ? '试试标题或内容中的其他关键词。' : '')
+        : grouped
+          ? (pinned.length ? '<p class="group-label">已置顶</p>' + rows(pinned) : '') +
+            (regular.length ? '<p class="group-label">最近复制</p>' + rows(regular) : '')
+          : rows(items);
+      page.querySelector('.record-detail').innerHTML = detail(current);
+      page.querySelector('.browser-grid').dataset.detail = Boolean(state.detail && current);
+      document.querySelector('#footer-count').textContent = `${items.length} 条记录`;
+    }
+
+    function renderBrowser() {
+      const [title] = sections[state.view];
+      const history = state.view === 'history';
+      const memos = state.view === 'memos';
+      const trash = state.view === 'trash';
+      const filters = history ? [['', '全部'], ...Object.entries(categories).filter(([key]) => key !== 'memo').map(([key, [label]]) => [key, label])]
+        : trash ? [['clipboard', '剪贴板'], ['memo', '备忘录']] : [];
+      const active = trash ? state.scope : state.category;
+      const placeholder = history ? '搜索剪贴板内容' : memos ? '搜索备忘录' : `搜索${title}`;
+      page.innerHTML = `<div class="page-heading"><h1>${title}</h1>
+        ${memos ? button('新建备忘录', 'new', 'plus', '', 'primary') : ''}</div>
+        <div class="toolbar">
+          <label class="search">${icon('search')}<input id="query" type="search" placeholder="${placeholder}" aria-label="${placeholder}" value="${html(state.query)}"><kbd>Ctrl + F</kbd></label>
+          ${filters.length ? `<div class="chips" role="group" aria-label="${trash ? '记录类型' : '内容分类'}">${filters.map(([value, label]) =>
+            `<button type="button" class="chip" data-filter="${value}" aria-pressed="${active === value}">${label}</button>`).join('')}</div>` : ''}
+        </div>
+        <div class="browser-grid"><section class="record-list" aria-label="记录列表"></section>
+          <section class="record-detail" aria-label="条目详情"></section></div>`;
+      renderBrowserResults();
+    }
+
+    function reminderCard(due) {
+      const entries = [...reminders.entries()].filter(([, reminder]) => reminder.due === due).sort(([, a], [, b]) => a.at - b.at);
+      const label = due ? '已到期待处理' : '即将提醒';
+      return `<section class="content-card"><div class="card-header"><h2>${label}</h2>${tag(entries.length, '', due)}</div>
+        ${entries.length ? entries.map(([id, reminder]) => {
+          const memo = records.find((item) => item.id === id);
+          return `<div class="reminder-row">
+            ${typeIcon('memo')}
+            <button type="button" class="reminder-link" data-action="open-memo" ${withId(id)}>
+              <strong>${html(memo.title)}</strong><small>${dateText(reminder.at)}</small>
+            </button>
+            <div class="actions">${due ? button('延后 10 分钟', 'snooze', 'clock', withId(id)) +
+              button('完成', 'done', 'check', withId(id), 'primary') : button('修改时间', 'schedule', 'edit', withId(id))}</div>
+          </div>`;
+        }).join('') : `<p class="muted">${due ? '暂无到期提醒' : '暂无计划中的提醒'}</p>`}</section>`;
+    }
+
+    function workspaceRow(heading, note, control = '') {
+      return `<div class="setting-row"><div><strong>${heading}</strong><p class="muted">${note}</p></div>${control}</div>`;
+    }
+
+    function renderWorkspacePage() {
+      let content = '';
+      if (state.view === 'reminders') {
+        content = reminderCard(true) + reminderCard(false);
+      }
+      if (state.view === 'settings') {
+        const skinSelect = `<select id="skin-select" aria-label="界面外观"><option value="glass">水滴玻璃</option><option value="desk">清晰桌面</option><option value="ink">深色墨蓝</option></select>`;
+        content = `<section class="content-card"><div class="card-header">${icon('settings')}<h2>常用</h2></div>
+          ${workspaceRow('界面外观', '同步切换当前预览的视觉方向', skinSelect)}
+          ${workspaceRow('全局快捷键', '从其他应用唤起快捷窗口', '<kbd>Alt + X</kbd>')}
+          ${workspaceRow('剪贴板监控', state.paused ? '已暂停' : '正在收录新复制的内容', button(state.paused ? '继续' : '暂停', 'capture'))}
+        </section><section class="content-card"><div class="card-header">${icon('bell')}<h2>提醒</h2></div>
+          ${workspaceRow('通知中显示备忘录标题', '控制 Windows 通知显示的内容', button(state.showTitle ? '已开启' : '已关闭', 'titles', '', `aria-pressed="${state.showTitle}"`))}
+        </section>`;
+      }
+      if (state.view === 'storage') {
+        const storageChoice = (id) => state.storage === id ? tag('使用中', 'check') : button('切换', 'storage', '', withId(id));
+        content = `<section class="content-card"><div class="card-header">${icon('database')}<h2>数据源</h2></div>
+          ${workspaceRow('本地 SQLite', '保存在此设备上', storageChoice('local'))}
+          ${workspaceRow('外部 PostgreSQL', '显示已保存连接的示例', storageChoice('remote'))}
+        </section>${state.storage === 'local' ? `<section class="content-card"><div class="card-header">${icon('drive')}<h2>本地备份</h2></div>
+          ${workspaceRow('导出备份', '剪贴板、备忘录和备忘录提醒', button('导出', 'backup', 'download'))}</section>` : ''}`;
+      }
+      page.innerHTML = `<div class="page-heading"><h1>${sections[state.view][0]}</h1></div><div class="stack">${content}</div>`;
+      if (state.view === 'settings') page.querySelector('#skin-select').value = state.style;
+      document.querySelector('#footer-count').textContent = state.view === 'reminders' ? `${reminders.size} 条提醒` : '';
+    }
+
+    function render() {
+      document.body.dataset.skin = state.style;
+      app.dataset.layout = isCompact() ? 'compact' : 'wide';
+      document.querySelectorAll('[data-style]').forEach((btn) => btn.setAttribute('aria-pressed', btn.dataset.style === state.style));
+      document.querySelectorAll('[data-size]').forEach((btn) => btn.setAttribute('aria-pressed', btn.dataset.size === app.dataset.layout));
+      document.querySelector('#dimensions').textContent = isCompact() ? '快捷窗口 · 420 × 600' : '展开工作台';
+      document.querySelector('#source-name').textContent = state.storage === 'local' ? '本地工作区' : 'PostgreSQL';
+      const capture = document.querySelector('#capture-status');
+      capture.dataset.paused = state.paused;
+      capture.lastElementChild.textContent = state.paused ? '监控已暂停' : '剪贴板监控中';
+      capture.title = state.paused ? '继续剪贴板监控' : '暂停剪贴板监控';
+      renderNavigation();
+      if (['history', 'memos', 'favorites', 'trash'].includes(state.view)) renderBrowser();
+      else renderWorkspacePage();
+    }
+
+    function go(view, selected = null) {
+      if (view !== state.view) state.scope = 'clipboard';
+      Object.assign(state, { view, category: '', query: '', selected, detail: Boolean(selected) });
+      render();
+    }
+
+    function notify(message) {
+      toast.innerHTML = `${icon('check')}<span>${html(message)}</span>`;
+      toast.hidden = false;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toast.hidden = true; }, 2400);
+    }
+
+    function localValue(date) {
+      const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+      return local.toISOString().slice(0, 16);
+    }
+
+    function openEditor(kind, memo) {
+      const scheduling = kind === 'schedule';
+      const reminder = memo ? reminders.get(memo.id) : undefined;
+      const date = new Date(reminder && !reminder.due ? reminder.at : Date.now() + mins(60));
+      const label = scheduling ? (reminder ? '修改提醒' : '设置提醒') : memo ? '编辑备忘录' : '新建备忘录';
+      dialog.innerHTML = `<form data-editor="${kind}" ${memo ? withId(memo.id) : ''}>
+        <div class="dialog-heading setting-row"><h2 id="dialog-title">${label}</h2>${iconButton('关闭', 'close', 'close', '', 'quiet')}</div>
+        ${scheduling ? `<strong>${html(memo.title)}</strong>
+          <div class="actions" aria-label="快捷时间">
+            ${button('10 分钟后', 'preset', '', withId('10'))}
+            ${button('1 小时后', 'preset', '', withId('60'))}
+            ${button('明天 09:00', 'preset', '', withId('tomorrow'))}
+          </div>
+          <label>提醒时间<input name="date" type="datetime-local" required value="${localValue(date)}"></label>
+          <p class="muted">一次性提醒 · 保存在此设备</p>`
+          : `<label>标题<input name="title" required maxlength="90" value="${html(memo?.title)}"></label>
+             <label>正文<textarea name="body" rows="4">${html(memo?.body)}</textarea></label>`}
+        <p class="field-error" role="alert" hidden></p>
+        <div class="modal-footer">
+          ${scheduling && reminder ? button('移除提醒', 'remove', '', withId(memo.id), 'remove quiet') : ''}
+          ${button('取消', 'close')}
+          <button class="button primary" type="submit">${scheduling ? '保存提醒' : '保存备忘录'}</button>
+        </div>
+      </form>`;
+      dialog.showModal();
+    }
+
+    document.addEventListener('click', (event) => {
+      const target = event.target.closest('button');
+      if (!target) return;
+      const { action, go: view, id, size, style, filter } = target.dataset;
+      if (style || size) {
+        if (style) state.style = style;
+        if (size) state.layout = size;
+        render();
+        return;
+      }
+      if (view) {
+        go(view);
+        const focusGroup = target.closest('nav') ? navigation : app.querySelector('.title-actions');
+        focusGroup.querySelector(`[data-go="${view}"]`)?.focus();
+        return;
+      }
+      if (filter !== undefined) {
+        if (state.view === 'trash') state.scope = filter;
+        else state.category = filter;
+        state.selected = null;
+        state.detail = false;
+        page.querySelectorAll('[data-filter]').forEach((btn) => btn.setAttribute('aria-pressed', btn.dataset.filter === filter));
+        renderBrowserResults();
+        return;
+      }
+      const item = records.find((entry) => entry.id === id);
+      switch (action) {
+        case 'open': {
+          state.selected = id;
+          state.detail = true;
+          renderBrowserResults();
+          const selector = isCompact() ? '[data-action="back"]' : `.record-button[${withId(id)}]`;
+          page.querySelector(selector)?.focus();
+          break;
+        }
+        case 'back': {
+          state.detail = false;
+          renderBrowserResults();
+          page.querySelector(`.record-button[${withId(state.selected)}]`)?.focus();
+          break;
+        }
+        case 'copy':
+          notify('已模拟复制');
+          break;
+        case 'star':
+          item.starred = !item.starred;
+          renderBrowserResults();
+          page.querySelector('[data-action="star"]')?.focus();
+          notify(item.starred ? '已收藏' : '已取消收藏');
+          break;
+        case 'restore':
+          item.archived = false;
+          state.detail = false;
+          renderBrowserResults();
+          notify('已恢复条目');
+          break;
+        case 'open-memo':
+          go('memos', id);
+          break;
+        case 'new':
+        case 'edit':
+        case 'schedule':
+          openEditor(action, item);
+          break;
+        case 'preset': {
+          const date = new Date(Date.now() + mins(Number(id) || 0));
+          if (id === 'tomorrow') {
+            date.setDate(date.getDate() + 1);
+            date.setHours(9, 0, 0, 0);
+          }
+          dialog.querySelector('[name="date"]').value = localValue(date);
+          break;
+        }
+        case 'snooze':
+        case 'done':
+        case 'remove':
+          if (action === 'snooze') reminders.set(id, { at: Date.now() + mins(10), due: false });
+          else reminders.delete(id);
+          if (dialog.open) dialog.close();
+          render();
+          notify({ snooze: '提醒已延后 10 分钟', done: '已完成提醒', remove: '已移除提醒' }[action]);
+          break;
+        case 'close':
+          dialog.close();
+          break;
+        case 'capture':
+          state.paused = !state.paused;
+          render();
+          notify(state.paused ? '已暂停剪贴板监控' : '已继续剪贴板监控');
+          break;
+        case 'storage':
+          state.storage = id;
+          render();
+          notify('已切换示例数据源');
+          break;
+        case 'backup':
+          notify('已模拟导出备份');
+          break;
+        case 'titles':
+          state.showTitle = !state.showTitle;
+          render();
+          break;
+      }
+    });
+
+    dialog.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const form = event.target;
+      const data = new FormData(form);
+      const error = form.querySelector('.field-error');
+      if (form.dataset.editor === 'schedule') {
+        const at = new Date(data.get('date')).getTime();
+        if (!(at > Date.now())) {
+          error.textContent = '请选择晚于当前时间的日期和时间。';
+          error.hidden = false;
+          return;
+        }
+        reminders.set(form.dataset.id, { at, due: false });
+        dialog.close();
+        render();
+        notify('已保存提醒');
+        return;
+      }
+      const title = data.get('title').trim();
+      if (!title) {
+        error.textContent = '请输入备忘录标题。';
+        error.hidden = false;
+        return;
+      }
+      const body = data.get('body').trim();
+      const memo = records.find((item) => item.id === form.dataset.id);
+      const fields = { title, subtitle: body.split('\n')[0] || '暂无正文', body, time: '刚刚' };
+      const record = memo ?? { id: `memo-${nextMemo++}`, type: 'memo' };
+      Object.assign(record, fields);
+      if (!memo) records.unshift(record);
+      dialog.close();
+      go('memos', record.id);
+      notify('已保存备忘录');
+    });
+
+    page.addEventListener('input', (event) => {
+      if (event.target.id !== 'query') return;
+      state.query = event.target.value;
+      state.detail = false;
+      renderBrowserResults();
+    });
+    page.addEventListener('change', (event) => {
+      if (event.target.id !== 'skin-select') return;
+      state.style = event.target.value;
+      render();
+      page.querySelector('#skin-select').focus();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (dialog.open || !event.ctrlKey || event.key.toLowerCase() !== 'f') return;
+      event.preventDefault();
+      if (!page.querySelector('#query')) go('history');
+      if (state.detail && isCompact()) {
+        state.detail = false;
+        renderBrowserResults();
+      }
+      page.querySelector('#query').focus();
+    });
+    narrow.addEventListener('change', render);
+    hydrate(document);
+    render();
+  </script>
+</body>
+</html>
